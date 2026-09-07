@@ -1,0 +1,33 @@
+# Template inventory. Copy to hosts.ini and edit for your machines:
+#
+#     cp ansible/inventory/hosts.ini.example ansible/inventory/hosts.ini
+#
+# hosts.ini itself is gitignored -- it names your real machines, addresses and
+# accounts, which are yours and not this repository's business.
+
+[all]
+# host1 ansible_host=192.168.1.1
+
+[local]
+# The controller itself. `ansible_connection=local` is the marker that makes a
+# host the controller: the guard executor's cheap pre-checks (a path test, a
+# `pwd` lookup, an rclone mount probe) only run when the target is this box.
+#
+# ansible_become_exe is optional and deliberately host-scoped. Distributions
+# that ship sudo-rs as the default `sudo` wrap the prompt as
+# "[sudo: ...] Password:" and ignore the classic `-S -p` contract, which breaks
+# ansible's become password handling; pinning become to classic sudo (often at
+# /usr/bin/sudo.ws) works around it. Leave it off unless this host needs it --
+# hosts with a normal /usr/bin/sudo must NOT inherit the path.
+workstation ansible_host=192.168.1.10 ansible_user=operator ansible_connection=local
+
+# All managed hosts also belong to the "secrets" group so that the
+# vault-encrypted vars in group_vars/secrets/ (e.g. ansible_become_password)
+# are loaded for them.
+[secrets:children]
+local
+remote
+
+[remote]
+# Added by `strata device add NAME --host ADDR`.
+# nas ansible_host=192.168.1.20 ansible_user=admin ansible_connection=ssh

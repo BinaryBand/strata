@@ -1,0 +1,93 @@
+---
+# Reconcile a family of diot `systemd --user` units: compute the desired set,
+# find what exists, stop/disable/delete the strays, write the units, reload the
+# user manager, then start (or restart if changed). enable_rclone.yml and
+# enable_rclone_http.yml each ran ~79 identical lines of this cycle.
+#
+# Callers provide:
+#   unit_prefix        filename prefix, e.g. "rclone-" or "rclone-http-"
+#   unit_find_pattern  find(1) pattern for the units this family owns
+#   unit_find_excludes find(1) excludes -- load-bearing where two families
+#                      share a prefix; see the note in enable_rclone.yml
+#   unit_items         the configured entries, in their own natural shape
+#   unit_key_attr      attribute naming each entry, or "" when the entry is
+#                      itself the name (rclone_remotes is a list of strings,
+#                      rclone_http_serves a list of dicts keyed by .name)
+#   unit_template      template filename in this role's templates/; it is
+#                      rendered with `item` bound to the entry, so a template
+#                      reads exactly like the inline content it replaced
+#
+# Scheduled work should follow this shape too (a .timer family) rather than
+# growing a third copy of the reconcile cycle.
+- name: Look up diot's uid and home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ diot_user }}"
+
+- name: Deploy {{ unit_prefix }}* units into diot's user systemd
+  become_user: "{{ diot_user }}"
+  vars:
+    diot_home: "{{ ansible_facts.getent_passwd[diot_user][4] }}"
+    unit_keys: "{{ (unit_items | map(attribute=unit_key_attr) | list) if unit_key_attr else (unit_items | list) }}"
+    desired_units: "{{ unit_keys | map('regex_replace', '^(.*)$', unit_prefix ~ '\\1.service') | list }}"
+  # systemd --user is reached over diot's lingering runtime dir.
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+  block:
+    - name: Ensure diot's systemd user directory exists
+      ansible.builtin.file:
+        path: "{{ diot_home }}/.config/systemd/user"
+        state: directory
+        mode: "0700"
+
+    - name: Find existing {{ unit_prefix }}* units
+      ansible.builtin.find:
+        paths: "{{ diot_home }}/.config/systemd/user"
+        patterns: "{{ unit_find_pattern }}"
+        excludes: "{{ unit_find_excludes }}"
+      register: existing_units
+
+    - name: Stop and disable units no longer in the list
+      ansible.builtin.systemd_service:
+        name: "{{ item.path | basename }}"
+        scope: user
+        state: stopped
+        enabled: false
+      loop: "{{ existing_units.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: (item.path | basename) not in desired_units
+
+    - name: Delete the stale unit files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ existing_units.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: (item.path | basename) not in desired_units
+      notify: Reload diot user systemd
+
+    - name: Write a unit per configured entry
+      ansible.builtin.template:
+        src: "{{ unit_template }}"
+        dest: "{{ diot_home }}/.config/systemd/user/{{ unit_prefix }}{{ item[unit_key_attr] if unit_key_attr else item }}.service"
+        mode: "0644"
+      loop: "{{ unit_items }}"
+      loop_control:
+        label: "{{ unit_prefix }}{{ item[unit_key_attr] if unit_key_attr else item }}.service"
+      register: unit_writes
+      notify: Reload diot user systemd
+
+    - name: Generate the services from the new units before starting them
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure each unit is running (restart if its unit changed)
+      ansible.builtin.systemd_service:
+        name: "{{ unit_prefix }}{{ item.item[unit_key_attr] if unit_key_attr else item.item }}.service"
+        scope: user
+        state: "{{ 'restarted' if item.changed else 'started' }}"
+        enabled: true
+      loop: "{{ unit_writes.results }}"
+      loop_control:
+        label: "{{ unit_prefix }}{{ item.item[unit_key_attr] if unit_key_attr else item.item }}.service"

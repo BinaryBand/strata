@@ -1,0 +1,116 @@
+---
+# Mount the configured rclone remotes under diot. Each name in rclone_remotes
+# (plain group_vars, maintained by `strata rclone add`) becomes a diot
+# systemd --user service that FUSE-mounts `<remote>:` (the remote root) at
+# /mnt/rclone/<remote>. Credentials come from rclone's own config file
+# (~/.config/rclone/rclone.conf), which is copied from the operator's config
+# so the operator can authorize remotes as themselves with
+# `rclone config create <name> <type>` rather than as diot.
+#
+# Mounts are read-only unless the remote is listed in rclone_writable_remotes
+# (written by `strata rclone add --writable`). That list used to be recorded
+# by the CLI and read by nothing at all, while --read-only was hardcoded here
+# -- so @guard.storage(require_writable=True) passed and install_restic then
+# tried to create its repository on a read-only mount and got EROFS.
+#
+# First run with an empty list simply installs rclone + fuse3; mount loops
+# are no-ops until `strata rclone add` records a name.
+- name: Mount configured rclone remotes under diot
+  # hosts: all, not local. @guard.mount runs this playbook, and the runbooks
+  # that declare it (install_jellyfin, install_restic via @guard.storage) are
+  # hosts: all -- so a `local` play here matched nothing under --limit, was
+  # reported as success, and the dependent playbook then ran against a
+  # mountpoint that had never been mounted on that host. Same trap
+  # ensure_path.yml documents; this was the other side of it.
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    operator_rclone_conf: "{{ lookup('env', 'HOME') }}/.config/rclone/rclone.conf"
+    # rclone_remotes comes from group_vars/all/managed.yml (maintained by `strata rclone
+    # register`). Deliberately NOT defaulted here: a play var would outrank the
+    # group_var and shadow it with an empty list. Use `| default([])` at each
+    # reference so an unset list is safe on a first run.
+
+  tasks:
+    - name: Refresh package cache (apt only)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Install rclone and the FUSE userspace toolchain
+      ansible.builtin.package:
+        name:
+          - rclone
+          - fuse3
+        state: present
+
+    - name: Allow non-root FUSE mounts to expose themselves to other users
+      # --allow-other (so Jellyfin can read the mount) is refused unless
+      # user_allow_other is enabled host-wide in /etc/fuse.conf.
+      ansible.builtin.lineinfile:
+        path: /etc/fuse.conf
+        regexp: "^#?\\s*user_allow_other"
+        line: "user_allow_other"
+        state: present
+
+    - name: Look up diot's uid and home directory
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ diot_user }}"
+
+    - name: Check which configured remotes are already mounted
+      ansible.builtin.command: "mountpoint -q /mnt/rclone/{{ item }}"
+      register: rclone_mountpoint_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ rclone_remotes | default([]) }}"
+
+    - name: Create the mountpoint for each configured remote
+      # Skip when something is already mounted there (rc == 0): owner/mode
+      # belong to the mountpoint underneath, and setting them through a live
+      # FUSE mount fails with EROFS on a read-only one and rewrites the
+      # remote's own metadata on a writable one. Neither is wanted.
+      ansible.builtin.file:
+        path: "/mnt/rclone/{{ item.item }}"
+        state: directory
+        owner: "{{ diot_user }}"
+        mode: "0755"
+      loop: "{{ rclone_mountpoint_check.results }}"
+      loop_control:
+        label: "/mnt/rclone/{{ item.item }}"
+      when: item.rc != 0
+
+    - name: Copy operator rclone config to diot
+      # The operator authorized remotes as themselves; copy the resulting config
+      # to diot's config dir so the mount units can reach the credentials.
+      ansible.builtin.copy:
+        src: "{{ operator_rclone_conf }}"
+        dest: "{{ ansible_facts.getent_passwd[diot_user][4] }}/.config/rclone/rclone.conf"
+        owner: "{{ diot_user }}"
+        mode: "0600"
+        directory_mode: "0700"
+      when: rclone_remotes | default([]) | length > 0
+
+    - name: Reconcile diot's rclone mount units
+      # excludes is load-bearing: `rclone-*.service` also matches the
+      # `rclone-http-<name>.service` serve units that enable_rclone_http.yml
+      # owns, and those are never in this play's desired set (which holds only
+      # rclone-<remote>.service). Without it, the role's prune stops, disables
+      # and deletes every HTTP serve on the host as "stale" -- observed on
+      # a host where running this play took down the rclone serve fronting
+      # a published path, which then returned 502 until enable_rclone_http
+      # was re-run.
+      # The reverse direction is already safe: that play's
+      # `rclone-http-*.service` pattern cannot match a mount unit.
+      ansible.builtin.include_role:
+        name: diot_systemd_units
+      vars:
+        unit_prefix: "rclone-"
+        unit_find_pattern: "rclone-*.service"
+        unit_find_excludes: "rclone-http-*.service"
+        unit_items: "{{ rclone_remotes | default([]) }}"
+        unit_key_attr: ""
+        unit_template: rclone-mount.service.j2

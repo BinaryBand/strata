@@ -1,0 +1,8 @@
+---
+# Default entry point: deploy then start, for services with no work to splice
+# in between. This is what a plain `include_role` runs, and what both current
+# callers (install_baikal.yml, install_jellyfin.yml) use. See deploy.yml's
+# header for the vars this expects; a caller needing to interleave its own
+# tasks includes deploy.yml / start.yml separately with `tasks_from`.
+- ansible.builtin.import_tasks: deploy.yml
+- ansible.builtin.import_tasks: start.yml

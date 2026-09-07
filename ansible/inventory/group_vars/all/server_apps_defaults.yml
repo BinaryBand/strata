@@ -1,0 +1,17 @@
+---
+# Canonical deployment defaults for server apps.
+#
+# These values were previously hardcoded inside individual playbooks.  By living
+# in group_vars they are (a) visible in one place, (b) referenceable by any
+# playbook as {{ server_apps_defaults.<app>.<field> }}, and (c) editable per
+# target via host_vars/ or per group via another group_vars file (Ansible's
+# precedence ladder handles the override naturally).
+#
+# The schema is enforced by the Pydantic model at
+# strata/core/models/server_apps_config.py -- run `strata dev schema` to regenerate
+# the VS Code intellisense schema after editing this file's structure.
+server_apps_defaults:
+  baikal:
+    port: 8080
+  jellyfin:
+    port: 8096

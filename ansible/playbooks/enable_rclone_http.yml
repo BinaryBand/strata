@@ -1,0 +1,34 @@
+---
+# Serve registered rclone paths over local HTTP, one diot systemd --user
+# service per entry in rclone_http_serves (`strata rclone serve <name> <path>
+# --port <port>`). Each service runs `rclone serve http` bound to
+# 127.0.0.1:<port> only -- nothing public listens here; a local reverse proxy
+# or another local process fronts it if needed. VFS caching
+# (--vfs-cache-mode full) is enabled so repeat reads are served from local
+# disk cache instead of re-fetching from the cloud backend on every request
+# -- the same cache flags enable_rclone.yml uses for its FUSE mounts. Reuses
+# the rclone binary and rclone.conf that enable_rclone.yml already
+# installs/syncs to diot, so this playbook does neither itself.
+- name: Serve registered rclone paths over local HTTP
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    # rclone_http_serves comes from group_vars/all/managed.yml (maintained by `strata
+    # rclone serve`). Deliberately NOT defaulted here, for the same reason as
+    # rclone_remotes in enable_rclone.yml: a play var would outrank the
+    # group_var and shadow it with an empty list.
+
+  tasks:
+    - name: Reconcile diot's rclone HTTP serve units
+      ansible.builtin.include_role:
+        name: diot_systemd_units
+      vars:
+        unit_prefix: "rclone-http-"
+        unit_find_pattern: "rclone-http-*.service"
+        unit_find_excludes: []
+        unit_items: "{{ rclone_http_serves | default([]) }}"
+        unit_key_attr: name
+        unit_template: rclone-http.service.j2

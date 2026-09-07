@@ -1,0 +1,22 @@
+---
+# Start the service written by deploy.yml. Split out so a caller can splice
+# host-side prep in between deploy and start (see deploy.yml's header).
+#
+# Required vars:
+#   quadlet_user  same value passed to deploy.yml
+#   quadlet_name  same value passed to deploy.yml (used as the service name)
+- name: Require podman_quadlet_service start vars
+  ansible.builtin.assert:
+    that:
+      - quadlet_user | default('') | length > 0
+      - quadlet_name | default('') | length > 0
+    fail_msg: "quadlet_user and quadlet_name must both be set before including podman_quadlet_service."
+
+- name: "Ensure {{ quadlet_name }} is running"
+  become_user: "{{ quadlet_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
+  ansible.builtin.systemd_service:
+    name: "{{ quadlet_name }}.service"
+    scope: user
+    state: started

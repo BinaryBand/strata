@@ -1,0 +1,26 @@
+---
+# Restore the latest Restic snapshot per tag back into each app's data
+# directory -- the inverse of backup.yml, run through the same throwaway
+# restic containers. Restic overwrites files that differ but never deletes
+# extras; stop the app's Quadlet unit first so it doesn't read half-written
+# state. The `config` tag is restored as root and only on the controller,
+# mirroring how backup.yml captured it.
+#
+# The container plumbing is shared with backup.yml; see
+# roles/restic_container/.
+- name: Restore server app data from Restic
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    restic_action: restore
+  # See backup.yml for why the password is passed through the environment
+  # rather than in the argument vector.
+  environment:
+    RESTIC_PASSWORD: "{{ restic_password }}"
+
+  roles:
+    - restic_container

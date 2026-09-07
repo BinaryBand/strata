@@ -1,0 +1,15 @@
+---
+# Shared restic settings. These were previously copied verbatim into
+# backup.yml, restore.yml and install_restic.yml -- the repo-path regex in
+# particular existed in triplicate.
+#
+# restic_repository (a local path or an rclone `remote:subpath`) comes from the
+# vault (group_vars/secrets/all.yml) as the every-host default, overridable per
+# host in inventory/host_vars/<host>.yml so each host gets its own repository.
+# `remote:subpath` resolves to the rclone mountpoint the same way
+# rclone.resolve() does on the Python side. Jinja is lazy, so this is only
+# evaluated by the playbooks that actually reference it.
+restic_repo_path: "{{ restic_repository | regex_replace('^([A-Za-z0-9_-]+):/*', '/mnt/rclone/\\1/') | regex_replace('/$', '') }}"
+restic_image: docker.io/restic/restic:latest
+# The static tag covering the operator-owned ansible/inventory tree.
+config_tag: config

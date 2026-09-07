@@ -1,0 +1,86 @@
+---
+# Initialize a Restic repository for server app backups. Restic is not a
+# persistent service, so this runs in a throwaway rootless Podman container as
+# diot -- a build-and-exit run rather than a Quadlet unit.
+- name: Initialize the Restic backup repository
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    # restic_repo_path and restic_image are shared defaults in
+    # inventory/group_vars/all/restic.yml; restic_repository and
+    # restic_password come from the vault.
+  # The repository password reaches restic through podman's environment
+  # passthrough (a bare --env=NAME in the argv above forwards this variable)
+  # rather than as --env=RESTIC_PASSWORD=<value> in the argument vector, where
+  # it was readable via `ps`, via `podman inspect`, and in the task result
+  # printed on any failure. Play-level so every restic task inherits it;
+  # task-level environment: blocks merge with this rather than replacing it,
+  # so the XDG_RUNTIME_DIR entries below still apply.
+  environment:
+    RESTIC_PASSWORD: "{{ restic_password }}"
+
+  tasks:
+    - name: Require Restic repository credentials
+      ansible.builtin.assert:
+        that:
+          - restic_repository | default('') | length > 0
+          - restic_password | default('') | length > 0
+        fail_msg: >-
+          restic_repository and restic_password must be set; run the
+          install_restic runbook, which seeds them into the vault.
+
+    - name: Look up diot's uid and home directory
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ diot_user }}"
+
+    - name: Ensure the repository directory exists
+      # On an rclone mount the directory may not exist yet (a fresh pCloud
+      # folder); podman refuses to start if a --volume source is missing.
+      # Created as diot with no owner/mode args: FUSE mount permissions are
+      # fixed by the mount options, and the local-path case is already
+      # provisioned by guard.storage.
+      become_user: "{{ diot_user }}"
+      ansible.builtin.file:
+        path: "{{ restic_repo_path }}"
+        state: directory
+
+    - name: Check whether the Restic repository is already initialized
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+      no_log: true  # the repository password is injected into this task's environment
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --volume={{ restic_repo_path }}:/repo:Z
+          - --env=RESTIC_REPOSITORY=/repo
+          - --env=RESTIC_PASSWORD
+          - "{{ restic_image }}"
+          - cat
+          - config
+      register: restic_check
+      changed_when: false
+      failed_when: false
+
+    - name: Initialize the Restic repository
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+      when: restic_check.rc != 0
+      no_log: true  # the repository password is injected into this task's environment
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --volume={{ restic_repo_path }}:/repo:Z
+          - --env=RESTIC_REPOSITORY=/repo
+          - --env=RESTIC_PASSWORD
+          - "{{ restic_image }}"
+          - init

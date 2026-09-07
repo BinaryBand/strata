@@ -1,0 +1,22 @@
+---
+# Install a CLI app from a local git repo via pipx.
+# Uninstalls the existing venv first so --force doesn't fall back
+# to rebuilding in place on a stale venv (pipx quirk).
+- name: "Install {{ app_name }} from git via pipx"
+  hosts: local
+
+  vars:
+    user_home: "{{ lookup('env', 'HOME') }}"
+
+  tasks:
+    - name: "Uninstall any existing {{ app_name }} pipx venv"
+      ansible.builtin.command:
+        cmd: "pipx uninstall {{ app_name }}"
+      register: uninstall_result
+      failed_when: false
+      changed_when: uninstall_result.rc == 0
+
+    - name: "Install {{ app_name }} via pipx"
+      ansible.builtin.command:
+        cmd: "pipx install {{ app_repo }}"
+      changed_when: true

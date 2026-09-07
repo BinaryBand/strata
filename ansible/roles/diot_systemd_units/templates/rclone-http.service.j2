@@ -1,0 +1,22 @@
+[Unit]
+Description=rclone serve http {{ item.path }} on 127.0.0.1:{{ item.port }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/rclone serve http {{ item.path }} \
+  --config %h/.config/rclone/rclone.conf \
+  --addr 127.0.0.1:{{ item.port }} \
+  {% if item.base_url is defined and item.base_url %}--baseurl "{{ item.base_url }}" \
+  {% endif %}--vfs-cache-mode full \
+  --vfs-read-chunk-size 64M \
+  --vfs-read-chunk-size-limit 512M \
+  --vfs-cache-max-age 48h \
+  --vfs-cache-max-size 50G \
+  --buffer-size 128M \
+  --dir-cache-time 5m
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

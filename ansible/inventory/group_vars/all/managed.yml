@@ -1,0 +1,9 @@
+rclone_http_serves:
+- base_url: /media/podcasts
+  name: s3
+  path: pcloud:Media/Podcasts
+  port: 8083
+rclone_remotes:
+- pcloud
+rclone_writable_remotes:
+- pcloud

@@ -1,0 +1,62 @@
+---
+# Joins this host to the Tailscale tailnet so it is SSH-reachable from any other
+# device on the same tailnet without opening a router port. tailscaled is a
+# privileged system daemon (needs NET_ADMIN + /dev/net/tun), so this runs as
+# root via the system package repo -- not brew/pipx, which install userland
+# binaries with no service wiring.
+- name: Install Tailscale and join the tailnet
+  hosts: all
+  become: true
+
+  tasks:
+    # Repo setup is the OS-specific seam: the signing key + source path differ
+    # by distribution (debian vs ubuntu), so key off the discovered distro.
+    # The package install itself stays generic (ansible.builtin.package).
+    - name: Add the Tailscale package signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/{{ ansible_facts.distribution | lower }}/{{ ansible_facts.distribution_release }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Add the Tailscale apt repository
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/{{ ansible_facts.distribution | lower }}/{{ ansible_facts.distribution_release }}.tailscale-keyring.list"
+        dest: /etc/apt/sources.list.d/tailscale.list
+        mode: "0644"
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Refresh package cache (apt only)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Install Tailscale
+      ansible.builtin.package:
+        name: tailscale
+        state: present
+
+    - name: Enable and start the tailscaled daemon
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    # Idempotency: only bring the host up if it is not already Running, so
+    # re-runs are no-ops instead of churning the tailnet connection. `up` is
+    # otherwise safe to repeat, but the status gate keeps output honest.
+    - name: Check whether this host is already on the tailnet
+      ansible.builtin.command: tailscale status --json
+      register: _ts_status
+      changed_when: false
+      failed_when: false
+
+    - name: Join the tailnet
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - up
+          - "--authkey={{ tailscale_auth_key }}"
+          - "--hostname={{ inventory_hostname }}"
+      when: (_ts_status.stdout | from_json).BackendState | default('') != 'Running'
+      no_log: true  # the auth key is sensitive -- keep it out of the run log

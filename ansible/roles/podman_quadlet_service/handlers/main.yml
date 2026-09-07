@@ -1,0 +1,10 @@
+---
+# Quadlet units only become systemd services on a daemon-reload, which
+# regenerates them under the user manager.
+- name: Reload quadlet user systemd
+  become_user: "{{ quadlet_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true

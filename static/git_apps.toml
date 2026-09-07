@@ -1,0 +1,7 @@
+# Apps installed from local git repos via pipx.
+# Each entry defines a CLI tool whose source lives in a local repo checkout.
+# Run `strata runbook services.install_from_git` to (re)install all listed apps.
+#
+# [[apps]]
+# name = "my-tool"
+# repo = "/home/operator/Documents/Dev/my-tool"

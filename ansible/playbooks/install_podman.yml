@@ -1,0 +1,24 @@
+---
+# The Podman layer: installs Podman and everything rootless containers shell out
+# to. Depends on the diot user existing (the runbook enforces the order), since
+# Podman here exists to run diot's rootless workloads.
+- name: Install Podman and the rootless container toolchain
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Refresh package cache (apt only)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Install Podman and rootless dependencies
+      ansible.builtin.package:
+        name:
+          - podman
+          - uidmap             # newuidmap/newgidmap: maps the subuid/subgid range
+          - slirp4netns        # rootless networking
+          - fuse-overlayfs     # rootless copy-on-write storage
+          - dbus-user-session  # per-user systemd/dbus for rootless services
+          - acl                # lets Ansible hand temp files to an unprivileged become_user
+        state: present

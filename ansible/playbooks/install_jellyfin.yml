@@ -1,0 +1,59 @@
+---
+# Deploy Jellyfin as a rootless Podman container owned by diot: a Quadlet unit
+# under diot's lingering user manager, no root daemon. Config and cache live on
+# local disk (/srv/jellyfin, diot:jellyfin); the media library is bound
+# read-only from the rclone mount at jellyfin_media_dir (passed as an extravar
+# by install_jellyfin.py, e.g. /mnt/rclone/pcloud/Media).
+- name: Deploy Jellyfin as a rootless Podman container owned by diot
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    jellyfin_group: jellyfin
+    jellyfin_config_dir: /srv/jellyfin/config
+    jellyfin_cache_dir: /srv/jellyfin/cache
+    jellyfin_image: docker.io/jellyfin/jellyfin:latest
+    jellyfin_http_port: "{{ server_apps_defaults.jellyfin.port }}"
+
+  tasks:
+    - name: Require the media mount extravars
+      ansible.builtin.assert:
+        that:
+          - jellyfin_media_dir | default('') | length > 0
+          - jellyfin_rclone_unit | default('') | length > 0
+        fail_msg: >-
+          jellyfin_media_dir and jellyfin_rclone_unit must be set; run this
+          through the services.install_jellyfin runbook, which resolves the
+          rclone mount.
+
+    - name: Deploy and start Jellyfin
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ jellyfin_group }}"
+        quadlet_name: jellyfin
+        quadlet_content: |
+          [Unit]
+          Description=Jellyfin media server
+          # The media volume lives on the rclone FUSE mount owned by the system
+          # manager ({{ jellyfin_rclone_unit }}); a user unit cannot order
+          # against a system unit, so require the mounted path instead.
+          RequiresMountsFor={{ jellyfin_media_dir }}
+
+          [Container]
+          Image={{ jellyfin_image }}
+          Volume={{ jellyfin_config_dir }}:/config:Z
+          Volume={{ jellyfin_cache_dir }}:/cache:Z
+          Volume={{ jellyfin_media_dir }}:/media:ro
+          PublishPort={{ jellyfin_http_port }}:8096
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target

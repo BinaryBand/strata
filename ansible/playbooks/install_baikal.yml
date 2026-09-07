@@ -1,0 +1,42 @@
+---
+# Deploy Baikal CalDAV/CardDAV as a rootless Podman container owned by diot,
+# mirroring the Jellyfin pattern. Admin and user accounts are created
+# through Baikal's web installer on first visit -- this play only stands up the
+# service and its data volumes.
+- name: Deploy Baikal as a rootless Podman container owned by diot
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    baikal_group: baikal
+    baikal_data_dir: /srv/baikal
+    baikal_image: docker.io/ckulka/baikal:nginx
+    baikal_http_port: "{{ server_apps_defaults.baikal.port }}"
+
+  tasks:
+    - name: Deploy and start Baikal
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ baikal_group }}"
+        quadlet_name: baikal
+        quadlet_content: |
+          [Unit]
+          Description=Baikal CalDAV/CardDAV server
+
+          [Container]
+          Image={{ baikal_image }}
+          Volume={{ baikal_data_dir }}/config:/var/www/baikal/config:Z
+          Volume={{ baikal_data_dir }}/Specific:/var/www/baikal/Specific:Z
+          PublishPort={{ baikal_http_port }}:80
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target

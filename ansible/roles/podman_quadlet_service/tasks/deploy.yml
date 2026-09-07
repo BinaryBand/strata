@@ -1,0 +1,82 @@
+---
+# Write a Quadlet unit for a diot-owned rootless Podman service and reload the
+# user systemd manager to pick it up, without starting it yet. Split out from
+# start.yml so a caller can splice host-side prep (permission fixups, sibling
+# config files) in between via `tasks_from`. No caller does today --
+# install_baikal.yml and install_jellyfin.yml both include the role plainly and
+# so run main.yml; the split is kept as the extension point for one that needs
+# it.
+#
+# Required vars:
+#   quadlet_user     the become_user the service runs as (e.g. diot)
+#   quadlet_group    group quadlet_user is added to for shared volume access
+#   quadlet_name     unit basename -- written to <name>.container
+#   quadlet_content  full Quadlet unit file content
+#
+# Optional vars:
+#   quadlet_mode          mode for the .container file (default "0644";
+#                         tighten to "0600" when the unit embeds secrets)
+#   quadlet_extra_notify  extra handler names to notify when the unit changes,
+#                         alongside this role's own reload handler, for a
+#                         caller that must restart something of its own too
+- name: Require podman_quadlet_service deploy vars
+  ansible.builtin.assert:
+    that:
+      - quadlet_user | default('') | length > 0
+      - quadlet_group | default('') | length > 0
+      - quadlet_name | default('') | length > 0
+      - quadlet_content | default('') | length > 0
+    fail_msg: >-
+      quadlet_user, quadlet_group, quadlet_name and quadlet_content must all
+      be set before including podman_quadlet_service.
+
+# The group and its setgid data directory are provisioned declaratively by
+# guard.path on the runbook; this only wires quadlet_user's membership into
+# that group for runtime sharing with other service users.
+- name: "Add {{ quadlet_user }} to the {{ quadlet_group }} group"
+  ansible.builtin.user:
+    name: "{{ quadlet_user }}"
+    groups: "{{ quadlet_group }}"
+    append: true
+
+- name: "Look up {{ quadlet_user }}'s uid and home directory"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ quadlet_user }}"
+
+- name: "Write the {{ quadlet_name }} Quadlet unit"
+  become_user: "{{ quadlet_user }}"
+  vars:
+    quadlet_home: "{{ ansible_facts.getent_passwd[quadlet_user][4] }}"
+  # systemd --user is reached over quadlet_user's lingering runtime dir;
+  # without XDG_RUNTIME_DIR the user-scoped systemd_service tasks below
+  # cannot connect.
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
+  block:
+    - name: Ensure the Quadlet directory exists
+      ansible.builtin.file:
+        path: "{{ quadlet_home }}/.config/containers/systemd"
+        state: directory
+        mode: "0700"
+
+    - name: "Write the {{ quadlet_name }}.container unit"
+      ansible.builtin.copy:
+        dest: "{{ quadlet_home }}/.config/containers/systemd/{{ quadlet_name }}.container"
+        mode: "{{ quadlet_mode | default('0644') }}"
+        content: "{{ quadlet_content }}"
+      notify: "{{ ['Reload quadlet user systemd'] + (quadlet_extra_notify | default([])) }}"
+
+    - name: Generate the service from the new Quadlet before starting it
+      ansible.builtin.meta: flush_handlers
+
+# Always regenerate systemd units from Quadlet files so that a
+# previously-generated service that was lost (reboot, systemd reset, …)
+# is recovered even when the .container file itself hasn't changed.
+- name: Always regenerate user systemd units from Quadlet files
+  become_user: "{{ quadlet_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true

@@ -1,0 +1,25 @@
+---
+- name: Install Flatpak and configure Flathub
+  hosts: local
+  become: true
+
+  tasks:
+    - name: Refresh package cache (apt only)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_facts.pkg_mgr == 'apt'
+
+    - name: Install Flatpak
+      ansible.builtin.package:
+        name: flatpak
+        state: present
+
+    - name: Add Flathub remote
+      ansible.builtin.command:
+        cmd: flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      changed_when: false
+
+    - name: Install GNOME Software Flatpak plugin
+      ansible.builtin.package:
+        name: gnome-software-plugin-flatpak
+        state: present

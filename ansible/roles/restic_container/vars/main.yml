@@ -1,0 +1,13 @@
+---
+# Derived from restic_action; everything else (restic_repo_path, restic_image,
+# config_tag) is a shared default in inventory/group_vars/all/restic.yml.
+
+# `backup` mounts each data directory read-only; `restore` must write into it.
+restic_volume_opts: "{{ ':ro' if restic_action == 'backup' else '' }}"
+
+# Everything before the per-item volume is identical for both verbs.
+restic_argv_prefix:
+  - podman
+  - run
+  - --rm
+  - --volume={{ restic_repo_path }}:/repo:Z

@@ -1,0 +1,98 @@
+---
+# Enable unattended-upgrades restricted to the security pocket.
+#
+# Security-only on purpose: this runs unattended on a machine nobody is
+# watching, so the aim is to close known vulnerabilities without pulling in
+# feature updates that could change behaviour mid-week. Nothing here reboots
+# the host -- enable_crash_recovery.yml owns the reboot policy, and an
+# automatic reboot from a package update would be a surprise this playbook
+# has no business springing.
+#
+# unattended-upgrades is Debian/Ubuntu-only, so every task is gated on the
+# apt package manager rather than assumed. On anything else the play reports
+# that it did nothing instead of half-configuring the host.
+- name: Enable automatic security updates
+  hosts: all
+  become: true
+
+  vars:
+    apt_periodic_conf: /etc/apt/apt.conf.d/20auto-upgrades
+    unattended_conf: /etc/apt/apt.conf.d/52strata-unattended-upgrades
+
+  tasks:
+    - name: Report when the host does not use apt
+      ansible.builtin.debug:
+        msg: >-
+          unattended-upgrades is Debian/Ubuntu-only and this host uses
+          {{ ansible_facts.pkg_mgr }}; skipping automatic security updates.
+      when: ansible_facts.pkg_mgr != 'apt'
+
+    - name: Configure unattended security upgrades
+      when: ansible_facts.pkg_mgr == 'apt'
+      block:
+        - name: Refresh package cache
+          ansible.builtin.apt:
+            update_cache: true
+
+        - name: Install unattended-upgrades
+          ansible.builtin.package:
+            name:
+              - unattended-upgrades
+              - apt-listchanges  # renders what changed into the upgrade mail/log
+            state: present
+
+        - name: Run the periodic apt timers that drive unattended-upgrades
+          ansible.builtin.copy:
+            dest: "{{ apt_periodic_conf }}"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              // Managed by Ansible (strata).
+              APT::Periodic::Update-Package-Lists "1";
+              APT::Periodic::Unattended-Upgrade "1";
+              APT::Periodic::Download-Upgradeable-Packages "1";
+              APT::Periodic::AutocleanInterval "7";
+
+        # A separate file rather than an edit of the shipped
+        # 50unattended-upgrades: apt reads this directory in lexical order, so
+        # 52- wins over 50- and the distribution's copy stays pristine for
+        # dpkg to upgrade without ever raising a conffile prompt.
+        - name: Restrict unattended upgrades to the security pocket
+          ansible.builtin.copy:
+            dest: "{{ unattended_conf }}"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              // Managed by Ansible (strata). Overrides the shipped
+              // 50unattended-upgrades; apt reads this directory in lexical
+              // order, so a higher-numbered file wins.
+              Unattended-Upgrade::Origins-Pattern {
+                  "origin=${distro_id},codename=${distro_codename}-security";
+                  "origin=${distro_id}ESMApps,codename=${distro_codename}-apps-security";
+                  "origin=${distro_id}ESM,codename=${distro_codename}-infra-security";
+              };
+              Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+              Unattended-Upgrade::Remove-Unused-Dependencies "true";
+              // Reboots are enable_crash_recovery.yml's business, not a
+              // package update's.
+              Unattended-Upgrade::Automatic-Reboot "false";
+          notify: Restart unattended-upgrades
+
+        - name: Enable the unattended-upgrades service
+          ansible.builtin.systemd_service:
+            name: unattended-upgrades.service
+            enabled: true
+            state: started
+
+        - name: Verify the configuration parses
+          ansible.builtin.command: unattended-upgrades --dry-run --debug
+          register: unattended_dry_run
+          changed_when: false
+
+  handlers:
+    - name: Restart unattended-upgrades
+      ansible.builtin.systemd_service:
+        name: unattended-upgrades.service
+        state: restarted

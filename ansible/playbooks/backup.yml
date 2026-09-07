@@ -1,0 +1,30 @@
+---
+# Back up server app data into the Restic repository, one snapshot per tag,
+# through throwaway restic containers. App tags run as diot. The static
+# `config` tag covers the operator-owned ansible/inventory tree, so it runs as
+# root instead and only applies on the controller -- on remote hosts the path
+# doesn't exist and the tag is skipped.
+#
+# The container plumbing is shared with restore.yml; see
+# roles/restic_container/.
+- name: Back up server app data with Restic
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    restic_action: backup
+  # The repository password reaches restic through podman's environment
+  # passthrough (a bare --env=NAME in the argv forwards this variable) rather
+  # than as --env=RESTIC_PASSWORD=<value> in the argument vector, where it was
+  # readable via `ps`, via `podman inspect`, and in the task result printed on
+  # any failure. Play-level so every restic task inherits it; task-level
+  # environment: blocks merge with this rather than replacing it, so the
+  # XDG_RUNTIME_DIR entries in the role still apply.
+  environment:
+    RESTIC_PASSWORD: "{{ restic_password }}"
+
+  roles:
+    - restic_container

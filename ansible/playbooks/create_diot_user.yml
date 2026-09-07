@@ -1,0 +1,58 @@
+---
+# 'diot' (container operator) owns the server's rootless Podman containers.
+# This play sets up the account itself: a subuid/subgid range for the user
+# namespaces rootless Podman maps into, and lingering so its systemd --user
+# services keep running with no active login (the normal state on a headless
+# server). The Podman toolchain is a separate layer (see install_podman.yml).
+- name: Create the diot container-operator user
+  hosts: all
+  become: true
+
+  vars:
+    diot_user: diot
+    diot_group: diot
+
+    # Single managed user, so a fixed range is fine and keeps runs
+    # deterministic rather than relying on useradd's auto-allocation.
+    diot_subid_start: 100000
+    diot_subid_count: 65536
+
+  tasks:
+    - name: Create the diot group
+      ansible.builtin.group:
+        name: "{{ diot_group }}"
+        state: present
+
+    - name: Create the diot user
+      ansible.builtin.user:
+        name: "{{ diot_user }}"
+        group: "{{ diot_group }}"
+        shell: /bin/bash
+        create_home: true
+
+    - name: Allocate the subuid range
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ diot_user }}:"
+        line: "{{ diot_user }}:{{ diot_subid_start }}:{{ diot_subid_count }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Allocate the subgid range
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ diot_user }}:"
+        line: "{{ diot_user }}:{{ diot_subid_start }}:{{ diot_subid_count }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable lingering so diot's user services run without a login
+      # `creates` makes this idempotent: systemd marks an enabled user with a
+      # file under /var/lib/systemd/linger, so the command is skipped once set.
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ diot_user }}"
+        creates: "/var/lib/systemd/linger/{{ diot_user }}"

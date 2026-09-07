@@ -1,0 +1,109 @@
+---
+# Copy each remote listed in rclone_synced_remotes (host_vars, maintained by
+# `strata rclone sync add`) from the controller's own rclone.conf onto this
+# host's own user account, so plain `rclone` commands (e.g. `rclone
+# listremotes`) work there too. Credential sync only: unlike enable_rclone.yml
+# this does not mount anything and does not touch diot, so it works on hosts
+# that don't run Podman/diot at all (e.g. a plain SSH device like nas).
+#
+# With an empty list this play does nothing at all -- the rclone install is
+# gated on the list too, since a host with no synced remotes has no reason to
+# grow an rclone. (enable_rclone.yml installs unconditionally because it owns
+# the mount units; this one only distributes credentials.)
+- name: Sync registered rclone remote credentials onto this host
+  hosts: all
+  become: false
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    # rclone_synced_remotes comes from host_vars/<host>.yml. Deliberately NOT
+    # defaulted here: a play var would outrank the host_var and shadow it with
+    # an empty list. Use `| default([])` at each reference so an unset list is
+    # safe on a first run.
+
+  tasks:
+    - name: Install rclone
+      become: true
+      ansible.builtin.package:
+        name: rclone
+        state: present
+      when: rclone_synced_remotes | default([]) | length > 0
+
+    - name: Ensure this user's rclone config directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_facts.env.HOME }}/.config/rclone"
+        state: directory
+        mode: "0700"
+      when: rclone_synced_remotes | default([]) | length > 0
+
+    # Read on the controller, not the target: the credential lives in the
+    # operator's own rclone.conf (authorized via `rclone config create`), and
+    # `rclone config show` prints the exact ini stanza -- header, type,
+    # tokens -- ready to hand to the merge step below.
+    - name: Read each registered remote's config stanza from the controller
+      become: false
+      delegate_to: localhost
+      ansible.builtin.command:
+        argv: [rclone, config, show, "{{ item }}"]
+      register: _remote_stanzas
+      changed_when: false
+      no_log: true
+      loop: "{{ rclone_synced_remotes | default([]) }}"
+
+    # configparser (not a template/blockinfile) because the merge must add or
+    # replace exactly one section while leaving any other remotes already in
+    # this host's rclone.conf untouched -- e.g. a remote it authorized itself.
+    # The stanza and remote name travel through the environment, never the
+    # argv or a rendered file, so the token never appears in logs.
+    - name: Merge each remote's credentials into this host's rclone.conf
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PYEOF'
+          import configparser
+          import io
+          import os
+
+          conf_path = os.path.expanduser("~/.config/rclone/rclone.conf")
+          cfg = configparser.ConfigParser()
+          cfg.read(conf_path)
+
+          new = configparser.ConfigParser()
+          new.read_string(os.environ["STANZA"])
+          section = os.environ["REMOTE_NAME"]
+
+          if cfg.has_section(section):
+              cfg.remove_section(section)
+          cfg.add_section(section)
+          for key, value in new[section].items():
+              cfg.set(section, key, value)
+
+          # Compare before writing so a re-run of an already-synced remote
+          # reports ok rather than changed. The task used to be
+          # changed_when: true, which made every run look like it had
+          # rewritten every host's credentials.
+          buf = io.StringIO()
+          cfg.write(buf)
+          rendered = buf.getvalue()
+          try:
+              with open(conf_path) as f:
+                  current = f.read()
+          except FileNotFoundError:
+              current = ""
+
+          if rendered != current:
+              with open(conf_path, "w") as f:
+                  f.write(rendered)
+              print("MERGED")
+          PYEOF
+      environment:
+        STANZA: "{{ item.stdout }}"
+        REMOTE_NAME: "{{ item.item }}"
+      no_log: true
+      register: _merge_result
+      changed_when: "'MERGED' in _merge_result.stdout"
+      loop: "{{ _remote_stanzas.results }}"
+      loop_control:
+        label: "{{ item.item }}"

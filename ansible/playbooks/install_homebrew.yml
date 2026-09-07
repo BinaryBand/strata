@@ -1,0 +1,36 @@
+---
+- name: Install Homebrew and dev tools
+  hosts: all
+
+  tasks:
+    - name: Create Homebrew prefix directory
+      ansible.builtin.file:
+        path: /home/linuxbrew/.linuxbrew
+        state: directory
+        owner: "{{ ansible_facts['user_id'] }}"
+        group: "{{ ansible_facts['user_id'] }}"
+        mode: '0755'
+      become: true
+
+    - name: Install Homebrew
+      ansible.builtin.shell:
+        cmd: NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        creates: /home/linuxbrew/.linuxbrew/bin/brew
+
+    - name: Install dev packages via Homebrew
+      ansible.builtin.command:
+        cmd: /home/linuxbrew/.linuxbrew/bin/brew install {{ item.name }}
+      args:
+        creates: "{{ item.creates }}"
+      loop:
+        - { name: node,    creates: /home/linuxbrew/.linuxbrew/bin/node }
+        - { name: pipx,    creates: /home/linuxbrew/.linuxbrew/bin/pipx }
+        - { name: openjdk, creates: /home/linuxbrew/.linuxbrew/opt/openjdk }
+        - { name: rust,    creates: /home/linuxbrew/.linuxbrew/bin/rustc }
+
+    - name: Install uv via pipx
+      ansible.builtin.command:
+        cmd: /home/linuxbrew/.linuxbrew/bin/pipx install uv
+      args:
+        creates: "{{ ansible_facts['env']['HOME'] }}/.local/bin/uv"

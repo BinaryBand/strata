@@ -1,0 +1,95 @@
+---
+- name: Enable crash recovery and post-crash diagnostics
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Auto-reboot after a kernel panic or oops
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-panic.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible -- reboot 10s after a kernel panic instead of
+          # hanging forever, and treat an oops as a panic so it reboots too.
+          kernel.panic = 10
+          kernel.panic_on_oops = 1
+      notify: Apply sysctl settings
+
+    - name: Probe for the Intel chipset watchdog (iTCO_wdt)
+      ansible.builtin.command: modprobe iTCO_wdt
+      failed_when: false
+      changed_when: false
+
+    - name: Check whether the iTCO_wdt module loaded
+      ansible.builtin.stat:
+        path: /sys/module/iTCO_wdt
+      register: itco_module
+
+    - name: Check whether a watchdog device is exposed
+      ansible.builtin.stat:
+        path: /dev/watchdog
+      register: watchdog_device
+
+    - name: Configure the hardware watchdog
+      when: itco_module.stat.exists and watchdog_device.stat.exists
+      block:
+        - name: Load iTCO_wdt at every boot
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/watchdog.conf
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              iTCO_wdt
+
+        - name: Ensure the systemd manager drop-in directory exists
+          ansible.builtin.file:
+            path: /etc/systemd/system.conf.d
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Have systemd pet the watchdog (hard reset after a ~30s freeze)
+          ansible.builtin.copy:
+            dest: /etc/systemd/system.conf.d/10-watchdog.conf
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Managed by Ansible.
+              [Manager]
+              RuntimeWatchdogSec=30s
+          notify: Re-execute systemd manager
+
+    - name: Report when no hardware watchdog is available
+      ansible.builtin.debug:
+        msg: >-
+          iTCO_wdt exposes no /dev/watchdog on this host; skipping watchdog
+          setup and relying on kernel.panic auto-reboot only.
+      when: not (itco_module.stat.exists and watchdog_device.stat.exists)
+
+    - name: Allow the login user to read system and kernel logs
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups:
+          - adm
+          - systemd-journal
+        append: true
+
+    - name: Persist firmware crash dumps across reboots
+      ansible.builtin.systemd_service:
+        name: systemd-pstore.service
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Apply sysctl settings
+      ansible.builtin.command: sysctl --system
+      changed_when: true
+
+    - name: Re-execute systemd manager
+      ansible.builtin.command: systemctl daemon-reexec
+      changed_when: true

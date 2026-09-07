@@ -1,0 +1,86 @@
+---
+- name: Install Google Antigravity CLI via local Homebrew tap
+  hosts: local
+
+  vars:
+    tap_name: mylocal/tools
+    tap_source: "{{ (playbook_dir + '/../../static/homebrew-tools') | realpath }}"
+    formula_dir: "{{ tap_source }}/Formula"
+    formula_file: "{{ formula_dir }}/antigravity.rb"
+    brew_bin: /home/linuxbrew/.linuxbrew/bin/brew
+    antigravity_bin: /home/linuxbrew/.linuxbrew/bin/antigravity
+
+  tasks:
+    - name: Require Homebrew is already installed
+      ansible.builtin.stat:
+        path: "{{ brew_bin }}"
+      register: brew_stat
+      failed_when: not brew_stat.stat.exists
+
+    - name: Ensure the Homebrew tap source directory exists
+      ansible.builtin.file:
+        path: "{{ formula_dir }}"
+        state: directory
+        owner: "{{ ansible_facts['user_id'] }}"
+        group: "{{ ansible_facts['user_id'] }}"
+        mode: "0755"
+
+    - name: Ensure the antigravity formula is present
+      ansible.builtin.copy:
+        src: "{{ formula_file }}"
+        dest: "{{ formula_file }}"
+        owner: "{{ ansible_facts['user_id'] }}"
+        group: "{{ ansible_facts['user_id'] }}"
+        mode: "0644"
+        force: true
+
+    - name: Initialize git repository in the tap source (if needed)
+      ansible.builtin.command:
+        cmd: git init
+        chdir: "{{ tap_source }}"
+        creates: "{{ tap_source }}/.git"
+
+    - name: Commit formula changes to the tap repository
+      ansible.builtin.shell:
+        cmd: |
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ansible: update antigravity formula [{{ ansible_facts['date_time']['iso8601'] }}]"
+          fi
+        chdir: "{{ tap_source }}"
+      changed_when: false
+
+    - name: Untap any stale mylocal/tools reference
+      ansible.builtin.command:
+        cmd: "{{ brew_bin }} untap {{ tap_name }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Tap the local Homebrew repository
+      ansible.builtin.command:
+        cmd: "{{ brew_bin }} tap {{ tap_name }} {{ tap_source }}"
+      changed_when: false
+
+    - name: Install antigravity formula from the local tap
+      ansible.builtin.command:
+        cmd: "{{ brew_bin }} install --build-from-source {{ tap_name }}/antigravity"
+        creates: "{{ antigravity_bin }}"
+
+    - name: Run the formula's built-in test
+      ansible.builtin.command:
+        cmd: "{{ brew_bin }} test {{ tap_name }}/antigravity"
+      changed_when: false
+
+    - name: Verify antigravity reports its version
+      ansible.builtin.command:
+        cmd: "{{ antigravity_bin }} --version"
+      register: version_check
+      changed_when: false
+
+    - name: Confirm the installed version
+      ansible.builtin.assert:
+        that:
+          - version_check.stdout is match("[0-9]+\\.[0-9]+\\.[0-9]+")
+        fail_msg: >-
+          antigravity --version did not return a semver string
+          (got "{{ version_check.stdout }}").

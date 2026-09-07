@@ -1,0 +1,3 @@
+---
+# Lowest precedence, so inventory or a caller can override.
+diot_user: diot

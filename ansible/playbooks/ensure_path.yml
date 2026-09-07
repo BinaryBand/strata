@@ -1,0 +1,30 @@
+---
+# Generic filesystem-path guard, driven by guard.path via extravars: ensure a
+# file or directory exists on the local filesystem with the requested ownership
+# and mode, creating the owning group first when one is named. Kept parameter-
+# driven so any runbook can declare a data path declaratively rather than
+# hand-rolling create/chown/chmod tasks.
+# hosts: all, not local -- @guard.path is declared by runbooks that deploy to
+# any target, so scoping this play to the [local] group made it match no hosts
+# on a remote run. A play that matches nothing is not an ansible failure, so the
+# guard executor saw exit code 0 and ran main() against a directory that had
+# never been created. The runner always passes --limit <target>, which is what
+# actually scopes the run to one host.
+- name: Ensure a guarded filesystem path
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Create the owning group
+      ansible.builtin.group:
+        name: "{{ guard_group }}"
+        state: present
+      when: guard_group | default('') | length > 0
+
+    - name: Ensure the path exists with the requested ownership and mode
+      ansible.builtin.file:
+        path: "{{ guard_path }}"
+        state: "{{ guard_state | default('directory') }}"
+        owner: "{{ guard_owner | default(omit) }}"
+        group: "{{ guard_group | default(omit) }}"
+        mode: "{{ guard_mode | default(omit) }}"

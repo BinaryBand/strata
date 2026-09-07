@@ -1,0 +1,126 @@
+[project]
+name = "strata"
+version = "0.1.0"
+description = "Ansible config manager for provisioning a personal Linux machine."
+requires-python = ">=3.12"
+dependencies = [
+    "ansible-runner (>=2.4.3,<3.0.0)",
+    "ansible-core (>=2.21.1,<3.0.0)",
+    "typer (>=0.26.8,<0.27.0)",
+    "keyring (>=25.7.0,<26.0.0)",
+    "pydantic (>=2.0,<3.0)",
+    "questionary (>=2.1.1,<3.0.0)",
+]
+
+[project.scripts]
+strata = "strata.cli.main:app"
+
+[build-system]
+requires = ["uv_build>=0.10.0,<1.0.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0,<10.0)",
+    "ruff (>=0.15,<1.0)",
+    "ty (>=0.0.30,<1.0)",
+    "vulture (>=2.14,<3.0)",
+    "import-linter (>=2.12,<3.0)",
+    # Provides both the `ast-grep` and `sg` binaries. Declared here rather than
+    # left to a system package manager so test_astgrep never silently skips.
+    "ast-grep-cli (>=0.44,<0.45)",
+    "pytest-bdd>=8.1.0",
+]
+
+[tool.importlinter]
+root_packages = ["strata"]
+
+[[tool.importlinter.contracts]]
+# The one standard layout, enforced everywhere. `exhaustive = true` means any
+# top-level package that is NOT one of these three is a contract violation, so
+# the directory structure is mandatory rather than merely conventional. Imports
+# may only point downward: cli -> adapters -> core. cli is the composition
+# root: it constructs concrete adapters and passes them into core's use-case
+# functions, so no dedicated orchestration layer is needed.
+name = "Standard layered layout"
+type = "layers"
+containers = ["strata"]
+layers = [
+    "cli",
+    "adapters",
+    "core",
+]
+exhaustive = true
+exhaustive_ignores = ["__main__"]
+
+[tool.ruff]
+line-length = 100
+# target-version is deliberately unset: ruff derives it from requires-python.
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",   # incompatible with D211 (blank line before class docstring)
+    "D213",   # incompatible with D212 (multi-line summary position)
+    "COM812", # conflicts with the formatter (trailing comma)
+    "ISC001", # conflicts with the formatter (implicit string concat)
+    "CPY001", # no copyright headers in this project
+    # TC001/2/3 would demand `if TYPE_CHECKING:` blocks, which
+    # static/rules/no-type-checking-guard.yml bans outright. Leaving them on
+    # puts ruff and ast-grep in a deadlock. TC004/005/006/010 stay ON.
+    "TC001",
+    "TC002",
+    "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR2004", "ANN", "D", "INP001", "SLF001"]
+# The pytest-bdd feature suite is test code: same allowances as tests/**.
+"features/**" = ["S", "PLR2004", "ANN", "D", "INP001", "SLF001"]
+"conftest.py" = ["S", "ANN", "D", "INP001"]
+# Two standalone stdlib-only scripts that sit outside the layered package.
+# bootstrap.py runs before the package is installable; ansible/vault_pass.py is
+# invoked by ansible as --vault-password-file and its stdout IS its interface.
+# For both, terminal output and shelling out are the job, not a layering leak.
+"bootstrap.py" = ["T20", "S603", "S607", "INP001"]
+"ansible/vault_pass.py" = ["T20", "INP001"]
+# print() and Typer's function-call defaults / boolean flags are idiomatic here.
+# PLR0913 joins them for the same reason: a Typer command's parameters ARE its
+# CLI flags, so "too many arguments" measures the size of the command's public
+# surface, not the complexity of the function. Splitting a 6-flag command to
+# satisfy it would change the CLI, not improve the code. C901 is deliberately
+# NOT ignored -- branchy command bodies are still worth splitting.
+"strata/cli/**" = ["T20", "B008", "FBT001", "FBT002", "PLR0913"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
+
+[tool.ruff.lint.pylint]
+max-args = 5
+max-branches = 10
+max-returns = 5
+max-statements = 40
+
+[tool.vulture]
+min_confidence = 80
+paths = ["strata", "tests"]
+ignore_decorators = ["@pytest.fixture", "@pytest.mark.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "features"]
+markers = [
+    "integration: runs real ansible-runner/ansible-vault against a disposable Podman container (slow, needs podman + containers.podman collection); excluded by default, run with `pytest -m integration`",
+    # pytest-bdd turns each Gherkin tag into a marker of the same name, so the
+    # tags features/README.md documents have to be registered here too.
+    "controller-only: asserts behaviour gated on the target being the controller (ansible_connection=local)",
+    "wip: a .feature with no step definitions yet (see tests/test_feature_bindings.py)",
+]
+# --import-mode=importlib so the mirrored tests/unit/ tree can reuse test_*.py
+# basenames across directories without module-name collisions.
+addopts = "-m 'not integration' --import-mode=importlib"
+
+[tool.uv.build-backend]
+module-root = ""

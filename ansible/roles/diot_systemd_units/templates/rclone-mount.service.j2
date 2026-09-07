@@ -1,0 +1,14 @@
+[Unit]
+Description=rclone mount {{ item }}: at /mnt/rclone/{{ item }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/rclone mount {{ item }}: /mnt/rclone/{{ item }} --config %h/.config/rclone/rclone.conf{{ '' if item in (rclone_writable_remotes | default([])) else ' --read-only' }} --allow-other --vfs-cache-mode full --dir-cache-time 1h
+ExecStop=/usr/bin/fusermount3 -u /mnt/rclone/{{ item }}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,71 @@
+---
+# Shared restic-through-podman machinery for backup.yml and restore.yml, which
+# were ~76 identical lines apart from the verb and whether each data volume is
+# mounted read-only. Callers set restic_action to "backup" or "restore".
+#
+# Restic runs in a throwaway rootless Podman container as diot rather than as a
+# Quadlet unit -- it is a build-and-exit run, not a persistent service.
+- name: Require Restic credentials and backup paths
+  ansible.builtin.assert:
+    that:
+      - restic_action in ['backup', 'restore']
+      - restic_repository | default('') | length > 0
+      - restic_password | default('') | length > 0
+      - backup_paths | default({}) | length > 0
+    fail_msg: >-
+      restic_repository, restic_password, and backup_paths must be set; run
+      this through the infrastructure.{{ restic_action | default('backup') }}
+      runbook, which seeds the credentials into the vault and collects the app
+      backup paths.
+
+- name: Look up diot's uid and home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ diot_user }}"
+
+# Snapshots store each app under /data/<tag>, so restoring with --target=/
+# writes straight back into the bound volume.
+- name: Run restic {{ restic_action }} for each app's data directory as diot
+  become_user: "{{ diot_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+  loop: "{{ backup_paths | dict2items | rejectattr('key', 'eq', config_tag) | list }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true  # the repository password is injected into this task's environment
+  ansible.builtin.command:
+    argv: >-
+      {{ restic_argv_prefix
+         + ['--volume=' ~ item.value ~ ':/data/' ~ item.key ~ restic_volume_opts,
+            '--env=RESTIC_REPOSITORY=/repo',
+            '--env=RESTIC_PASSWORD',
+            restic_image]
+         + (['backup', '--tag=' ~ item.key, '/data/' ~ item.key]
+            if restic_action == 'backup'
+            else ['restore', 'latest', '--tag=' ~ item.key, '--target=/']) }}
+  changed_when: true
+
+- name: Check for the controller-side config directory
+  when: config_tag in backup_paths
+  ansible.builtin.stat:
+    path: "{{ backup_paths[config_tag] }}"
+  register: config_dir
+
+# Operator-owned repo config (host_vars, group_vars, hosts.ini) is handled as
+# root, not diot: it lives in operator's checkout, outside diot's reach. Only
+# applies on the controller -- elsewhere the path does not exist and the tag is
+# skipped.
+- name: Run restic {{ restic_action }} for the operator config as root (controller only)
+  when: config_tag in backup_paths and config_dir.stat.exists
+  no_log: true  # the repository password is injected into this task's environment
+  ansible.builtin.command:
+    argv: >-
+      {{ restic_argv_prefix
+         + ['--volume=' ~ backup_paths[config_tag] ~ ':/data/' ~ config_tag ~ restic_volume_opts,
+            '--env=RESTIC_REPOSITORY=/repo',
+            '--env=RESTIC_PASSWORD',
+            restic_image]
+         + (['backup', '--tag=' ~ config_tag, '/data/' ~ config_tag]
+            if restic_action == 'backup'
+            else ['restore', 'latest', '--tag=' ~ config_tag, '--target=/']) }}
+  changed_when: true
