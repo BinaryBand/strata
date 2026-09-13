@@ -6,6 +6,8 @@ behaviour lives in tests/unit/cli/commands/test_<group>.py.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -129,3 +131,70 @@ def test_old_rclone_unserve_fails() -> None:
     """Old 'rclone unserve' command no longer exists."""
     result = runner.invoke(app, ["rclone", "unserve", "media"])
     assert result.exit_code != 0
+
+
+# -- gui -----------------------------------------------------------------
+
+
+@pytest.fixture
+def gui_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Record gui_server.serve's kwargs instead of starting a real server."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        main.gui_server,
+        "serve",
+        lambda web_dir, **kwargs: calls.append({"web_dir": web_dir, **kwargs}),
+    )
+    return calls
+
+
+@pytest.fixture
+def built_gui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the command at a directory that exists, standing in for a build."""
+    monkeypatch.setattr(main.paths, "GUI_WEB_BUILD_DIR", tmp_path)
+    return tmp_path
+
+
+def test_gui_reports_a_missing_build_with_the_build_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """gui/build/web is gitignored, so "not built yet" is the common first run."""
+    monkeypatch.setattr(main.paths, "GUI_WEB_BUILD_DIR", tmp_path / "absent")
+    result = runner.invoke(app, ["gui"])
+    assert result.exit_code == 1
+    assert "flutter build web" in result.output
+
+
+def test_gui_serves_the_build_and_opens_a_browser(built_gui: Path, gui_calls: list[dict]) -> None:
+    result = runner.invoke(app, ["gui"])
+    assert result.exit_code == 0
+    assert gui_calls == [
+        {"web_dir": built_gui, "port": 8765, "open_browser": True, "announce": main.typer.echo}
+    ]
+
+
+@pytest.mark.usefixtures("built_gui")
+def test_gui_no_browser_only_serves(gui_calls: list[dict]) -> None:
+    """The flag inverts into open_browser; an inverted `not` would show here."""
+    result = runner.invoke(app, ["gui", "--no-browser"])
+    assert result.exit_code == 0
+    assert gui_calls[0]["open_browser"] is False
+
+
+@pytest.mark.usefixtures("built_gui")
+def test_gui_forwards_a_custom_port(gui_calls: list[dict]) -> None:
+    result = runner.invoke(app, ["gui", "--port", "9000"])
+    assert result.exit_code == 0
+    assert gui_calls[0]["port"] == 9000
+
+
+@pytest.mark.usefixtures("built_gui")
+def test_gui_reports_a_taken_port_without_a_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _in_use(_web_dir: Path, **_kwargs: object) -> None:
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(main.gui_server, "serve", _in_use)
+    result = runner.invoke(app, ["gui", "--port", "9000"])
+    assert result.exit_code == 1
+    assert "9000" in result.output
+    assert "Address already in use" in result.output
