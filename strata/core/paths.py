@@ -20,8 +20,3 @@ INVENTORY_DIR = ANSIBLE_DIR / "inventory"
 GROUP_VARS_DIR = INVENTORY_DIR / "group_vars"
 HOST_VARS_DIR = INVENTORY_DIR / "host_vars"
 STATIC_DIR = PROJECT_ROOT / "static"
-
-# The Flutter GUI. Only the web bundle is referenced from Python: `strata gui`
-# serves it. It exists only after `flutter build web` and is gitignored, so
-# every reader has to handle it being absent.
-GUI_WEB_BUILD_DIR = PROJECT_ROOT / "gui" / "build" / "web"

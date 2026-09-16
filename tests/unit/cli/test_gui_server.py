@@ -1,6 +1,6 @@
 """Unit tests for strata.cli.gui_server -- the GUI's data snapshot and server.
 
-The snapshot is a wire format: gui/lib/data/strata_cli.dart parses it by key and
+The snapshot is a wire format: the GUI app's lib/data/strata_cli.dart parses it by key and
 maps the guard `type` strings onto a Dart enum, falling back silently when it
 meets one it doesn't know. Nothing but these tests keeps the two sides in step,
 so the contract tests below assert the key set and that every requirement
@@ -9,19 +9,19 @@ dataclass has a label.
 
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import typing
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
 from strata.cli import gui_server
 from strata.core import requirements as req
 
-# The keys gui/lib/data/strata_cli.dart reads out of each object. Changing a
+# The keys the GUI app's lib/data/strata_cli.dart reads out of each object. Changing a
 # name here without changing the Dart side makes the GUI fall back to sample
 # data at runtime, with no error anywhere.
 _RUNBOOK_KEYS = {
@@ -104,7 +104,7 @@ def test_every_requirement_type_has_a_label() -> None:
     missing = sorted(t.__name__ for t in declared - set(gui_server._GUARD_LABELERS))
     assert not missing, (
         f"requirement types with no gui_server label: {missing}. "
-        "Add one to _GUARD_LABELERS and a GuardType to gui/lib/data/strata_cli.dart."
+        "Add one to _GUARD_LABELERS and a GuardType to the GUI app's lib/data/strata_cli.dart."
     )
 
 
@@ -145,7 +145,7 @@ def test_description_strips_prefix_and_capitalizes(raw: str, expected: str) -> N
 
 
 @pytest.fixture
-def served(tmp_path: Path) -> str:
+def served() -> str:
     """Run `serve` on an ephemeral port in a thread; yield its base URL.
 
     Port 0 lets the kernel pick, so a developer already running `strata gui`
@@ -153,7 +153,6 @@ def served(tmp_path: Path) -> str:
     ThreadingHTTPServer has no clean cross-version shutdown from inside a
     KeyboardInterrupt-suppressing serve().
     """
-    (tmp_path / "index.html").write_text("<!doctype html><title>stub</title>")
     urls: list[str] = []
     ready = threading.Event()
 
@@ -165,8 +164,7 @@ def served(tmp_path: Path) -> str:
 
     thread = threading.Thread(
         target=gui_server.serve,
-        args=(tmp_path,),
-        kwargs={"port": 0, "open_browser": False, "announce": announce},
+        kwargs={"port": 0, "allow_origins": ["https://box.example.ts.net"], "announce": announce},
         daemon=True,
     )
     thread.start()
@@ -174,21 +172,30 @@ def served(tmp_path: Path) -> str:
     return urls[0]
 
 
+def _get(url: str, origin: str | None = None) -> http.client.HTTPResponse:
+    request = urllib.request.Request(url)
+    if origin is not None:
+        request.add_header("Origin", origin)
+    return urllib.request.urlopen(request, timeout=5)
+
+
 def test_serve_hands_out_the_data_endpoint(served: str) -> None:
-    with urllib.request.urlopen(f"{served}/api/gui-data", timeout=5) as response:
+    with _get(f"{served}/api/gui-data") as response:
         assert response.headers["Content-Type"] == "application/json"
         payload = json.loads(response.read())
     assert set(payload) == {"runbooks", "import_failures", "devices"}
 
 
-def test_serve_hands_out_static_files(served: str) -> None:
-    with urllib.request.urlopen(f"{served}/index.html", timeout=5) as response:
-        assert b"stub" in response.read()
-
-
 def test_serve_404s_an_unknown_path(served: str) -> None:
     with pytest.raises(urllib.error.HTTPError) as excinfo:
-        urllib.request.urlopen(f"{served}/nope.js", timeout=5)
+        _get(f"{served}/nope.js")
+    assert excinfo.value.code == 404
+
+
+def test_serve_serves_no_static_files(served: str) -> None:
+    """The app lives in its own repo now; a path that isn't a route is a 404."""
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        _get(f"{served}/index.html")
     assert excinfo.value.code == 404
 
 
@@ -196,3 +203,35 @@ def test_serve_announces_the_port_it_actually_bound(served: str) -> None:
     """With port 0 the kernel picks; the announced URL has to be the real one."""
     assert served.startswith("http://127.0.0.1:")
     assert int(served.rsplit(":", 1)[1]) > 0
+
+
+# -- CORS ----------------------------------------------------------------
+
+
+def test_a_loopback_origin_is_echoed_back(served: str) -> None:
+    """`flutter run` picks a fresh port per launch, so any loopback port passes."""
+    with _get(f"{served}/api/gui-data", origin="http://localhost:54321") as response:
+        assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:54321"
+
+
+def test_a_named_origin_is_echoed_back(served: str) -> None:
+    with _get(f"{served}/api/gui-data", origin="https://box.example.ts.net") as response:
+        assert response.headers["Access-Control-Allow-Origin"] == "https://box.example.ts.net"
+
+
+def test_an_unnamed_remote_origin_gets_no_cors_header(served: str) -> None:
+    """Without the header the browser discards the response, which is the point."""
+    with _get(f"{served}/api/gui-data", origin="https://evil.example") as response:
+        assert response.headers["Access-Control-Allow-Origin"] is None
+
+
+def test_preflight_allows_the_token_header(served: str) -> None:
+    request = urllib.request.Request(
+        f"{served}/api/run",
+        method="OPTIONS",
+        headers={"Origin": "http://localhost:54321"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.status == 204
+        assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
+        assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:54321"

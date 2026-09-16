@@ -1,11 +1,11 @@
 ---
 name: verify
-description: Build, launch and drive strata's CLI, local GUI server and Flutter web app to capture runtime evidence.
+description: Build, launch and drive strata's CLI and local GUI API server to capture runtime evidence.
 ---
 
 # Verifying strata at runtime
 
-Three surfaces. Pick the one the diff touches.
+Two surfaces. Pick the one the diff touches.
 
 ## 1. CLI
 
@@ -22,11 +22,11 @@ Runbooks are never standalone scripts: `uv run strata runbook <name> --target <h
 ## 2. The local GUI server
 
 ```bash
-uv run strata gui --no-browser --port 8791 > gui.log 2>&1 &
+uv run strata gui --port 8791 > gui.log 2>&1 &
 TOKEN=$(grep -oP 'Access token: \K.*' gui.log)
 ```
 
-Binds 127.0.0.1 only; prints the URL and token on two separate lines. Serves `gui/build/web` from disk per request, so rebuilding the web app does **not** need a server restart.
+Binds 127.0.0.1 only; prints the URL and token on two separate lines. It serves the `/api/*` routes and nothing else -- any other path is a 404, so there is no web app to drive from here. The Flutter app lives in its own repository at `~/Dev/apps/strata` and is built, analyzed and driven there.
 
 Read routes are open; `POST`/`DELETE` need `Authorization: Bearer $TOKEN`:
 
@@ -41,36 +41,13 @@ curl -s -H "Authorization: Bearer $TOKEN" -X POST http://127.0.0.1:8791/api/run 
 
 Only one run is tracked at a time; a second concurrent `POST /api/run` gets 409.
 
-## 3. The Flutter web app
-
-**`strata gui` serves whatever is already in `gui/build/web` and never rebuilds it.** A stale bundle looks like a working app while silently exercising none of your Dart changes. Always confirm before trusting a UI observation:
+A cross-origin caller needs a CORS header back, so send an `Origin` when checking that:
 
 ```bash
-grep -c "runbook-status" gui/build/web/main.dart.js   # 0 => stale
-cd gui && flutter build web                            # ~40s; build/ is gitignored
-cd gui && flutter analyze
+curl -si -H "Origin: http://localhost:12345" http://127.0.0.1:8791/api/gui-data | grep -i access-control
 ```
 
-Drive it headlessly -- Playwright browsers are already installed (`install-deps` fails without sudo; you don't need it):
-
-```bash
-cd <scratchpad> && npm install playwright@1.63.0
-```
-
-```js
-import { chromium } from 'playwright';
-const b = await chromium.launch();
-const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
-p.on('response', r => { if (r.url().includes('/api/')) console.log(r.status(), r.url()); });
-p.on('requestfailed', r => console.log('FAILED', r.url()));   // catches server-side crashes
-await p.goto('http://127.0.0.1:8791/?token=' + TOKEN, { waitUntil: 'load' });
-await p.waitForTimeout(9000);        // CanvasKit needs ~8s before anything renders
-await p.screenshot({ path: 'shot.png' });
-```
-
-It renders to canvas, so there is no DOM to query -- click by coordinate off a screenshot and verify by screenshot. Logging `/api/*` responses is the reliable signal for what the client actually did; a `requestfailed` / `net::ERR_EMPTY_RESPONSE` means a handler raised and the connection dropped.
-
-Sidebar coordinates at 1400x900: Runbooks (49, 91), Server apps (57, 332), Machines (49, 383).
+Loopback origins are echoed automatically; anything else needs `--allow-origin <origin>` on the server.
 
 ## Safety
 

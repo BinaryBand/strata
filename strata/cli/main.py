@@ -21,7 +21,6 @@ from strata.cli.commands import device as device_cmds
 from strata.cli.commands import rclone as rclone_cmds
 from strata.cli.dispatch import run_runbook, runbook_completer, show_runbook_list
 from strata.cli.picker import pick_runbook
-from strata.core import paths
 
 # -- App tree -----------------------------------------------------------
 
@@ -97,42 +96,36 @@ def gui(
         int,
         typer.Option("--port", "-p", help="Loopback port to serve on."),
     ] = 8765,
-    no_browser: Annotated[
-        bool,
-        typer.Option("--no-browser", help="Serve without opening a browser."),
-    ] = False,
+    allow_origin: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow-origin",
+            help="Extra browser origin the app may call from. Repeatable; "
+            "loopback is always allowed.",
+        ),
+    ] = None,
 ) -> None:
-    """Open the GUI in a browser, serving the runbook catalog and action API on loopback.
+    """Serve the runbook catalog and action API on loopback for the GUI app.
 
-    Serves the built Flutter web app plus GET /api/gui-data -- the same
-    read-only snapshot `strata dev gui-data` prints -- and the action routes
-    that run a runbook, manage devices and set secrets, from one 127.0.0.1
-    port, then opens it. Runs until interrupted.
+    Serves GET /api/gui-data -- the same read-only snapshot `strata dev
+    gui-data` prints -- and the action routes that run a runbook, manage
+    devices and set secrets, on one 127.0.0.1 port. Runs until interrupted.
+    It serves no web app: the GUI is a separate Flutter project, launched by
+    its own tooling, that calls this.
 
-    The action routes require a bearer token, printed below and embedded in
-    the URL this opens locally; `strata dev gui-token` prints it again for
-    pasting into a second device. Reach this from another device on your
-    tailnet with `tailscale serve <port>` -- not `tailscale funnel`, which
-    would put a tool that reads the vault and drives ansible-runner on the
-    open internet -- and hand that device the token too, since the tailnet
-    alone doesn't gate who can run a playbook against this box.
-
-    Requires `flutter build web` in gui/ first; this does not build it.
+    The action routes require a bearer token, printed on startup; `strata dev
+    gui-token` prints it again for pasting into a second device. Reach this
+    from another device on your tailnet with `tailscale serve <port>` -- not
+    `tailscale funnel`, which would put a tool that reads the vault and drives
+    ansible-runner on the open internet -- and hand that device the token too,
+    since the tailnet alone doesn't gate who can run a playbook against this
+    box. Name that device's origin with --allow-origin so the browser there
+    doesn't discard the responses.
     """
-    web_dir = paths.GUI_WEB_BUILD_DIR
-    if not web_dir.is_dir():
-        typer.echo(
-            f"No GUI build at {web_dir}.\n"
-            "Build it first:  cd gui && flutter create . && flutter build web",
-            err=True,
-        )
-        raise typer.Exit(1)
-
     try:
         gui_server.serve(
-            web_dir,
             port=port,
-            open_browser=not no_browser,
+            allow_origins=allow_origin or [],
             announce=typer.echo,
         )
     except OSError as exc:

@@ -1,21 +1,26 @@
-"""The GUI's data snapshot and the loopback server serving it plus the action API.
+"""The GUI's data snapshot and the loopback API server serving it.
 
-`gui/` is a Flutter app over the runbook catalog. It reads and drives strata
-through one seam. `GET /api/gui-data` is read-only -- the declarations
-`discovery`/`guard.declared()`/`inventory` produced, nothing executed. Every
-other `/api/*` route's body lives in `gui_actions.py`, a thin bridge onto
-something that already exists (`guard_executor.execute`, `inventory.add`,
-`secrets.set_secret`, ...); this module's job is serving and routing only.
-`strata gui` serves this alongside the built web app and opens a browser;
-`strata dev gui-data` prints the read-only snapshot once for the desktop build.
+The GUI is a separate Flutter app, in its own repository, that reads and
+drives strata through this one seam. `GET /api/gui-data` is read-only -- the
+declarations `discovery`/`guard.declared()`/`inventory` produced, nothing
+executed. Every other `/api/*` route's body lives in `gui_actions.py`, a thin
+bridge onto something that already exists (`guard_executor.execute`,
+`inventory.add`, `secrets.set_secret`, ...); this module's job is serving and
+routing only. `strata gui` runs the server; `strata dev gui-data` prints the
+read-only snapshot once.
+
+This serves the API and nothing else: no static files, no built web bundle.
+The app is served by its own tooling, so it reaches this from a different
+origin, and every response therefore carries CORS headers. Loopback origins
+are echoed back automatically (that is `flutter run`, on whatever port it
+picked); any other origin has to be named with `--allow-origin`.
 
 Because the action routes can run privileged playbooks, they require a bearer
-token (`strata/adapters/gui_token.py`) that `strata gui` prints and embeds in
-the URL it opens locally. The server itself still only binds 127.0.0.1 --
-reaching it from another device is still `tailscale serve <port>`, never
-`tailscale funnel` -- so the token's job is to stop anything else already on
-that tailnet from running a playbook against this box, not to replace the
-loopback boundary.
+token (`strata/adapters/gui_token.py`) that `strata gui` prints. The server
+itself still only binds 127.0.0.1 -- reaching it from another device is still
+`tailscale serve <port>`, never `tailscale funnel` -- so the token's job is to
+stop anything else already on that tailnet from running a playbook against
+this box, not to replace the loopback boundary.
 
 This sits in `cli/` rather than `adapters/` for the same reason it always
 has: it is a presentation-layer server with no domain logic of its own.
@@ -26,12 +31,7 @@ from __future__ import annotations
 import contextlib
 import http.server
 import importlib
-import socket
-import socketserver
-import threading
-import webbrowser
-from collections.abc import Callable
-from pathlib import Path
+from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -143,27 +143,48 @@ _RUN_STATUS = ("api", "run", None)
 _DEVICE = ("api", "devices", None)
 
 
-class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """Serves the built Flutter web app, the read-only snapshot, and the action API.
+def _allowed_origin(origin: str, extra: frozenset[str]) -> str | None:
+    """Return the value to echo in Access-Control-Allow-Origin, or None to send none.
 
-    `_web_dir`/`_token` are class attributes rather than instance state
+    Loopback origins are allowed whatever port they picked: the app is served
+    by `flutter run`, which chooses a fresh port per run, so pinning one would
+    mean re-flagging the server on every launch. Anything else has to have
+    been named on the command line -- a tailnet origin is a deliberate choice,
+    not something to infer from the request asking for it.
+    """
+    if origin in extra:
+        return origin
+    host = urlsplit(origin).hostname
+    return origin if host in {"127.0.0.1", "localhost", "::1"} else None
+
+
+class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
+    """Serves the read-only snapshot and the action API. No static files.
+
+    `_token`/`_allow_origins` are class attributes rather than instance state
     because `http.server` builds one instance per request and only lets a
     `ThreadingHTTPServer` hand it a `handler_class`, not an already-configured
     instance; `_request_handler` sets them once, before the server accepts
     its first request, and a process only ever runs one `strata gui` server.
     """
 
-    _web_dir: Path
     _token: str
+    _allow_origins: frozenset[str] = frozenset()
 
-    def __init__(
-        self,
-        request: socket.socket,
-        client_address: tuple[str, int],
-        server: socketserver.BaseServer,
-    ) -> None:
-        """Bind the static file root before delegating to the base handler."""
-        super().__init__(request, client_address, server, directory=str(self._web_dir))
+    def end_headers(self) -> None:
+        """Add the CORS headers to every response, then close the header block.
+
+        Done here rather than at each call site because the action routes in
+        `gui_actions.py` write their own responses through `send_json`, and a
+        response missing these is one the browser discards before the app
+        sees it.
+        """
+        origin = self.headers.get("Origin")
+        allowed = _allowed_origin(origin, self._allow_origins) if origin else None
+        if allowed is not None:
+            self.send_header("Access-Control-Allow-Origin", allowed)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
 
     def _authorized(self) -> bool:
         return self.headers.get("Authorization") == f"Bearer {self._token}"
@@ -171,8 +192,20 @@ class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
     def _unauthorized(self) -> None:
         send_json(self, 401, {"error": "missing or invalid access token"})
 
+    def _not_found(self) -> None:
+        send_json(self, 404, {"error": "not found"})
+
+    def do_OPTIONS(self) -> None:
+        """Answer the preflight the Authorization header and JSON bodies trigger."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:
-        """Serve the action/read API live, everything else as a static file."""
+        """Serve the read routes; only the run-status route needs the token."""
         parsed = urlsplit(self.path)
         parts = parsed.path.strip("/").split("/")
 
@@ -190,7 +223,7 @@ class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._unauthorized()
         else:
-            super().do_GET()
+            self._not_found()
 
     def do_POST(self) -> None:
         """Handle the mutating routes; all require the access token."""
@@ -199,7 +232,7 @@ class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
             return
         route = gui_actions.POST_ROUTES.get(self.path)
         if route is None:
-            send_json(self, 404, {"error": "not found"})
+            self._not_found()
             return
         route(self, read_json_body(self))
 
@@ -212,45 +245,43 @@ class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
         if _match(parts, _DEVICE):
             gui_actions.delete_device(self, parts[2])
         else:
-            send_json(self, 404, {"error": "not found"})
+            self._not_found()
 
 
-def _request_handler(web_dir: Path, token: str) -> type[http.server.SimpleHTTPRequestHandler]:
+def _request_handler(
+    token: str, allow_origins: frozenset[str]
+) -> type[http.server.BaseHTTPRequestHandler]:
     """Configure and return `GuiRequestHandler` for one `strata gui` process's lifetime."""
-    GuiRequestHandler._web_dir = web_dir  # noqa: SLF001 -- this module owns GuiRequestHandler
-    GuiRequestHandler._token = token  # noqa: SLF001
+    GuiRequestHandler._token = token  # noqa: SLF001 -- this module owns GuiRequestHandler
+    GuiRequestHandler._allow_origins = allow_origins  # noqa: SLF001
     return GuiRequestHandler
 
 
 def serve(
-    web_dir: Path,
     *,
     port: int,
-    open_browser: bool,
+    allow_origins: Sequence[str] = (),
     announce: Callable[[str], None],
 ) -> None:
-    """Serve `web_dir` plus the /api/* routes on loopback until interrupted.
+    """Serve the /api/* routes on loopback until interrupted.
 
-    Binds 127.0.0.1 only. The caller is responsible for having checked that
-    `web_dir` exists -- this raises OSError through the socket bind if the port
-    is taken, which the caller turns into an operator-facing message.
+    Binds 127.0.0.1 only. Raises OSError through the socket bind if the port is
+    taken, which the caller turns into an operator-facing message.
+
+    `allow_origins` names the non-loopback origins the app may be served from;
+    loopback ones are allowed without being named.
 
     `announce` receives the lines to print; passing it in keeps this module
     free of Typer so the server can be exercised without a CLI runner.
     """
     token = gui_token.get_or_create_token()
-    handler = _request_handler(web_dir, token)
+    handler = _request_handler(token, frozenset(allow_origins))
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         # Read the port back off the socket rather than echoing the argument:
         # port 0 means "let the kernel choose", and then the requested port is
-        # not the one a browser needs to be pointed at.
+        # not the one the app needs to be pointed at.
         url = f"http://127.0.0.1:{httpd.server_address[1]}"
-        announce(f"Serving {web_dir} on {url} (Ctrl+C to stop)")
+        announce(f"Serving the strata API on {url} (Ctrl+C to stop)")
         announce(f"Access token: {token}")
-        if open_browser:
-            # Deferred to a timer thread: webbrowser.open can block for
-            # seconds while it launches a browser, and on a cold start the
-            # browser may request the page before serve_forever() is running.
-            threading.Timer(0.3, lambda: webbrowser.open(f"{url}/?token={token}")).start()
         with contextlib.suppress(KeyboardInterrupt):
             httpd.serve_forever()
