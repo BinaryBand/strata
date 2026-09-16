@@ -75,8 +75,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "PLR2004", "ANN", "D", "INP001", "SLF001"]
-# The pytest-bdd feature suite is test code: same allowances as tests/**.
-"features/**" = ["S", "PLR2004", "ANN", "D", "INP001", "SLF001"]
 "conftest.py" = ["S", "ANN", "D", "INP001"]
 # Two standalone stdlib-only scripts that sit outside the layered package.
 # bootstrap.py runs before the package is installable; ansible/vault_pass.py is
@@ -107,14 +105,18 @@ max-statements = 40
 [tool.vulture]
 min_confidence = 80
 paths = ["strata", "tests"]
+# The pytest-bdd bindings register their fixtures by importing them for the
+# side effect, which reads as an unused import. They sat outside `paths`
+# when they lived at the repository root; this keeps that true.
+exclude = ["tests/features"]
 ignore_decorators = ["@pytest.fixture", "@pytest.mark.*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "features"]
+testpaths = ["tests"]
 markers = [
     "integration: runs real ansible-runner/ansible-vault against a disposable Podman container (slow, needs podman + containers.podman collection); excluded by default, run with `pytest -m integration`",
     # pytest-bdd turns each Gherkin tag into a marker of the same name, so the
-    # tags features/README.md documents have to be registered here too.
+    # tags tests/features/README.md documents have to be registered here too.
     "controller-only: asserts behaviour gated on the target being the controller (ansible_connection=local)",
     "wip: a .feature with no step definitions yet (see tests/test_feature_bindings.py)",
 ]

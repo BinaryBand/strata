@@ -1,6 +1,6 @@
 """Adapter fakes and the synthetic-runbook runner for guard_resolution.feature.
 
-Split from features/test_guard_resolution.py so that file holds only the step
+Split from tests/features/test_guard_resolution.py so that file holds only the step
 vocabulary. Nothing here is a step definition: this is the seam layer -- the
 fakes standing in for the adapters `guard_executor` imports directly, plus the
 machinery for building a runbook that declares an arbitrary set of guards and

@@ -1,7 +1,7 @@
-"""pytest-bdd binding for features/dev.feature (the hidden `strata dev` group).
+"""pytest-bdd binding for tests/features/dev.feature (the hidden `strata dev` group).
 
 Steps here are specific to dev.feature; the reusable `I run "strata ..."` /
-exit-code / output-contains steps come from features/conftest.py.
+exit-code / output-contains steps come from tests/features/conftest.py.
 """
 
 from __future__ import annotations

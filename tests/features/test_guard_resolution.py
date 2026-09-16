@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/guard_resolution.feature (the prompt engine).
+"""pytest-bdd binding for tests/features/guard_resolution.feature (the prompt engine).
 
 Unlike the other feature bindings, these scenarios do not go through the
 `strata` CLI. Almost every one needs a runbook declaring a *particular*
@@ -27,7 +27,9 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from features._guard_harness import (
+from strata.core import guard
+from strata.core.models import Device
+from tests.features._guard_harness import (
     CREATE_DIOT,
     ENABLE_RCLONE,
     ENSURE_PATH,
@@ -37,8 +39,6 @@ from features._guard_harness import (
     install_upstream,
     run_declared,
 )
-from strata.core import guard
-from strata.core.models import Device
 
 scenarios("guard_resolution.feature")
 

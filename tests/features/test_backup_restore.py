@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/backup_restore.feature (Stage 4).
+"""pytest-bdd binding for tests/features/backup_restore.feature (Stage 4).
 
 What is real here: the CLI entry point, name resolution, `--tags` parsing, the
 real `guard_executor`, and both runbooks' own `selected_backup_paths()` walk
@@ -28,14 +28,15 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-# Adapter fakes: imported for their autouse fixture, same seam layer the
-# guard_resolution binding drives.
-from features._guard_harness import _isolate_guards  # noqa: F401
 from strata.adapters import state
 from strata.adapters.ansible import secrets
 from strata.cli import dispatch
 from strata.core import paths
 from strata.core.models import Device
+
+# Adapter fakes: imported for their autouse fixture, same seam layer the
+# guard_resolution binding drives.
+from tests.features._guard_harness import _isolate_guards  # noqa: F401
 
 scenarios("backup_restore.feature")
 

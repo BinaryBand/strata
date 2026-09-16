@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/device.feature (remote inventory devices).
+"""pytest-bdd binding for tests/features/device.feature (remote inventory devices).
 
 The inventory adapter reads/writes a single INI file at ``inventory._INI_PATH``;
 the autouse fixture redirects that anchor to a per-test tmp file, so scenarios

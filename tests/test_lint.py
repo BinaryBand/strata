@@ -110,17 +110,14 @@ def test_astgrep() -> None:
 def test_module_length() -> None:
     """No source module may exceed MAX_MODULE_LINES lines.
 
-    Test code is exempt, and "test code" means tests/ *and* features/ --
-    pyproject already says the pytest-bdd suite gets the same allowances as
-    tests/**, and this check was the one place that had not been told. The cap
-    measures whether a module is navigable, which is a claim about code you
-    read to understand the system; a pytest-bdd binding is a flat catalogue of
-    three-line step definitions whose natural unit is its .feature file, and
-    splitting one to hit a line count scatters a single scenario's steps across
-    modules. tests/unit/adapters/test_guard_executor.py is already over the cap
-    and exempt only for living under tests/.
+    Test code is exempt. The cap measures whether a module is navigable, which
+    is a claim about code you read to understand the system; a pytest-bdd
+    binding under tests/features/ is a flat catalogue of three-line step
+    definitions whose natural unit is its .feature file, and splitting one to
+    hit a line count scatters a single scenario's steps across modules.
+    tests/unit/adapters/test_guard_executor.py is likewise already over the cap.
     """
-    exempt = {"tests", "features"}
+    exempt = {"tests"}
     offenders: list[str] = []
     for path in sorted(ROOT.rglob("*.py")):
         parts = path.relative_to(ROOT).parts

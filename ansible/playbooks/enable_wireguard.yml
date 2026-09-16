@@ -1,0 +1,219 @@
+---
+# Routes all of this host's traffic through a WireGuard full tunnel without
+# breaking Tailscale.
+#
+# wg-quick's automatic routing adds its policy rules with no priority, and the
+# kernel then numbers a new rule just ahead of the first existing one. When
+# tailscaled is already up, that lands wg-quick's rules ahead of Tailscale's
+# fixed 5210-5270 block, so tailnet traffic (Tailscale's table 52) is captured
+# by the tunnel instead. Table = off disables that, and the PostUp hooks add
+# the same rules at explicit priorities between Tailscale's block and main
+# (32766). Tailscale marks its own packets with fwmark 0x80000 and sends them to
+# main at 5210, so they keep leaving through the physical link.
+#
+# Replies to connections that arrive on the physical link's public address
+# leave through the tunnel, so inbound router port-forwards stop working. LAN
+# and tailnet access are unaffected. If this host uses a Tailscale exit node,
+# table 52 holds a default route and captures everything before the tunnel.
+- name: Connect a WireGuard full tunnel alongside Tailscale
+  hosts: all
+  become: true
+
+  vars:
+    wireguard_interface: wg-vpn
+    # One number for both the fwmark and the routing table is wg-quick's own
+    # convention.
+    wireguard_table: 51820
+    # This rule and the next priority up are owned by this playbook. Both must
+    # sit after Tailscale's 5270 and before main's 32766.
+    wireguard_rule_pref: 32000
+    # Adding IPv6 rules fails on a host with IPv6 disabled. A host with IPv6
+    # enabled always has at least a link-local address.
+    wireguard_ipv6: "{{ ansible_facts.all_ipv6_addresses | default([]) | length > 0 }}"
+
+  tasks:
+    - name: Install WireGuard tools
+      ansible.builtin.package:
+        name: wireguard-tools
+        state: present
+
+    # wg-quick hands the DNS line to resolvconf. On systemd-resolved hosts that
+    # is resolvectl's compatibility link, which scopes the server to the tunnel
+    # with the ~. routing domain, so Tailscale's MagicDNS domain still resolves
+    # through tailscale0. openresolv is no substitute: it rewrites
+    # /etc/resolv.conf, and so does Tailscale on a host without resolved.
+    - name: Check that resolvconf is available for the tunnel's DNS
+      ansible.builtin.shell: command -v resolvconf
+      register: _resolvconf
+      changed_when: false
+      failed_when: false
+
+    - name: Install systemd-resolved
+      when: _resolvconf.rc != 0
+      block:
+        - name: Install the systemd-resolved package
+          ansible.builtin.package:
+            name: systemd-resolved
+            state: present
+
+        - name: Enable and start systemd-resolved
+          ansible.builtin.systemd_service:
+            name: systemd-resolved
+            enabled: true
+            state: started
+
+        # A skipped task still registers its variable, so a re-check gets its
+        # own name and the gate below reads it only when it ran.
+        - name: Check again for resolvconf
+          ansible.builtin.shell: command -v resolvconf
+          register: _resolvconf_recheck
+          changed_when: false
+          failed_when: false
+
+    - name: Refuse to continue without resolvconf
+      ansible.builtin.fail:
+        msg: >-
+          wg-quick needs resolvconf to apply the tunnel's DNS server, and
+          installing systemd-resolved did not provide it on this host.
+      when: >-
+        (_resolvconf_recheck.rc if _resolvconf_recheck is not skipped
+        else _resolvconf.rc) != 0
+
+    # Debian's package starts resolved before D-Bus loads the package's bus
+    # policy, so resolved never takes its bus name and every resolvconf,
+    # resolvectl and tailscaled request times out. Restarting resolved after a
+    # D-Bus reload lets it register.
+    - name: Check that systemd-resolved answers on D-Bus
+      ansible.builtin.command: resolvectl status
+      register: _resolved_bus
+      changed_when: false
+      failed_when: false
+
+    - name: Register systemd-resolved on D-Bus
+      when: _resolved_bus.rc != 0
+      block:
+        - name: Reload the D-Bus policy
+          ansible.builtin.systemd_service:
+            name: dbus
+            state: reloaded
+
+        - name: Restart systemd-resolved
+          ansible.builtin.systemd_service:
+            name: systemd-resolved
+            state: restarted
+
+        - name: Check again that systemd-resolved answers on D-Bus
+          ansible.builtin.command: resolvectl status
+          register: _resolved_bus_recheck
+          changed_when: false
+          failed_when: false
+
+    - name: Refuse to continue while systemd-resolved does not answer
+      vars:
+        _bus: "{{ _resolved_bus_recheck if _resolved_bus_recheck is not skipped else _resolved_bus }}"
+      ansible.builtin.fail:
+        msg: >-
+          systemd-resolved does not answer on D-Bus (`resolvectl status`
+          exited {{ _bus.rc }}: {{ _bus.stderr }}), so wg-quick cannot apply
+          the tunnel's DNS server.
+      when: _bus.rc != 0
+
+    - name: Check where /etc/resolv.conf points
+      ansible.builtin.stat:
+        path: /etc/resolv.conf
+      register: _resolv_conf
+
+    # Without resolved, Tailscale writes /etc/resolv.conf itself and puts its
+    # saved copy back when tailscaled stops, so the link is made while
+    # tailscaled is stopped. NetworkManager and tailscaled each choose how to
+    # publish DNS when they start, and both pick resolved once the link exists.
+    # Stopping tailscaled drops a connection made over the tailnet, so the
+    # sequence runs detached and the trap always restarts it.
+    - name: Point /etc/resolv.conf at resolved and restart its DNS clients
+      when: >-
+        not (_resolv_conf.stat.islnk | default(false)
+        and _resolv_conf.stat.lnk_source.startswith('/run/systemd/resolve/'))
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -eu
+          tailscaled_was_active=0
+          trap '[ "$tailscaled_was_active" = 1 ] && systemctl start tailscaled' EXIT
+          if systemctl is-active --quiet tailscaled; then
+            tailscaled_was_active=1
+            systemctl stop tailscaled
+          fi
+          ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+          if systemctl is-active --quiet NetworkManager; then
+            systemctl restart NetworkManager
+          fi
+      async: 120
+      poll: 5
+      changed_when: true
+
+    - name: Ensure the WireGuard config directory exists
+      ansible.builtin.file:
+        path: /etc/wireguard
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the tunnel configuration
+      ansible.builtin.copy:
+        dest: "/etc/wireguard/{{ wireguard_interface }}.conf"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by Ansible (strata infrastructure.enable_wireguard).
+          [Interface]
+          PrivateKey = {{ wireguard_private_key }}
+          Address = {{ wireguard_address }}
+          DNS = {{ wireguard_dns }}
+          Table = off
+          FwMark = {{ wireguard_table }}
+          # A failed PostUp leaves its rules behind, and re-adding an identical
+          # rule fails, so clear this playbook's priorities first.
+          PreUp = ip -4 rule del pref {{ wireguard_rule_pref }} 2>/dev/null || true
+          PreUp = ip -4 rule del pref {{ wireguard_rule_pref + 1 }} 2>/dev/null || true
+          PostUp = sysctl -q net.ipv4.conf.all.src_valid_mark=1
+          PostUp = ip -4 route add default dev %i table {{ wireguard_table }}
+          PostUp = ip -4 rule add pref {{ wireguard_rule_pref }} table main suppress_prefixlength 0
+          PostUp = ip -4 rule add pref {{ wireguard_rule_pref + 1 }} not fwmark {{ wireguard_table }} table {{ wireguard_table }}
+          PreDown = ip -4 rule del pref {{ wireguard_rule_pref }}
+          PreDown = ip -4 rule del pref {{ wireguard_rule_pref + 1 }}
+          {% if wireguard_ipv6 | bool %}
+          # IPv6 goes into the tunnel too. With no IPv6 tunnel address it fails
+          # fast instead of leaking past the tunnel.
+          PreUp = ip -6 rule del pref {{ wireguard_rule_pref }} 2>/dev/null || true
+          PreUp = ip -6 rule del pref {{ wireguard_rule_pref + 1 }} 2>/dev/null || true
+          PostUp = ip -6 route add default dev %i table {{ wireguard_table }}
+          PostUp = ip -6 rule add pref {{ wireguard_rule_pref }} table main suppress_prefixlength 0
+          PostUp = ip -6 rule add pref {{ wireguard_rule_pref + 1 }} not fwmark {{ wireguard_table }} table {{ wireguard_table }}
+          PreDown = ip -6 rule del pref {{ wireguard_rule_pref }}
+          PreDown = ip -6 rule del pref {{ wireguard_rule_pref + 1 }}
+          {% endif %}
+
+          [Peer]
+          PublicKey = {{ wireguard_peer_public_key }}
+          Endpoint = {{ wireguard_endpoint }}
+          AllowedIPs = 0.0.0.0/0, ::/0
+          PersistentKeepalive = 25
+      no_log: true  # the content carries the private key
+      notify: Restart the tunnel
+
+    - name: Apply a changed configuration before enabling the tunnel
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the tunnel
+      ansible.builtin.systemd_service:
+        name: "wg-quick@{{ wireguard_interface }}"
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart the tunnel
+      ansible.builtin.systemd_service:
+        name: "wg-quick@{{ wireguard_interface }}"
+        state: restarted

@@ -1,6 +1,6 @@
 """Every .feature file is either bound to step definitions or marked @wip.
 
-The Gherkin files under features/ are the user-story map for the `strata`
+The Gherkin files under tests/features/ are the user-story map for the `strata`
 CLI, and they are written well ahead of their step definitions on purpose --
 the suite is built one gated slice at a time. That is fine; what is not fine
 is that an unbound feature is indistinguishable from a bound one. It sits in
@@ -8,7 +8,7 @@ the same directory, is listed in the same README journey spine, and is
 collected by the same `testpaths`, so it reads as covered while executing
 nothing.
 
-features/README.md already declares the convention that says otherwise --
+tests/features/README.md already declares the convention that says otherwise --
 `@wip` for "no step def yet" -- it just had no teeth and no file used it.
 This gate gives it teeth: a feature is either bound by a `scenarios(...)`
 call or it carries `@wip`, and the moment step definitions land the `@wip`
@@ -21,14 +21,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-FEATURES_DIR = Path(__file__).resolve().parents[1] / "features"
+FEATURES_DIR = Path(__file__).resolve().parent / "features"
 
 _SCENARIOS_RE = re.compile(r'scenarios\(\s*"([^"]+\.feature)"')
 _WIP_TAG = "@wip"
 
 
 def _bound_feature_names() -> set[str]:
-    """Feature filenames named by a scenarios(...) call in features/test_*.py."""
+    """Feature filenames named by a scenarios(...) call in tests/features/test_*.py."""
     return {
         match.group(1)
         for module in FEATURES_DIR.glob("test_*.py")
@@ -62,7 +62,7 @@ def test_every_feature_is_bound_or_marked_wip() -> None:
     assert not unmarked, (
         f"These .feature files have no scenarios(...) binding and no @wip tag, "
         f"so they read as coverage while executing nothing: {unmarked}. Either "
-        f'write features/test_<name>.py with scenarios("<name>.feature"), or '
+        f'write tests/features/test_<name>.py with scenarios("<name>.feature"), or '
         f"add {_WIP_TAG} above the Feature: line to declare it pending."
     )
 

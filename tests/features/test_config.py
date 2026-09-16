@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/config.feature (var / secret / vault-password / key).
+"""pytest-bdd binding for tests/features/config.feature (var / secret / vault-password / key).
 
 Isolation (Stage 1 decision + the keychain/subprocess caveats):
   * config var / config key -> real adapters against tmp files (group_vars, ~/.ssh)

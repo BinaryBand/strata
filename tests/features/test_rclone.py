@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/rclone.feature (mount remotes + HTTP serves).
+"""pytest-bdd binding for tests/features/rclone.feature (mount remotes + HTTP serves).
 
 Registration state is group_vars-backed, so the real adapter runs against a tmp
 managed.yml. Two things are faked: rclone.has_remote (would shell out to

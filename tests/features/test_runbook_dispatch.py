@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/runbook_dispatch.feature (discover + launch).
+"""pytest-bdd binding for tests/features/runbook_dispatch.feature (discover + launch).
 
 Dispatch is pure control-flow. Fakes: guard_executor.execute records the
 (module, target, tags) it would run and returns a code instead of satisfying

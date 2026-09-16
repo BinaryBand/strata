@@ -1,4 +1,4 @@
-"""pytest-bdd binding for features/server_app_journeys.feature (Stage 4).
+"""pytest-bdd binding for tests/features/server_app_journeys.feature (Stage 4).
 
 The journey question is *which* playbooks a leaf runbook pulls in, in what
 order, and which of them a satisfied fast path removes. So the whole guard
@@ -29,10 +29,10 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from features._guard_harness import _isolate_guards  # noqa: F401
 from strata.adapters import guard_executor, state
 from strata.cli import dispatch
 from strata.core.models import Device
+from tests.features._guard_harness import _isolate_guards  # noqa: F401
 
 scenarios("server_app_journeys.feature")
 

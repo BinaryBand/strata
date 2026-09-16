@@ -26,12 +26,12 @@ Maintainer-only (off the operator spine): `dev.feature` -- the hidden `strata de
 `pytest-bdd` collects these as ordinary tests under the existing gate:
 
 ```bash
-uv run pytest features/
+uv run pytest tests/features/
 ```
 
-Each bound feature has a `features/test_<name>.py` calling `scenarios("<name>.feature")`; `tests/test_feature_bindings.py` enforces that every feature is either bound that way or tagged `@wip`. Most bindings drive the CLI through Typer's `CliRunner` with the adapters (`secrets`, `rclone`, `inventory`, `runner`) faked -- the same seams the unit suite already mocks.
+Each bound feature has a `tests/features/test_<name>.py` calling `scenarios("<name>.feature")`; `tests/test_feature_bindings.py` enforces that every feature is either bound that way or tagged `@wip`. Most bindings drive the CLI through Typer's `CliRunner` with the adapters (`secrets`, `rclone`, `inventory`, `runner`) faked -- the same seams the unit suite already mocks.
 
-`guard_resolution.feature` is the exception: its scenarios need runbooks declaring particular guard combinations that no real runbook declares, so it builds synthetic runbooks and drives `guard_executor.execute()` directly. Its adapter fakes are factored into `features/_guard_harness.py`, and `backup_restore` and `server_app_journeys` reuse that same fake layer while driving the *real* runbooks through `cli.dispatch.run_runbook`.
+`guard_resolution.feature` is the exception: its scenarios need runbooks declaring particular guard combinations that no real runbook declares, so it builds synthetic runbooks and drives `guard_executor.execute()` directly. Its adapter fakes are factored into `tests/features/_guard_harness.py`, and `backup_restore` and `server_app_journeys` reuse that same fake layer while driving the *real* runbooks through `cli.dispatch.run_runbook`.
 
 All eight features are bound; nothing is `@wip`. Container-backed coverage is not restated here as Gherkin -- it lives in `tests/integration/`, which drives real playbooks through real ansible-runner against a disposable Podman container and is excluded by default (`pytest -m integration`).
 

@@ -80,6 +80,7 @@ These runbooks are simpler and independent of each other (no dependency chain), 
 - `development.install_antigravity` -- install Google Antigravity CLI via the local Homebrew tap.
 - `system.enable_crash_recovery` -- recover from kernel panics/freezes and keep crash evidence readable.
 - `infrastructure.enable_tailscale` -- join this host to the Tailscale tailnet for off-LAN reachability.
+- `infrastructure.enable_wireguard` -- route all of this host's traffic through a WireGuard VPN (any provider; the address and DNS prompts default to Proton VPN's values) while Tailscale keeps working. It prompts for the five values in the provider's client config: `PrivateKey`, `Address`, `DNS`, and the server's `PublicKey` and `Endpoint`. The values are stored in the shared vault, so only one host at a time can use them. On a host without `resolvconf` (Debian with NetworkManager, for example), it installs systemd-resolved and switches NetworkManager and Tailscale to it. Inbound connections forwarded by the router to this host's public address stop working while the tunnel is up.
 - `infrastructure.install_restic` -- initialize the restic repository that `backup`/`restore` use.
 - `infrastructure.backup` / `infrastructure.restore` -- snapshot each opted-in app's data under its own restic tag, and write the latest snapshot per tag back. Both accept `--tags` to narrow the set.
 - `infrastructure.sync_rclone_remote` -- copy registered rclone remote credentials onto a target host.
