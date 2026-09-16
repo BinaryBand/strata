@@ -27,8 +27,20 @@ def _load_apps() -> list[dict[str, str]]:
 
 
 def check() -> bool:
-    """Return True if every listed app's binary is already on PATH."""
-    return all(shutil.which(app["name"]) is not None for app in _load_apps())
+    """Return True if apps are listed and every one's binary is already on PATH.
+
+    An empty list is False, not vacuously True. `all([])` had this runbook
+    reporting itself installed on every machine in the world, including ones
+    it had never touched. Nothing is lost by the stricter answer: main() is
+    already a no-op that reports there is nothing to install and returns 0, so
+    the run this check would skip costs nothing.
+
+    PATH is the right probe here, unlike install_homebrew's: pipx installs
+    into ~/.local/bin, which is on PATH, and putting binaries there is exactly
+    this runbook's job.
+    """
+    apps = _load_apps()
+    return bool(apps) and all(shutil.which(app["name"]) is not None for app in apps)
 
 
 @guard.alias("install git apps")

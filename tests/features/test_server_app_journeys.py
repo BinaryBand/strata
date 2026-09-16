@@ -180,9 +180,9 @@ def jellyfin_last(ctx: dict[str, Any]) -> None:
     assert _ran(ctx)[-1] == "playbooks/install_jellyfin.yml", _ran(ctx)
 
 
-@then(parsers.parse('only "{playbook}" is run'))
-def only_one_playbook(ctx: dict[str, Any], playbook: str) -> None:
-    assert _ran(ctx) == [playbook], _ran(ctx)
+@then(parsers.parse('the only playbooks run are "{first}" and "{second}"'))
+def only_these_playbooks(ctx: dict[str, Any], first: str, second: str) -> None:
+    assert _ran(ctx) == [first, second], _ran(ctx)
 
 
 @then(parsers.parse('"{playbook}" is run'))

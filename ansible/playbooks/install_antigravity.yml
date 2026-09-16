@@ -9,6 +9,11 @@
     formula_file: "{{ formula_dir }}/antigravity.rb"
     brew_bin: /home/linuxbrew/.linuxbrew/bin/brew
     antigravity_bin: /home/linuxbrew/.linuxbrew/bin/antigravity
+    # Bookkeeping only: the tap is a local repository that is never pushed.
+    # Supplied per-invocation below rather than written to the operator's
+    # global git config, which this play has no business touching.
+    git_author_name: strata
+    git_author_email: strata@localhost
 
   tasks:
     - name: Require Homebrew is already installed
@@ -40,12 +45,19 @@
         chdir: "{{ tap_source }}"
         creates: "{{ tap_source }}/.git"
 
+    # The identity is passed with -c rather than assumed: a machine with no
+    # global user.name/user.email failed this task outright, and the play with
+    # it. commit.gpgsign=false closes the sibling case, where a global signing
+    # setting with no usable key fails the same commit for a different reason.
     - name: Commit formula changes to the tap repository
       ansible.builtin.shell:
         cmd: |
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "ansible: update antigravity formula [{{ ansible_facts['date_time']['iso8601'] }}]"
+            git -c user.name='{{ git_author_name }}' \
+                -c user.email='{{ git_author_email }}' \
+                -c commit.gpgsign=false \
+                commit -m "ansible: update antigravity formula [{{ ansible_facts['date_time']['iso8601'] }}]"
           fi
         chdir: "{{ tap_source }}"
       changed_when: false

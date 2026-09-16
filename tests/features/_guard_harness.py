@@ -16,7 +16,7 @@ scenarios assert on sequence instead of on each fake in isolation.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any
 
@@ -202,19 +202,30 @@ def run_declared(ctx: dict[str, Any]) -> None:
 
 
 def install_upstream(
-    ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch, *, check: Callable[[], bool] | None
+    ctx: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    check: Callable[[], bool] | None,
+    decorators: Sequence[Callable[[Any], Any]] = (),
 ) -> None:
     """Make the upstream runbook importable as a stub with the given check().
 
     `_run_upstream` imports its dependency by dotted name, so an upstream that
     behaves a particular way has to be substituted at the import, not injected.
+
+    `decorators` declares the upstream's own guards, which is what the real
+    install_podman does with @guard.user("diot") -- needed to cover that a
+    satisfied check() skips the upstream's play but not its guards.
     """
 
     def upstream_main(target: str | None = None) -> int:  # noqa: ARG001
         ctx["events"].append("upstream:install_podman")
         return 0
 
-    stub = stub_module(upstream_main)
+    decorated = upstream_main
+    for decorator in reversed(decorators):
+        decorated = decorator(decorated)
+    stub = stub_module(decorated)
     if check is not None:
         stub.__dict__["check"] = check
 

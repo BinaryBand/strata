@@ -113,3 +113,25 @@ def test_upstream_runbook_status_unknown_without_a_check(monkeypatch: pytest.Mon
     monkeypatch.setattr(guard_status.importlib, "import_module", lambda _name: fake_module)
     requirement = req.UpstreamRunbook(dotted_name="infrastructure.install_podman")
     assert guard_status.guard_status(requirement, target=None) == "unknown"
+
+
+# ── check_result ───────────────────────────────────────────────────────────
+
+
+def test_check_result_reports_the_check_on_the_controller() -> None:
+    fake_module = ModuleType("fake_runbook")
+    fake_module.__dict__["check"] = lambda: True
+    assert guard_status.check_result(fake_module, target=None) is True
+
+
+def test_check_result_is_none_without_a_check() -> None:
+    """No check() means "cannot tell", not "not installed"."""
+    assert guard_status.check_result(ModuleType("fake_runbook"), target=None) is None
+
+
+def test_check_result_is_none_off_the_controller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A check() reads this machine, so it is not an answer about a remote host."""
+    fake_module = ModuleType("fake_runbook")
+    fake_module.__dict__["check"] = lambda: True
+    monkeypatch.setattr(inventory, "get", _remote_device)
+    assert guard_status.check_result(fake_module, target="rpi4") is None

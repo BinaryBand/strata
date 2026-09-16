@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import sys
 from itertools import groupby
+from types import ModuleType
 
 import typer
 
@@ -69,9 +70,10 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
 
     module = importlib.import_module(f"strata.core.runbooks.{resolved}")
 
-    parsed_tags: list[str] | None = None
-    if tags is not None and accepts_tags(module.main):
-        parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
+    parsed_tags, tag_error = _preflight_tags(module, tags)
+    if tag_error is not None:
+        typer.echo(tag_error, err=True)
+        return 1
 
     # The composition root: guard_executor satisfies whatever the runbook
     # declared, then calls its main(). Runbooks no longer provision anything
@@ -79,6 +81,33 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
     return guard_executor.execute(
         module, target=resolved_target, tags=parsed_tags, reporter=build_reporter()
     )
+
+
+def _preflight_tags(module: ModuleType, tags: str | None) -> tuple[list[str] | None, str | None]:
+    """Parse a --tags string for this runbook, and reject a bad selection early.
+
+    Returns the parsed tags (None when the runbook takes none) and an error
+    message, or None when the selection is good.
+
+    A runbook that can reject a selection outright says so with a module-level
+    `validate_tags`, checked here rather than left to `main()`. By the time
+    main() runs the guard chain has already been satisfied -- and since a
+    satisfied upstream stopped skipping its own guards, that chain reconciles
+    the diot account and the restic repository. A typo should not cost a sudo
+    play, nor surface as an uncaught ValueError.
+    """
+    parsed_tags: list[str] | None = None
+    if tags is not None and accepts_tags(module.main):
+        parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    validate = getattr(module, "validate_tags", None)
+    if validate is None:
+        return parsed_tags, None
+    try:
+        validate(parsed_tags)
+    except ValueError as exc:
+        return parsed_tags, str(exc)
+    return parsed_tags, None
 
 
 def _report_import_failures() -> None:

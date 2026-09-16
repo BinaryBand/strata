@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import pwd
+import types
 from pathlib import Path
 from typing import assert_never
 
@@ -25,6 +26,25 @@ from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import rclone, secrets
 from strata.core import ports
 from strata.core import requirements as req
+
+
+def check_result(module: types.ModuleType, *, target: str | None) -> bool | None:
+    """Report a runbook's own check(), or None when it cannot be meaningful.
+
+    Every check() in the codebase inspects the *local* machine -- shutil.which,
+    a stat, the vault on this box -- so it describes `target` only when target
+    is the controller. None means "cannot tell": either the runbook declares no
+    check(), or the answer would be about the wrong machine.
+
+    One owner for that gate. The GUI's readiness endpoint used to call
+    check_safely() with no gate at all while reporting each guard's status
+    target-aware in the same response, so the two halves of one payload
+    described two different machines.
+    """
+    check = getattr(module, "check", None)
+    if check is None or not guard_executor.is_controller(target):
+        return None
+    return guard_executor.check_safely(check, ports.NullReporter())
 
 
 def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  # noqa: PLR0911, PLR0912, C901
@@ -50,6 +70,11 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
             # would need the vault unlocked, which this read-only check must not do.
             return "satisfied" if secrets.has_secret(requirement.vault_key) else "missing"
         case req.SystemUser():
+            # Existence, deliberately, even though the executor stopped
+            # treating it as proof the account is fit (it now always runs the
+            # creation playbook). The question this endpoint answers is "does
+            # the account exist", which is still a true thing to report; it is
+            # simply no longer a skip condition.
             if not guard_executor.is_controller(target):
                 return "unknown"
             try:
@@ -72,13 +97,10 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
             mounted = Path(rclone.resolve(requirement.remote_path)).exists()
             return "satisfied" if mounted else "missing"
         case req.UpstreamRunbook():
-            if not guard_executor.is_controller(target):
-                return "unknown"
             module = importlib.import_module(f"strata.core.runbooks.{requirement.dotted_name}")
-            check = getattr(module, "check", None)
-            if check is None:
+            satisfied = check_result(module, target=target)
+            if satisfied is None:
                 return "unknown"
-            satisfied = guard_executor.check_safely(check, ports.NullReporter())
             return "satisfied" if satisfied else "missing"
         case _:
             assert_never(requirement)

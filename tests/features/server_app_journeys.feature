@@ -17,10 +17,15 @@ Feature: Provision server apps and their dependency chain end-to-end
     And the media mount is brought up
     And Jellyfin is deployed last
 
-  Scenario: Re-running an installed app is idempotent and cheap
+  # "Cheap" means one small idempotent play on top of the app's own, not zero.
+  # install_podman's check() reports podman present so its play is skipped, but
+  # the diot account it declares is still reconciled: a passwd entry does not
+  # prove the subuid range, the subgid range or lingering survived, and podman
+  # being on PATH says nothing about any of them either.
+  Scenario: Re-running an installed app reconciles diot and nothing else
     Given Jellyfin and its whole chain are already installed
     When I run "strata runbook services.install_jellyfin"
-    Then only "playbooks/install_jellyfin.yml" is run
+    Then the only playbooks run are "playbooks/create_diot_user.yml" and "playbooks/install_jellyfin.yml"
 
   Scenario: Installing Baikal only requires Podman, not Jellyfin
     Given neither the diot user, Podman nor Jellyfin are installed

@@ -77,7 +77,7 @@ These runbooks are simpler and independent of each other (no dependency chain), 
 
 - `system.enable_security_autoupdates` -- enable automatic security updates via unattended-upgrades.
 - `package_managers.install_flatpak` -- install Flatpak and add the Flathub remote.
-- `package_managers.install_homebrew` -- install Homebrew and core dev tools (node, pipx, uv, openjdk, rust).
+- `package_managers.install_homebrew` -- install Homebrew and core dev tools (node, pipx, uv, openjdk, rust). It installs to `/home/linuxbrew/.linuxbrew` and adds that prefix to no profile and no PATH, so invoke `brew` by its full path or put the prefix on your own PATH.
 - `development.install_antigravity` -- install Google Antigravity CLI via the local Homebrew tap.
 - `system.enable_crash_recovery` -- recover from kernel panics/freezes and keep crash evidence readable.
 - `infrastructure.enable_tailscale` -- join this host to the Tailscale tailnet for off-LAN reachability.
@@ -85,7 +85,7 @@ These runbooks are simpler and independent of each other (no dependency chain), 
 - `infrastructure.install_restic` -- initialize the restic repository that `backup`/`restore` use.
 - `infrastructure.backup` / `infrastructure.restore` -- snapshot each opted-in app's data under its own restic tag, and write the latest snapshot per tag back. Both accept `--tags` to narrow the set.
 - `infrastructure.sync_rclone_remote` -- copy registered rclone remote credentials onto a target host.
-- `services.install_from_git` -- install CLI apps from local git repos via pipx, driven by a hand-edited list in `static/git_apps.toml`. Runs `pipx install <repo>` for each listed app (uninstall first for a clean rebuild every run). Guarded by `@guard.requires("package_managers.install_homebrew")` since homebrew provides pipx.
+- `services.install_from_git` -- install CLI apps from local git repos via pipx, driven by a hand-edited list in `static/git_apps.toml`. Runs `pipx install <repo>` for each listed app (uninstall first for a clean rebuild every run). Guarded by `@guard.requires("package_managers.install_homebrew")` since homebrew provides pipx. With an empty list it reports itself not installed, then runs, says there is nothing to install, and exits 0.
 
 ## Server apps
 
@@ -104,7 +104,7 @@ flowchart TD
     restic --> restore[restore]
 ```
 
-- `install_podman` -- Podman and the rootless toolchain; ensures `diot` via `create_diot_user`.
+- `install_podman` -- Podman and the rootless toolchain; ensures `diot` via `create_diot_user`. That account is reconciled on every server-app run, even when podman is already installed: a passwd entry is no evidence that its subuid range, subgid range and lingering survived, and those are what rootless containers actually need.
 - `enable_rclone` -- install rclone and mount configured remotes (see below).
 - `enable_rclone_http` -- serve registered rclone paths over local HTTP instead of mounting them (see "Serving rclone paths over local HTTP" below).
 - `install_jellyfin` -- Jellyfin media server on port 8096; config and cache at `/srv/jellyfin/{config,cache}` (`diot:jellyfin`, setgid), with the read-only media library bound from `/mnt/rclone/pcloud/Media`.

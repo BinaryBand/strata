@@ -79,6 +79,31 @@ def test_path_satisfied_mode_match_and_mismatch(tmp_path: Path) -> None:
     )
 
 
+def _deny(*_args: object, **_kwargs: object) -> object:
+    """Stand in for a syscall on a path the operator cannot read."""
+    raise PermissionError(13, "Permission denied")
+
+
+def test_path_satisfied_unstattable_path_is_unsatisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """EACCES from the existence probe means "cannot tell", not a traceback."""
+    monkeypatch.setattr(Path, "exists", _deny)
+    assert not guard_executor.path_satisfied(
+        req.LocalPath(
+            path="/srv/baikal/config", owner="diot", group="baikal", mode="2777", state="directory"
+        )
+    )
+
+
+def test_path_satisfied_unreadable_stat_is_unsatisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """...and from stat(), the second call that used to sit outside the handler."""
+    monkeypatch.setattr(Path, "stat", _deny)
+    assert not guard_executor.path_satisfied(
+        req.LocalPath(
+            path="/srv/baikal/config", owner="diot", group="baikal", mode="2777", state="directory"
+        )
+    )
+
+
 _Runbook = Callable[..., int]
 _Guard = Callable[[_Runbook], _Runbook]
 
@@ -256,7 +281,6 @@ def test_requirements_are_satisfied_in_decorator_order(
         },
     )
     monkeypatch.setattr(guard_executor, "path_satisfied", lambda *_a, **_kw: False)
-    monkeypatch.setattr(pwd, "getpwnam", lambda name: (_ for _ in ()).throw(KeyError(name)))
 
     def fake_run_playbook(playbook: str, **_kwargs: object) -> int:
         calls.append(f"playbook:{Path(playbook).name}")
@@ -292,6 +316,57 @@ def test_failing_requirement_short_circuits_before_main(
 
     assert exit_code == 3
     assert ran == []
+
+
+def test_an_unstattable_guard_path_runs_the_playbook_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of finding the EACCES: the run continues, reconciling the path."""
+    monkeypatch.setattr(Path, "stat", _deny)
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "run_playbook", lambda *a, **_kw: calls.append(a[0]) or 0)
+
+    exit_code = _execute(
+        guard.path("/srv/baikal/config", owner="diot", group="baikal", mode="2777")
+    )
+
+    assert exit_code == 0
+    assert calls == ["playbooks/ensure_path.yml"]
+
+
+def test_a_required_system_user_runs_its_playbook_even_when_it_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existence is not fitness -- see _ensure_user's docstring for the five guarantees."""
+    monkeypatch.setattr(pwd, "getpwnam", lambda _name: object())
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "run_playbook", lambda *a, **_kw: calls.append(a[0]) or 0)
+
+    exit_code = _execute(guard.user("diot", "playbooks/create_diot_user.yml"))
+
+    assert exit_code == 0
+    assert calls == ["playbooks/create_diot_user.yml"]
+
+
+def test_a_satisfied_upstream_still_has_its_own_guards_satisfied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A check() answers for the upstream's own work, not for its dependencies."""
+    ran: list[str] = []
+
+    def upstream_main(target: str | None = None) -> int:  # noqa: ARG001
+        ran.append("upstream_main")
+        return 0
+
+    upstream = _stub_module(guard.user("diot", "playbooks/create_diot_user.yml")(upstream_main))
+    upstream.__dict__["check"] = lambda: True
+    monkeypatch.setattr(guard_executor.importlib, "import_module", lambda _name: upstream)
+    monkeypatch.setattr(runner, "run_playbook", lambda *a, **_kw: ran.append(a[0]) or 0)
+
+    exit_code = _execute(guard.requires("infrastructure.install_podman"))
+
+    assert exit_code == 0
+    assert ran == ["playbooks/create_diot_user.yml"]
 
 
 # ── controller_only ────────────────────────────────────────────────────────

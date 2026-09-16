@@ -22,6 +22,8 @@ scenario at the foot of the feature.
 
 from __future__ import annotations
 
+import contextlib
+import io
 from pathlib import Path
 from typing import Any
 
@@ -148,11 +150,19 @@ def run_both(ctx: dict[str, Any]) -> None:
 
 
 def _dispatch(ctx: dict[str, Any], name: str, *, target: str, tags: str | None) -> None:
-    """Drive the real cli.dispatch.run_runbook, capturing whatever it raises."""
+    """Drive the real cli.dispatch.run_runbook, capturing what it raises and prints.
+
+    stderr is captured here rather than through capsys in a Then step: that
+    fixture only starts capturing when the step that asks for it is set up,
+    which is after the run it needs to have watched.
+    """
+    stderr = io.StringIO()
     try:
-        ctx["exit_code"] = dispatch.run_runbook(name, target=target, tags=tags)
+        with contextlib.redirect_stderr(stderr):
+            ctx["exit_code"] = dispatch.run_runbook(name, target=target, tags=tags)
     except Exception as exc:  # noqa: BLE001 - scenarios assert on what was raised
         ctx["error"] = exc
+    ctx["stderr"] = ctx.get("stderr", "") + stderr.getvalue()
 
 
 # ── Then ──────────────────────────────────────────────────────────────────
@@ -191,9 +201,15 @@ def paths_cover_exactly(ctx: dict[str, Any], expected: str) -> None:
 
 @then(parsers.parse('it fails reporting the unknown tag "{tag}"'))
 def fails_unknown_tag(ctx: dict[str, Any], tag: str) -> None:
-    error = ctx.get("error")
-    assert isinstance(error, ValueError), f"expected ValueError, got {error!r}"
-    assert tag in str(error)
+    """A non-zero exit and the tag named on stderr -- not a traceback.
+
+    dispatch's pre-flight validate_tags catches this before the guard chain
+    runs, so the operator gets the message rather than the ValueError that
+    used to escape from main().
+    """
+    assert ctx.get("error") is None, ctx["error"]
+    assert ctx["exit_code"] == 1
+    assert tag in ctx["stderr"]
 
 
 @then("no playbook is run")

@@ -112,6 +112,17 @@ Feature: Resolve a runbook's declared prerequisites before it runs
     When I run a runbook requiring that path
     Then ensure_path.yml runs to reconcile it
 
+  # A directory the operator cannot search is not evidence the path is right.
+  # /srv/baikal is created mode 2770 diot:baikal, and the guards for the two
+  # directories inside it then stat them as an operator who is not in that
+  # group; that used to leave an unhandled PermissionError.
+  @controller-only
+  Scenario: A path the operator cannot stat is reconciled rather than crashing the run
+    Given the target is the controller
+    And "/srv/baikal/config" cannot be stat'd
+    When I run a runbook requiring that path
+    Then ensure_path.yml runs to reconcile it
+
   Scenario: On a remote target the local fast-path is skipped
     Given the target is a remote ssh host
     When I run a runbook requiring a path
@@ -170,12 +181,17 @@ Feature: Resolve a runbook's declared prerequisites before it runs
 
   # System users -------------------------------------------------------------
 
+  # Existence is not fitness. create_diot_user.yml also creates the group,
+  # allocates the subuid and subgid ranges and enables lingering, and a passwd
+  # entry is evidence of none of that -- a diot missing any of them satisfied
+  # the old fast path permanently. The play is idempotent, so it runs either
+  # way and repairs whatever is missing.
   @controller-only
-  Scenario: An existing system user skips its creation playbook
+  Scenario: An existing system user still has its creation playbook reconciled
     Given the target is the controller
     And the "diot" user already exists
     When I run a runbook requiring the "diot" user
-    Then the user-creation playbook is not run
+    Then the user-creation playbook is run
 
   Scenario: A missing system user is created by its playbook
     Given the target is the controller
@@ -195,6 +211,18 @@ Feature: Resolve a runbook's declared prerequisites before it runs
     Given install_podman's check() reports it is satisfied on the controller
     When I run install_jellyfin
     Then install_podman is not re-run
+
+  # check() answers for the upstream's own work, never for its dependencies.
+  # It used to return outright, so a satisfied upstream took its whole declared
+  # chain with it: install_podman's check() is `which podman`, which made the
+  # diot guard it declares unreachable from every server app on any machine
+  # with podman on PATH.
+  Scenario: A satisfied upstream skips its own play but not its guards
+    Given install_podman's check() reports it is satisfied on the controller
+    And install_podman requires the "diot" user
+    When I run install_jellyfin
+    Then install_podman is not re-run
+    And the user-creation playbook is run
 
   # A check() is only ever an optimisation, so one that cannot answer must not
   # be fatal: OSError is the unreadable-path case, RuntimeError the unreadable-

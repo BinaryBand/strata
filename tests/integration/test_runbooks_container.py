@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from strata.adapters.ansible import runner
+from strata.core.runbooks.package_managers import install_homebrew
 
 pytestmark = pytest.mark.integration
 
@@ -38,7 +39,7 @@ CASES = [
     RunbookCase(
         module="package_managers.install_homebrew",
         expect_success=True,
-        verify=["test", "-x", "/home/linuxbrew/.linuxbrew/bin/brew"],
+        verify=["test", "-x", str(install_homebrew.BREW_BIN)],
     ),
     RunbookCase(
         module="infrastructure.install_podman",

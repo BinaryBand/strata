@@ -102,23 +102,37 @@ def path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
 
     One return per unmet condition reads better than nesting them; PLR0911
     counts guard clauses it cannot distinguish from tangled control flow.
+
+    Every branch below either stats the path or resolves a uid/gid, and both
+    can fail for a reason that is not an answer. `Path.exists()` and `stat()`
+    used to sit outside the handler, and `Path.exists()` does not swallow
+    EACCES -- CPython's `_ignore_error` covers ENOENT, ENOTDIR, EBADF and
+    ELOOP only -- so an unreadable parent left `execute()` as an unhandled
+    traceback. services.install_baikal reaches that unaided: its first guard
+    creates /srv/baikal mode 2770 diot:baikal, and its next two stat paths
+    inside it as an operator who is not in the baikal group.
+
+    A path we cannot read is not evidence the path is right, so it gets the
+    same answer an unresolvable uid already got: False, and ensure_path.yml
+    reconciles it.
     """
     owner, group, mode = spec.owner, spec.group, spec.mode
     resolved = Path(spec.path)
-    if not resolved.exists():
-        return False
-    if spec.state == "directory" and not resolved.is_dir():
-        return False
-    info = resolved.stat()
     try:
+        if not resolved.exists():
+            return False
+        if spec.state == "directory" and not resolved.is_dir():
+            return False
+        info = resolved.stat()
         if owner is not None and pwd.getpwuid(info.st_uid).pw_name != owner:
             return False
         if group is not None and grp.getgrgid(info.st_gid).gr_name != group:
             return False
-    except KeyError:
-        # uid/gid with no passwd/group entry: let the playbook reconcile it.
+        return mode is None or (info.st_mode & 0o7777) == int(mode, 8)
+    except (OSError, KeyError):
+        # Unreadable path, or a uid/gid with no passwd/group entry: both mean
+        # "cannot tell", so let the playbook reconcile it.
         return False
-    return mode is None or (info.st_mode & 0o7777) == int(mode, 8)
 
 
 def _ensure_local_path(spec: req.LocalPath, *, target: str | None) -> int | None:
@@ -157,14 +171,20 @@ def _ensure_mount(remote_path: str, *, target: str | None, writable: bool = Fals
     return exit_code or None
 
 
-def _ensure_user(username: str, playbook: str, *, target: str | None) -> int | None:
-    if is_controller(target):
-        try:
-            pwd.getpwnam(username)
-        except KeyError:
-            pass
-        else:
-            return None
+def _ensure_user(playbook: str, *, target: str | None) -> int | None:
+    """Run the account's creation playbook, unconditionally.
+
+    There was a `pwd.getpwnam` fast path here. Existence is not fitness:
+    create_diot_user.yml guarantees five things -- the group, the user, a
+    subuid range, a subgid range, and lingering -- and the lookup checked only
+    the second. A diot missing its subuid range or its linger file satisfied
+    the guard permanently, nothing ever repaired it, and rootless podman
+    failed later with an error naming none of that.
+
+    The playbook is idempotent and costs one play, so running it is cheaper
+    than restating its postconditions in Python, where the restatement would
+    drift from the playbook that owns them.
+    """
     exit_code = runner.run_playbook(playbook, target=target)
     return exit_code or None
 
@@ -244,7 +264,7 @@ def _satisfy_one(  # noqa: PLR0911, C901
             )
             return None
         case req.SystemUser():
-            return _ensure_user(requirement.username, requirement.playbook, target=target)
+            return _ensure_user(requirement.playbook, target=target)
         case req.LocalPath():
             return _ensure_local_path(requirement, target=target)
         case req.Mount():
@@ -264,11 +284,20 @@ def _satisfy_one(  # noqa: PLR0911, C901
 
 
 def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Reporter) -> int | None:
-    """Run an upstream runbook unless its own check() says it is satisfied."""
+    """Satisfy an upstream runbook, skipping its own main() if check() says so.
+
+    A satisfied check() skips the upstream's *play*, never its guards. It used
+    to return here outright, which meant a satisfied upstream took its whole
+    declared chain with it: `install_podman.check()` is `shutil.which("podman")`,
+    so on any machine with podman on PATH the `@guard.user("diot")` it declares
+    was not merely fast-pathed, it was unreachable from install_jellyfin,
+    install_baikal and install_restic. check() answers for the runbook's own
+    work; it was never evidence about the runbook's dependencies.
+    """
     module = importlib.import_module(f"strata.core.runbooks.{dotted_name}")
     check = getattr(module, "check", None)
     if is_controller(target) and check is not None and check_safely(check, reporter):
-        return None
+        return _satisfy_all(module, target=target, reporter=reporter)
     # Forward the reporter rather than letting execute() install a null one:
     # a runbook's own progress messages were shown when it was invoked
     # directly and swallowed when the same runbook ran as a dependency.
@@ -302,6 +331,21 @@ def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
         return False
 
 
+def _satisfy_all(
+    module: types.ModuleType, *, target: str | None, reporter: ports.Reporter
+) -> int | None:
+    """Satisfy every requirement a module declares; None means all of them hold.
+
+    Separate from execute() because a satisfied upstream needs exactly this and
+    not the main() that follows it.
+    """
+    for requirement in guard.declared(module.main):
+        exit_code = _satisfy_one(requirement, target=target, reporter=reporter)
+        if exit_code is not None:
+            return exit_code
+    return None
+
+
 def execute(
     module: types.ModuleType,
     *,
@@ -316,10 +360,9 @@ def execute(
     main() running.
     """
     reporter = reporter or ports.NullReporter()
-    for requirement in guard.declared(module.main):
-        exit_code = _satisfy_one(requirement, target=target, reporter=reporter)
-        if exit_code is not None:
-            return exit_code
+    exit_code = _satisfy_all(module, target=target, reporter=reporter)
+    if exit_code is not None:
+        return exit_code
 
     kwargs: dict[str, object] = {"target": target, **_injectables(module.main, reporter)}
     if tags is not None:

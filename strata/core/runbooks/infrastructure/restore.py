@@ -8,7 +8,11 @@ before restoring to avoid it reading half-written state.
 
 from strata.core import guard
 from strata.core.ports import PlaybookRunner
-from strata.core.runbooks.infrastructure.backup import selected_backup_paths
+from strata.core.runbooks.infrastructure.backup import selected_backup_paths, validate_tags
+
+# Re-exported so dispatch finds the same pre-flight check on this runbook as on
+# backup: both take --tags, and both resolve them through selected_backup_paths.
+__all__ = ["main", "validate_tags"]
 
 
 @guard.alias("restore from backup")

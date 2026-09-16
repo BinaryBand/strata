@@ -66,6 +66,31 @@ def test_runbook_status_reports_guards_and_installed(monkeypatch: pytest.MonkeyP
     assert payload == {"dotted_name": "services.fake", "guards": [], "installed": True}
 
 
+def test_runbook_status_does_not_answer_installed_for_a_remote_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """check() reads the controller's filesystem, so it says nothing about a remote host.
+
+    The guards half of this payload has always been target-aware. `installed`
+    was not, so one response described two machines.
+    """
+    fake_module = ModuleType("fake_runbook")
+    fake_module.__dict__["main"] = lambda **_: 0
+    fake_module.__dict__["check"] = lambda: True
+    monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
+    monkeypatch.setattr(gui_actions.importlib, "import_module", lambda _n: fake_module)
+    monkeypatch.setattr(
+        inventory,
+        "get",
+        lambda name: Device(name=name, host="10.0.0.9", user="root", connection="ssh"),
+    )
+
+    status, payload = gui_actions.runbook_status("fake", "rpi4")
+
+    assert status == 200
+    assert payload == {"dotted_name": "services.fake", "guards": [], "installed": None}
+
+
 def test_get_runbook_status_requires_dotted_name() -> None:
     handler = FakeHandler()
     gui_actions.get_runbook_status(handler, {})

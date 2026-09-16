@@ -1,18 +1,22 @@
 """Runbook: install Google Antigravity CLI via the local Homebrew tap."""
 
-import shutil
-from pathlib import Path
+import os
 
 from strata.core import guard
 from strata.core.ports import PlaybookRunner
-
-BREW_PREFIX = Path("/home/linuxbrew/.linuxbrew")
+from strata.core.runbooks.package_managers.install_homebrew import BREW_PREFIX
 
 
 def check() -> bool:
-    """Return True if antigravity is already installed and executable."""
+    """Return True if antigravity is already installed and executable.
+
+    The PATH half of this used to be `shutil.which("antigravity")`, which had
+    the same defect as install_homebrew's own check: antigravity installs into
+    the Homebrew prefix, and nothing puts that prefix on PATH, so the check
+    could never be True on a machine where the runbook had succeeded.
+    """
     binary = BREW_PREFIX / "bin" / "antigravity"
-    return binary.is_file() and shutil.which("antigravity") is not None
+    return binary.is_file() and os.access(binary, os.X_OK)
 
 
 @guard.alias("install Antigravity")

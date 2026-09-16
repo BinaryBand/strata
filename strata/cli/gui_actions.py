@@ -20,15 +20,18 @@ from strata.adapters import guard_executor, guard_status, reachability
 from strata.adapters.ansible import host_vars, inventory, runner, secrets, vault_pass
 from strata.cli.gui_http import JsonHandler
 from strata.cli.gui_http import send_json as _send_json
-from strata.core import discovery, guard, ports
+from strata.core import discovery, guard
 
 
 def runbook_status(dotted_name: str, target: str | None) -> tuple[int, dict[str, Any]]:
     """Read-only readiness for one runbook: per-guard status plus check(), if any.
 
-    Never prompts or mutates -- every guard's status comes from
-    `guard_executor.guard_status`, and `installed` (None if the runbook has no
-    check()) comes from `guard_executor.check_safely`.
+    Never prompts or mutates. Every guard's status comes from
+    `guard_status.guard_status`, and `installed` from
+    `guard_status.check_result` -- None when the runbook declares no check(),
+    and also when `target` is not the controller, since every check() reads
+    the local filesystem and would otherwise answer about this machine
+    instead. The key is always present; only its value goes null.
     """
     resolved = discovery.resolve_name(dotted_name)
     if resolved is None:
@@ -38,8 +41,7 @@ def runbook_status(dotted_name: str, target: str | None) -> tuple[int, dict[str,
         {"type": type(r).__name__, "status": guard_status.guard_status(r, target=target)}
         for r in guard.declared(module.main)
     ]
-    check = getattr(module, "check", None)
-    installed = guard_executor.check_safely(check, ports.NullReporter()) if check else None
+    installed = guard_status.check_result(module, target=target)
     return 200, {"dotted_name": resolved, "guards": guards, "installed": installed}
 
 

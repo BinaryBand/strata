@@ -161,6 +161,20 @@ def path_wrong_owner(ctx: dict[str, Any], path: str, tmp_path: Path) -> None:
     ctx["decorators"] = [guard.path(str(real), owner="root")]
 
 
+@given(parsers.parse('"{path}" cannot be stat\'d'))
+def path_unstattable(ctx: dict[str, Any], path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deny stat() for this one path, leaving every other path real."""
+    real_stat = Path.stat
+
+    def selective_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if str(self) == path:
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", selective_stat)
+    ctx["decorators"] = [guard.path(path, owner="diot", group="baikal", mode="2777")]
+
+
 # ── Given: mounts ─────────────────────────────────────────────────────────
 
 
@@ -240,6 +254,20 @@ def upstream_unsatisfied(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -
 @given("install_podman's check() reports it is satisfied on the controller")
 def upstream_satisfied(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     install_upstream(ctx, monkeypatch, check=lambda: True)
+    ctx["decorators"] = [guard.requires("infrastructure.install_podman")]
+
+
+@given(parsers.parse('install_podman requires the "{username}" user'))
+def upstream_declares_a_user(
+    ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch, username: str
+) -> None:
+    """Re-stub the upstream, this time carrying its own guard.user declaration."""
+    install_upstream(
+        ctx,
+        monkeypatch,
+        check=lambda: True,
+        decorators=[guard.user(username, CREATE_DIOT)],
+    )
     ctx["decorators"] = [guard.requires("infrastructure.install_podman")]
 
 
@@ -485,11 +513,6 @@ def prompted_to_create_remote(ctx: dict[str, Any]) -> None:
 @then(parsers.parse('"{name}" is re-registered read-write'))
 def re_registered_writable(ctx: dict[str, Any], name: str) -> None:
     assert {"name": name, "writable": True} in ctx["rclone_added"]
-
-
-@then("the user-creation playbook is not run")
-def user_playbook_not_run(ctx: dict[str, Any]) -> None:
-    assert not _ran(ctx, CREATE_DIOT)
 
 
 @then("the user-creation playbook is run")

@@ -47,6 +47,18 @@ def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:
     return chosen
 
 
+def validate_tags(tags: list[str] | None) -> None:
+    """Reject an unknown --tags selection before any guard provisions anything.
+
+    Called by cli.dispatch ahead of the executor. The same rejection happens
+    inside main() via selected_backup_paths, but by then the guard chain has
+    already run -- and since a satisfied upstream stopped skipping its own
+    guards, that chain reconciles the diot account and the restic repository.
+    A typo should not cost a sudo play.
+    """
+    selected_backup_paths(tags)
+
+
 @guard.alias("back up app data")
 @guard.prerequisite("sudo_password")
 @guard.requires("infrastructure.install_restic")
