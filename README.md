@@ -153,13 +153,10 @@ Secrets are encrypted with `ansible-vault` into `group_vars/secrets/all.yml`, wh
 
 ## Not yet automated
 
-Provisioning steps that are still done by hand -- no runbook covers these yet. Lifted
-from the pre-project `docs/TODO` checklist when that file was retired; everything else
-on it has either shipped or was made obsolete by a later change.
+Provisioning steps that are still done by hand -- no runbook covers these yet. Lifted from the pre-project `docs/TODO` checklist when that file was retired; everything else on it has either shipped or was made obsolete by a later change.
 
 - Remove Snap and the Ubuntu App Store.
 - Install `libfuse2`, `fuse`, and `pcscd`.
-- Install Bitwarden and Firefox (via Flatpak -- `package_managers.install_flatpak` sets
-  up Flathub, but installs no apps).
+- Install Bitwarden and Firefox (via Flatpak -- `package_managers.install_flatpak` sets up Flathub, but installs no apps).
 - Install AppImageLauncher, then VSCodium and Joplin as AppImages.
 - Enable SSH for a sandboxed, non-sudo account.

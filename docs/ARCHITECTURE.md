@@ -1,12 +1,8 @@
 # strata Architecture
 
-How the code is shaped: what the project is, how to run it, the layer scaffold,
-the guard flow, and the conventions a change is expected to hold to.
+How the code is shaped: what the project is, how to run it, the layer scaffold, the guard flow, and the conventions a change is expected to hold to.
 
-This is the structural reference. `docs/LEDGER.md` is its counterpart -- the
-running record of known asymmetries and refactor opportunities. Structure here,
-open questions there; the two are deliberately not allowed to overlap, because
-an earlier copy of this material lived in both places and the duplicate rotted.
+This is the structural reference. `docs/LEDGER.md` is its counterpart -- the running record of known asymmetries and refactor opportunities. Structure here, open questions there; the two are deliberately not allowed to overlap, because an earlier copy of this material lived in both places and the duplicate rotted.
 
 ## What this is
 
