@@ -100,6 +100,7 @@ flowchart TD
     rclone[enable_rclone] -. read-only media mount .-> jellyfin
     rclone --> rclone_http[enable_rclone_http]
     podman --> baikal[install_baikal]
+    podman --> minio[install_minio]
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
@@ -109,6 +110,7 @@ flowchart TD
 - `enable_rclone_http` -- serve registered rclone paths over local HTTP instead of mounting them (see "Serving rclone paths over local HTTP" below).
 - `install_jellyfin` -- Jellyfin media server on port 8096; config and cache at `/srv/jellyfin/{config,cache}` (`diot:jellyfin`, setgid), with the read-only media library bound from `/mnt/rclone/pcloud/Media`.
 - `install_baikal` -- Baikal CalDAV/CardDAV server on port 8080; data at `/srv/baikal/{config,Specific}` (`diot:baikal`, setgid).
+- `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
 ## rclone mounts
 

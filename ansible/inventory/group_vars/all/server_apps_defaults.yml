@@ -22,3 +22,9 @@ server_apps_defaults:
   jellyfin:
     image: docker.io/jellyfin/jellyfin:latest
     port: 8096
+  minio:
+    # docker.io/minio/minio is gated behind Docker Hub auth as of 2025;
+    # quay.io is MinIO's own supported public mirror.
+    image: quay.io/minio/minio:latest
+    port: 9000
+    console_port: 9001

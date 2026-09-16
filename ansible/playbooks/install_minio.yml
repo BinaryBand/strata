@@ -1,0 +1,56 @@
+---
+# Deploy MinIO as a rootless Podman container owned by diot, mirroring the
+# Baikal/Jellyfin pattern. The data root is declared with guard.path by
+# install_minio.py and passed in as an extravar; the image and both published
+# ports come from the server_apps_defaults group_var. The root credentials
+# come from the vault (minio_root_user/minio_root_password, declared with
+# guard.secret) and are referenced directly below, not passed as extravars.
+- name: Deploy MinIO as a rootless Podman container owned by diot
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    minio_group: minio
+    minio_image: "{{ server_apps_defaults.minio.image }}"
+    minio_api_port: "{{ server_apps_defaults.minio.port }}"
+    minio_console_port: "{{ server_apps_defaults.minio.console_port }}"
+
+  tasks:
+    - name: Require the data directory extravar
+      ansible.builtin.assert:
+        that:
+          - minio_data_dir | default('') | length > 0
+        fail_msg: >-
+          minio_data_dir must be set; run this through the
+          services.install_minio runbook, which owns the data directory
+          layout.
+
+    - name: Deploy and start MinIO
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ minio_group }}"
+        quadlet_name: minio
+        quadlet_content: |
+          [Unit]
+          Description=MinIO object storage server
+
+          [Container]
+          Image={{ minio_image }}
+          Volume={{ minio_data_dir }}:/data:Z
+          Environment=MINIO_ROOT_USER={{ minio_root_user }}
+          Environment=MINIO_ROOT_PASSWORD={{ minio_root_password }}
+          Exec=server /data --console-address ":9001"
+          PublishPort={{ minio_api_port }}:9000
+          PublishPort={{ minio_console_port }}:9001
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target
