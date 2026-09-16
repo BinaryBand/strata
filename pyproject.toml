@@ -105,11 +105,11 @@ max-statements = 40
 [tool.vulture]
 min_confidence = 80
 paths = ["strata", "tests"]
-# The pytest-bdd bindings register their fixtures by importing them for the
-# side effect, which reads as an unused import. They sat outside `paths`
-# when they lived at the repository root; this keeps that true.
-exclude = ["tests/features"]
 ignore_decorators = ["@pytest.fixture", "@pytest.mark.*"]
+# The pytest-bdd bindings pull this fixture in by importing it for the side
+# effect, which reads as an unused import. Naming it keeps the rest of the
+# suite under the dead-code gate.
+ignore_names = ["_isolate_guards"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

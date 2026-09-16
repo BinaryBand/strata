@@ -10,8 +10,8 @@ checks both halves of that.
 
 from __future__ import annotations
 
+import functools
 import re
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -19,7 +19,9 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-PLAYBOOK = Path(__file__).resolve().parents[1] / "ansible" / "playbooks" / "enable_wireguard.yml"
+from tests._ansible import PLAYBOOKS_DIR
+
+PLAYBOOK = PLAYBOOKS_DIR / "enable_wireguard.yml"
 
 # Tailscale's policy rules occupy 5210-5270; the kernel's main-table rule is 32766.
 _TAILSCALE_LAST_PREF = 5270
@@ -29,13 +31,9 @@ _RULE_ADD = re.compile(r"ip -[46] rule add (?P<args>.*)$")
 _PREF = re.compile(r"\bpref (?P<pref>\d+)\b")
 
 
-def _play() -> dict[str, object]:
-    plays = cast("list[dict[str, object]]", yaml.safe_load(PLAYBOOK.read_text()))
-    return plays[0]
-
-
+@functools.cache
 def _rendered_config(*, ipv6: bool) -> str:
-    play = _play()
+    play = cast("list[dict[str, object]]", yaml.safe_load(PLAYBOOK.read_text()))[0]
     play_vars = cast("dict[str, object]", play["vars"])
     tasks = cast("list[dict[str, object]]", play["tasks"])
     (write,) = [t for t in tasks if t.get("name") == "Write the tunnel configuration"]
@@ -54,9 +52,9 @@ def _rendered_config(*, ipv6: bool) -> str:
     return str(templar.template(trust_as_template(content)))
 
 
-@pytest.mark.parametrize("ipv6", [True, False])
-def test_wg_quick_routing_is_off(ipv6: bool) -> None:  # noqa: FBT001 -- pytest parameter
-    assert re.search(r"^Table = off$", _rendered_config(ipv6=ipv6), re.MULTILINE)
+def test_wg_quick_routing_is_off() -> None:
+    # Table = off sits outside the IPv6 switch, so one rendering covers both.
+    assert re.search(r"^Table = off$", _rendered_config(ipv6=True), re.MULTILINE)
 
 
 @pytest.mark.parametrize("ipv6", [True, False])

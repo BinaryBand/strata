@@ -175,25 +175,19 @@
           FwMark = {{ wireguard_table }}
           # A failed PostUp leaves its rules behind, and re-adding an identical
           # rule fails, so clear this playbook's priorities first.
-          PreUp = ip -4 rule del pref {{ wireguard_rule_pref }} 2>/dev/null || true
-          PreUp = ip -4 rule del pref {{ wireguard_rule_pref + 1 }} 2>/dev/null || true
+          #
+          # IPv6 goes into the tunnel on the same terms as IPv4. With no IPv6
+          # tunnel address it fails fast instead of leaking past the tunnel.
           PostUp = sysctl -q net.ipv4.conf.all.src_valid_mark=1
-          PostUp = ip -4 route add default dev %i table {{ wireguard_table }}
-          PostUp = ip -4 rule add pref {{ wireguard_rule_pref }} table main suppress_prefixlength 0
-          PostUp = ip -4 rule add pref {{ wireguard_rule_pref + 1 }} not fwmark {{ wireguard_table }} table {{ wireguard_table }}
-          PreDown = ip -4 rule del pref {{ wireguard_rule_pref }}
-          PreDown = ip -4 rule del pref {{ wireguard_rule_pref + 1 }}
-          {% if wireguard_ipv6 | bool %}
-          # IPv6 goes into the tunnel too. With no IPv6 tunnel address it fails
-          # fast instead of leaking past the tunnel.
-          PreUp = ip -6 rule del pref {{ wireguard_rule_pref }} 2>/dev/null || true
-          PreUp = ip -6 rule del pref {{ wireguard_rule_pref + 1 }} 2>/dev/null || true
-          PostUp = ip -6 route add default dev %i table {{ wireguard_table }}
-          PostUp = ip -6 rule add pref {{ wireguard_rule_pref }} table main suppress_prefixlength 0
-          PostUp = ip -6 rule add pref {{ wireguard_rule_pref + 1 }} not fwmark {{ wireguard_table }} table {{ wireguard_table }}
-          PreDown = ip -6 rule del pref {{ wireguard_rule_pref }}
-          PreDown = ip -6 rule del pref {{ wireguard_rule_pref + 1 }}
-          {% endif %}
+          {% for af in [4] + ([6] if wireguard_ipv6 | bool else []) %}
+          PreUp = ip -{{ af }} rule del pref {{ wireguard_rule_pref }} 2>/dev/null || true
+          PreUp = ip -{{ af }} rule del pref {{ wireguard_rule_pref + 1 }} 2>/dev/null || true
+          PostUp = ip -{{ af }} route add default dev %i table {{ wireguard_table }}
+          PostUp = ip -{{ af }} rule add pref {{ wireguard_rule_pref }} table main suppress_prefixlength 0
+          PostUp = ip -{{ af }} rule add pref {{ wireguard_rule_pref + 1 }} not fwmark {{ wireguard_table }} table {{ wireguard_table }}
+          PreDown = ip -{{ af }} rule del pref {{ wireguard_rule_pref }}
+          PreDown = ip -{{ af }} rule del pref {{ wireguard_rule_pref + 1 }}
+          {% endfor %}
 
           [Peer]
           PublicKey = {{ wireguard_peer_public_key }}

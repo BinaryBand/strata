@@ -15,8 +15,8 @@ from typing import cast
 import pytest
 import yaml
 
-ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
-TASK_FILES = sorted([*ANSIBLE_DIR.glob("playbooks/*.yml"), *ANSIBLE_DIR.glob("roles/*/*/*.yml")])
+from tests._ansible import ANSIBLE_DIR, TASK_FILES
+
 _TASK_LISTS = ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always")
 
 
@@ -26,10 +26,11 @@ def _registers(node: object) -> list[str]:
     if not isinstance(node, dict):
         return []
     entry = cast("dict[str, object]", node)
-    names = [entry["register"]] if isinstance(entry.get("register"), str) else []
+    registered = entry.get("register")
+    names = [registered] if isinstance(registered, str) else []
     for key in _TASK_LISTS:
         names.extend(_registers(entry.get(key)))
-    return cast("list[str]", names)
+    return names
 
 
 @pytest.mark.parametrize(

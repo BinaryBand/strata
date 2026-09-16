@@ -21,9 +21,7 @@ from pathlib import Path
 import yaml
 
 from strata.core.models.server_apps_config import ServerAppsDefaults
-
-ROOT = Path(__file__).resolve().parents[1]
-PLAYBOOKS_DIR = ROOT / "ansible" / "playbooks"
+from tests._ansible import PLAYBOOKS_DIR
 
 # playbook file -> port var name(s) it must source from server_apps_defaults.
 PORT_VARS: dict[str, tuple[str, ...]] = {

@@ -17,6 +17,6 @@ rule:
       regex: '^from\s+typer\s'
 ignores:
   - '**/cli/**'
-  # The pytest-bdd feature suite drives the CLI (CliRunner, prompt spies), so it
-  # legitimately touches typer -- it is test scaffolding, not a package layer.
-  - '**/features/**'
+  # Test code drives the CLI (CliRunner, prompt spies), so it legitimately
+  # touches typer -- it is test scaffolding, not a package layer.
+  - '**/tests/**'
