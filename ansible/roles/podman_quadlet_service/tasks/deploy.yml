@@ -16,6 +16,9 @@
 # Optional vars:
 #   quadlet_mode          mode for the .container file (default "0644";
 #                         tighten to "0600" when the unit embeds secrets)
+#   quadlet_no_log        suppress logging of the write task (default false;
+#                         set true when quadlet_content embeds a secret, so
+#                         it never reaches the run log)
 #   quadlet_extra_notify  extra handler names to notify when the unit changes,
 #                         alongside this role's own reload handler, for a
 #                         caller that must restart something of its own too
@@ -65,6 +68,7 @@
         dest: "{{ quadlet_home }}/.config/containers/systemd/{{ quadlet_name }}.container"
         mode: "{{ quadlet_mode | default('0644') }}"
         content: "{{ quadlet_content }}"
+      no_log: "{{ quadlet_no_log | default(false) }}"
       notify: "{{ ['Reload quadlet user systemd'] + (quadlet_extra_notify | default([])) }}"
 
     - name: Generate the service from the new Quadlet before starting it

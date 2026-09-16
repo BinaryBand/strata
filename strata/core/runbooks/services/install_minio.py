@@ -13,6 +13,9 @@ _DATA_DIR = "/srv/minio/data"
 @guard.backup_tag("minio", _DATA_DIR)
 @guard.prerequisite("sudo_password")
 @guard.requires("infrastructure.install_podman")
+# Unlike Baikal/Jellyfin's non-root internal users, MinIO's container runs as
+# root, which rootless Podman maps to the invoking diot user by default -- no
+# Baikal-style 2777 workaround needed for the container to write here.
 @guard.path(_DATA_DIR, owner="diot", group="minio", mode="2770")
 @guard.secret(
     "minio_root_user",

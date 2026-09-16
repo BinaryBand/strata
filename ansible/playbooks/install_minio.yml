@@ -36,6 +36,9 @@
         quadlet_user: "{{ diot_user }}"
         quadlet_group: "{{ minio_group }}"
         quadlet_name: minio
+        # The unit embeds the root credentials, unlike Baikal/Jellyfin's units.
+        quadlet_mode: "0600"
+        quadlet_no_log: true
         quadlet_content: |
           [Unit]
           Description=MinIO object storage server

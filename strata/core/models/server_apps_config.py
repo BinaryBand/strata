@@ -44,8 +44,6 @@ class JellyfinDefaults(BaseModel):
 class MinioDefaults(BaseModel):
     """Defaults for the MinIO object storage server."""
 
-    # docker.io/minio/minio is gated behind Docker Hub auth as of 2025; quay.io
-    # is MinIO's own supported public mirror.
     image: str = "quay.io/minio/minio:latest"
     port: int = 9000
     console_port: int = 9001
