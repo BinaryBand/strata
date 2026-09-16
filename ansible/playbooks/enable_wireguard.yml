@@ -62,22 +62,18 @@
             enabled: true
             state: started
 
-        # A skipped task still registers its variable, so a re-check gets its
-        # own name and the gate below reads it only when it ran.
-        - name: Check again for resolvconf
-          ansible.builtin.shell: command -v resolvconf
-          register: _resolvconf_recheck
-          changed_when: false
-          failed_when: false
+    - name: Confirm that resolvconf is available
+      ansible.builtin.shell: command -v resolvconf
+      register: _resolvconf_final
+      changed_when: false
+      failed_when: false
 
     - name: Refuse to continue without resolvconf
       ansible.builtin.fail:
         msg: >-
           wg-quick needs resolvconf to apply the tunnel's DNS server, and
           installing systemd-resolved did not provide it on this host.
-      when: >-
-        (_resolvconf_recheck.rc if _resolvconf_recheck is not skipped
-        else _resolvconf.rc) != 0
+      when: _resolvconf_final.rc != 0
 
     # Debian's package starts resolved before D-Bus loads the package's bus
     # policy, so resolved never takes its bus name and every resolvconf,
@@ -102,21 +98,19 @@
             name: systemd-resolved
             state: restarted
 
-        - name: Check again that systemd-resolved answers on D-Bus
-          ansible.builtin.command: resolvectl status
-          register: _resolved_bus_recheck
-          changed_when: false
-          failed_when: false
+    - name: Confirm that systemd-resolved answers on D-Bus
+      ansible.builtin.command: resolvectl status
+      register: _resolved_bus_final
+      changed_when: false
+      failed_when: false
 
     - name: Refuse to continue while systemd-resolved does not answer
-      vars:
-        _bus: "{{ _resolved_bus_recheck if _resolved_bus_recheck is not skipped else _resolved_bus }}"
       ansible.builtin.fail:
         msg: >-
           systemd-resolved does not answer on D-Bus (`resolvectl status`
-          exited {{ _bus.rc }}: {{ _bus.stderr }}), so wg-quick cannot apply
-          the tunnel's DNS server.
-      when: _bus.rc != 0
+          exited {{ _resolved_bus_final.rc }}: {{ _resolved_bus_final.stderr }}),
+          so wg-quick cannot apply the tunnel's DNS server.
+      when: _resolved_bus_final.rc != 0
 
     - name: Check where /etc/resolv.conf points
       ansible.builtin.stat:
@@ -148,7 +142,7 @@
             systemctl restart NetworkManager
           fi
       async: 120
-      poll: 5
+      poll: 1
       changed_when: true
 
     - name: Ensure the WireGuard config directory exists

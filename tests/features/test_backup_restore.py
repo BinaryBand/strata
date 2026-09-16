@@ -34,11 +34,10 @@ from strata.cli import dispatch
 from strata.core import paths
 from strata.core.models import Device
 
-# Adapter fakes: imported for their autouse fixture, same seam layer the
-# guard_resolution binding drives.
-from tests.features._guard_harness import _isolate_guards  # noqa: F401
-
 scenarios("backup_restore.feature")
+
+# Adapter fakes: the same seam layer the guard_resolution binding drives.
+pytestmark = pytest.mark.usefixtures("_isolate_guards")
 
 
 @pytest.fixture(autouse=True)

@@ -32,9 +32,12 @@ ENABLE_RCLONE = "playbooks/enable_rclone.yml"
 CREATE_DIOT = "playbooks/create_diot_user.yml"
 
 
-@pytest.fixture(autouse=True)
-def _isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
-    """Fake every adapter the executor reaches, recording what it asked for."""
+def isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
+    """Fake every adapter the executor reaches, recording what it asked for.
+
+    conftest.py wraps this as the `_isolate_guards` fixture; a binding opts in
+    with `pytest.mark.usefixtures`.
+    """
     ctx.update(
         events=[],
         vault={},

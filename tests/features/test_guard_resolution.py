@@ -33,14 +33,13 @@ from tests.features._guard_harness import (
     CREATE_DIOT,
     ENABLE_RCLONE,
     ENSURE_PATH,
-    # Imported for its side effect: an autouse fixture only applies where its
-    # name is bound, so this is what installs the adapter fakes here.
-    _isolate_guards,  # noqa: F401
     install_upstream,
     run_declared,
 )
 
 scenarios("guard_resolution.feature")
+
+pytestmark = pytest.mark.usefixtures("_isolate_guards")
 
 
 # ── Given: target ─────────────────────────────────────────────────────────

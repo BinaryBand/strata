@@ -10,9 +10,7 @@ checks both halves of that.
 
 from __future__ import annotations
 
-import functools
 import re
-from typing import cast
 
 import pytest
 import yaml
@@ -21,8 +19,6 @@ from ansible.template import Templar, trust_as_template
 
 from tests._ansible import PLAYBOOKS_DIR
 
-PLAYBOOK = PLAYBOOKS_DIR / "enable_wireguard.yml"
-
 # Tailscale's policy rules occupy 5210-5270; the kernel's main-table rule is 32766.
 _TAILSCALE_LAST_PREF = 5270
 _MAIN_PREF = 32766
@@ -30,16 +26,15 @@ _MAIN_PREF = 32766
 _RULE_ADD = re.compile(r"ip -[46] rule add (?P<args>.*)$")
 _PREF = re.compile(r"\bpref (?P<pref>\d+)\b")
 
+_PLAY = yaml.safe_load((PLAYBOOKS_DIR / "enable_wireguard.yml").read_text())[0]
+_CONFIG_TEMPLATE: str = next(
+    task for task in _PLAY["tasks"] if task["name"] == "Write the tunnel configuration"
+)["ansible.builtin.copy"]["content"]
 
-@functools.cache
+
 def _rendered_config(*, ipv6: bool) -> str:
-    play = cast("list[dict[str, object]]", yaml.safe_load(PLAYBOOK.read_text()))[0]
-    play_vars = cast("dict[str, object]", play["vars"])
-    tasks = cast("list[dict[str, object]]", play["tasks"])
-    (write,) = [t for t in tasks if t.get("name") == "Write the tunnel configuration"]
-    content = cast("dict[str, str]", write["ansible.builtin.copy"])["content"]
     variables = {
-        **play_vars,
+        **_PLAY["vars"],
         "wireguard_ipv6": ipv6,
         "wireguard_private_key": "private",
         "wireguard_address": "10.2.0.2/32",
@@ -49,12 +44,12 @@ def _rendered_config(*, ipv6: bool) -> str:
     }
     # Ansible's own renderer, so its filters and block trimming apply as in a real run.
     templar = Templar(loader=DataLoader(), variables=variables)
-    return str(templar.template(trust_as_template(content)))
+    return str(templar.template(trust_as_template(_CONFIG_TEMPLATE)))
 
 
 def test_wg_quick_routing_is_off() -> None:
     # Table = off sits outside the IPv6 switch, so one rendering covers both.
-    assert re.search(r"^Table = off$", _rendered_config(ipv6=True), re.MULTILINE)
+    assert "\nTable = off\n" in _rendered_config(ipv6=True)
 
 
 @pytest.mark.parametrize("ipv6", [True, False])

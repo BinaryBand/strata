@@ -33,7 +33,7 @@ import yaml
 import strata.core.runbooks as _runbook_pkg
 from strata.core import guard
 from strata.core import requirements as req
-from tests._ansible import ANSIBLE_DIR
+from tests._ansible import ANSIBLE_DIR, iter_tasks
 
 # Binary name -> dotted runbook (relative to strata.core.runbooks) that
 # installs it. Only tools actually observed as literal command/shell
@@ -56,7 +56,6 @@ KNOWN_GAPS: dict[str, frozenset[str]] = {}
 
 _PLAYBOOK_RE = re.compile(r'run_playbook\(\s*"(playbooks/[^"]+\.yml)"')
 _COMMAND_KEYS = ("ansible.builtin.command", "command", "ansible.builtin.shell", "shell")
-_NESTED_KEYS = ("block", "rescue", "always")
 
 
 def _import_all_runbooks() -> None:
@@ -104,23 +103,12 @@ def _one_command(value: object) -> str:
 
 
 def _command_strings(tasks: object) -> list[str]:
-    commands: list[str] = []
-    if not isinstance(tasks, list):
-        return commands
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        task_dict = cast("dict[str, object]", task)
-        for key in _NESTED_KEYS:
-            nested = task_dict.get(key)
-            if nested is not None:
-                commands.extend(_command_strings(nested))
-        commands.extend(
-            _one_command(value)
-            for key in _COMMAND_KEYS
-            if (value := task_dict.get(key)) is not None
-        )
-    return commands
+    return [
+        _one_command(value)
+        for task in iter_tasks(tasks)
+        for key in _COMMAND_KEYS
+        if (value := task.get(key)) is not None
+    ]
 
 
 def _tools_used(playbook_path: Path) -> set[str]:

@@ -32,9 +32,10 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from strata.adapters import guard_executor, state
 from strata.cli import dispatch
 from strata.core.models import Device
-from tests.features._guard_harness import _isolate_guards  # noqa: F401
 
 scenarios("server_app_journeys.feature")
+
+pytestmark = pytest.mark.usefixtures("_isolate_guards")
 
 
 @pytest.fixture(autouse=True)

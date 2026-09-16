@@ -117,11 +117,10 @@ def test_module_length() -> None:
     hit a line count scatters a single scenario's steps across modules.
     tests/unit/adapters/test_guard_executor.py is likewise already over the cap.
     """
-    exempt = {"tests"}
     offenders: list[str] = []
     for path in sorted(ROOT.rglob("*.py")):
         parts = path.relative_to(ROOT).parts
-        if any(part.startswith(".") for part in parts) or exempt & set(parts):
+        if any(part.startswith(".") for part in parts) or "tests" in parts:
             continue
         line_count = path.read_text().count("\n") + 1
         if line_count > MAX_MODULE_LINES:

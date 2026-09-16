@@ -16,6 +16,7 @@ from pytest_bdd import parsers, then, when
 from typer.testing import CliRunner
 
 from strata.cli.main import app
+from tests.features._guard_harness import isolate_guards
 
 _runner = CliRunner()
 
@@ -24,6 +25,15 @@ _runner = CliRunner()
 def ctx() -> dict[str, Any]:
     """Mutable bag threading the last CLI result between steps."""
     return {}
+
+
+@pytest.fixture
+def _isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
+    """Install the adapter fakes for bindings that drive the real guard executor.
+
+    Not autouse: most features drive the CLI with their own narrower fakes.
+    """
+    isolate_guards(monkeypatch, ctx)
 
 
 # ── shared step vocabulary ──────────────────────────────────────────────
