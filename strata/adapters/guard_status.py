@@ -21,18 +21,10 @@ import pwd
 from pathlib import Path
 from typing import assert_never
 
-from strata.adapters import guard_executor
-from strata.adapters.ansible import rclone, secrets, vault_pass
+from strata.adapters import guard_executor, prerequisites
+from strata.adapters.ansible import rclone, secrets
 from strata.core import ports
 from strata.core import requirements as req
-
-
-def _prerequisite_satisfied(name: str) -> bool:
-    if name == "sudo_password":
-        return secrets.has_secret("ansible_become_password")
-    if name == "vault_password":
-        return vault_pass.has_vault_password()
-    return False
 
 
 def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  # noqa: PLR0911, PLR0912, C901
@@ -47,7 +39,10 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
         case req.ControllerOnly():
             return "satisfied" if guard_executor.is_controller(target) else "missing"
         case req.Prerequisite():
-            return "satisfied" if _prerequisite_satisfied(requirement.name) else "missing"
+            # Answered from the shared prerequisite table rather than a ladder
+            # of names here, so registering a prerequisite cannot leave this
+            # endpoint reporting it missing forever.
+            return "satisfied" if prerequisites.satisfied(requirement.name) else "missing"
         case req.Secret():
             return "satisfied" if secrets.has_secret(requirement.vault_key) else "missing"
         case req.Storage():

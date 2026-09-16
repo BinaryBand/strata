@@ -10,8 +10,15 @@
 # The schema is enforced by the Pydantic model at
 # strata/core/models/server_apps_config.py -- run `strata dev schema` to regenerate
 # the VS Code intellisense schema after editing this file's structure.
+#
+# Data directories are deliberately NOT here: they are declared with guard.path
+# in the runbook that provisions them and passed to the playbook as extravars,
+# so the directory a guard creates and the directory the container binds cannot
+# drift apart.
 server_apps_defaults:
   baikal:
+    image: docker.io/ckulka/baikal:nginx
     port: 8080
   jellyfin:
+    image: docker.io/jellyfin/jellyfin:latest
     port: 8096

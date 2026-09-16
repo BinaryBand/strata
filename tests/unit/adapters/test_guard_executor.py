@@ -20,7 +20,7 @@ from types import ModuleType
 
 import pytest
 
-from strata.adapters import guard_executor
+from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
 from strata.core import guard, ports
 from strata.core import requirements as req
@@ -246,7 +246,14 @@ def test_requirements_are_satisfied_in_decorator_order(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        guard_executor, "_PREREQUISITES", {"_test_marker": lambda: calls.append("prereq")}
+        prerequisites,
+        "_TABLE",
+        {
+            "_test_marker": prerequisites._Prerequisite(
+                ensure=lambda: calls.append("prereq"),
+                satisfied=lambda: False,
+            )
+        },
     )
     monkeypatch.setattr(guard_executor, "path_satisfied", lambda *_a, **_kw: False)
     monkeypatch.setattr(pwd, "getpwnam", lambda name: (_ for _ in ()).throw(KeyError(name)))

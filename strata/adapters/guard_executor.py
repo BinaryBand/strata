@@ -21,7 +21,6 @@ intended meaning.
 
 from __future__ import annotations
 
-import getpass
 import grp
 import importlib
 import inspect
@@ -34,6 +33,7 @@ from typing import assert_never
 
 import click
 
+from strata.adapters import prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
 from strata.core import guard, ports
 from strata.core import requirements as req
@@ -62,35 +62,6 @@ def is_controller(target: str | None) -> bool:
 
 
 # ── Individual requirement handlers ────────────────────────────────────────
-
-
-def _ensure_sudo_password() -> None:
-    if not secrets.has_secret("ansible_become_password"):
-        secrets.set_secret(
-            "ansible_become_password",
-            getpass.getpass("sudo password (will be stored in vault): "),
-        )
-
-
-# Replaces the old runtime registry that utils/prerequisites.py populated as an
-# import side effect -- which is why cli/main.py had to import that module for
-# its side effect alone, and why every @guard.prerequisite carried a lazy import
-# to make sure it had happened. A plain table needs neither.
-_PREREQUISITES: dict[str, Callable[[], None]] = {
-    "sudo_password": _ensure_sudo_password,
-    "vault_password": secrets.ensure_vault_password,
-}
-
-
-def _ensure_prerequisite(requirement: req.Prerequisite) -> None:
-    handler = _PREREQUISITES.get(requirement.name)
-    if handler is None:
-        msg = (
-            f"Prerequisite {requirement.name!r} is not registered. "
-            f"Available: {sorted(_PREREQUISITES)}"
-        )
-        raise KeyError(msg)
-    handler()
 
 
 def _ensure_secret(
@@ -261,7 +232,7 @@ def _satisfy_one(  # noqa: PLR0911, C901
         case req.ControllerOnly():
             return _refuse_non_controller(requirement, target=target, reporter=reporter)
         case req.Prerequisite():
-            _ensure_prerequisite(requirement)
+            prerequisites.ensure(requirement.name)
             return None
         case req.Secret():
             _ensure_secret(

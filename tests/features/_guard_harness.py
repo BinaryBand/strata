@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from strata.adapters import guard_executor
+from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
 
 Runbook = Callable[..., int]
@@ -75,10 +75,11 @@ def _fake_secrets(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
 def _fake_prompts(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     """The executor's two prompt sites.
 
-    They are not interchangeable: a secret goes through `click.prompt`, which
-    renders defaults and can hide input, while the sudo password goes through
-    `getpass.getpass`, which reads the terminal directly and so cannot be
-    driven by feeding stdin the way the other feature suites drive prompts.
+    They are not interchangeable: a secret goes through `click.prompt` in the
+    executor, which renders defaults and can hide input, while the sudo
+    password goes through `getpass.getpass` in the prerequisite table, which
+    reads the terminal directly and so cannot be driven by feeding stdin the
+    way the other feature suites drive prompts.
     """
 
     def fake_prompt(message: str, **kwargs: Any) -> str:
@@ -94,7 +95,8 @@ def _fake_prompts(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
 
     monkeypatch.setattr(guard_executor.click, "prompt", fake_prompt)
     monkeypatch.setattr(guard_executor.click, "echo", ctx["echoes"].append)
-    monkeypatch.setattr(guard_executor.getpass, "getpass", fake_getpass)
+    # The sudo prompt lives with the prerequisite table, not the executor.
+    monkeypatch.setattr(prerequisites.getpass, "getpass", fake_getpass)
 
 
 def _fake_runner(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:

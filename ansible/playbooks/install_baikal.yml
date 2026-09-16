@@ -2,7 +2,9 @@
 # Deploy Baikal CalDAV/CardDAV as a rootless Podman container owned by diot,
 # mirroring the Jellyfin pattern. Admin and user accounts are created
 # through Baikal's web installer on first visit -- this play only stands up the
-# service and its data volumes.
+# service and its data volumes. The data root is declared with guard.path by
+# install_baikal.py and passed in as an extravar; the image and published port
+# come from the server_apps_defaults group_var.
 - name: Deploy Baikal as a rootless Podman container owned by diot
   hosts: all
   become: true
@@ -13,11 +15,19 @@
     ansible_python_interpreter: /usr/bin/python3
     diot_user: diot
     baikal_group: baikal
-    baikal_data_dir: /srv/baikal
-    baikal_image: docker.io/ckulka/baikal:nginx
+    baikal_image: "{{ server_apps_defaults.baikal.image }}"
     baikal_http_port: "{{ server_apps_defaults.baikal.port }}"
 
   tasks:
+    - name: Require the data directory extravar
+      ansible.builtin.assert:
+        that:
+          - baikal_data_dir | default('') | length > 0
+        fail_msg: >-
+          baikal_data_dir must be set; run this through the
+          services.install_baikal runbook, which owns the data directory
+          layout.
+
     - name: Deploy and start Baikal
       ansible.builtin.include_role:
         name: podman_quadlet_service

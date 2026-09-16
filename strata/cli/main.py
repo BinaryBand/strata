@@ -73,8 +73,8 @@ def runbook(
         show_runbook_list()
         return
     if name is None:
-        # Interactive terminals get a category-then-runbook picker; pipes,
-        # scripts and CI fall through to the error below unchanged.
+        # Interactive terminals get the runbook autocomplete; pipes, scripts
+        # and CI fall through to the error below unchanged.
         name = pick_runbook()
     if name is None:
         typer.echo(
