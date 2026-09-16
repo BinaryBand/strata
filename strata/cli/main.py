@@ -102,17 +102,20 @@ def gui(
         typer.Option("--no-browser", help="Serve without opening a browser."),
     ] = False,
 ) -> None:
-    """Open the GUI in a browser, serving the runbook catalog on loopback.
+    """Open the GUI in a browser, serving the runbook catalog and action API on loopback.
 
     Serves the built Flutter web app plus GET /api/gui-data -- the same
-    read-only snapshot `strata dev gui-data` prints -- from one 127.0.0.1 port,
-    then opens it. Runs until interrupted.
+    read-only snapshot `strata dev gui-data` prints -- and the action routes
+    that run a runbook, manage devices and set secrets, from one 127.0.0.1
+    port, then opens it. Runs until interrupted.
 
-    Nothing served here executes a runbook: the GUI shows the catalog, its
-    guard chains and the inventory, and simulates the rest. Reach it from
-    another device on your tailnet with `tailscale serve <port>` -- not
-    `tailscale funnel`, which would put a tool that reads the vault and drives
-    ansible-runner on the open internet.
+    The action routes require a bearer token, printed below and embedded in
+    the URL this opens locally; `strata dev gui-token` prints it again for
+    pasting into a second device. Reach this from another device on your
+    tailnet with `tailscale serve <port>` -- not `tailscale funnel`, which
+    would put a tool that reads the vault and drives ansible-runner on the
+    open internet -- and hand that device the token too, since the tailnet
+    alone doesn't gate who can run a playbook against this box.
 
     Requires `flutter build web` in gui/ first; this does not build it.
     """

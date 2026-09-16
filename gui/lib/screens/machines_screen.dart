@@ -87,12 +87,42 @@ class _AddMachineForm extends StatefulWidget {
 }
 
 class _AddMachineFormState extends State<_AddMachineForm> {
+  final _nameController = TextEditingController();
+  final _hostController = TextEditingController();
+  final _userController = TextEditingController(text: 'root');
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _hostController.dispose();
+    _userController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _testConnection() async {
+    if (_hostController.text.trim().isEmpty) return;
+    await widget.state.testConnection(_hostController.text.trim());
+  }
+
+  Future<void> _addMachine() async {
+    if (_nameController.text.trim().isEmpty || _hostController.text.trim().isEmpty) return;
+    setState(() => _submitting = true);
+    await widget.state.addMachine(
+      name: _nameController.text.trim(),
+      host: _hostController.text.trim(),
+      user: _userController.text.trim().isEmpty ? 'root' : _userController.text.trim(),
+    );
+    if (mounted) setState(() => _submitting = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = widget.state;
     final testOk = s.testState == TestState.ok;
     final testIdle = s.testState == TestState.idle;
     final testing = s.testState == TestState.testing;
+    final testFailed = s.testState == TestState.failed;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 18),
@@ -113,14 +143,14 @@ class _AddMachineFormState extends State<_AddMachineForm> {
             style: sans(size: 12.5, height: 1.5, color: AppColors.textMuted),
           ),
           const SizedBox(height: 18),
-          _field('Name', 'e.g. NasBox'),
+          _field('Name', 'e.g. NasBox', _nameController),
           const SizedBox(height: 14),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _field('Address', '192.168.1.50 or host.local')),
+              Expanded(child: _field('Address', '192.168.1.50 or host.local', _hostController)),
               const SizedBox(width: 12),
-              Expanded(child: _field('SSH user', 'diot')),
+              Expanded(child: _field('SSH user', 'root', _userController)),
             ],
           ),
           const SizedBox(height: 14),
@@ -138,18 +168,21 @@ class _AddMachineFormState extends State<_AddMachineForm> {
                   height: 7,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: testIdle ? const Color(0xFF3A4150) : (testing ? AppColors.amber : AppColors.green),
+                    color: testing
+                        ? AppColors.amber
+                        : (testOk ? AppColors.green : (testFailed ? AppColors.red : const Color(0xFF3A4150))),
                   ),
                 ),
                 const SizedBox(width: 9),
                 Expanded(
                   child: Text(
-                    testIdle ? 'Not tested yet' : (testing ? 'Connecting over SSH…' : 'Reachable — SSH key accepted'),
+                    testIdle
+                        ? 'Not tested yet'
+                        : (testing ? 'Connecting…' : (testOk ? 'Port reachable' : 'Not reachable')),
                     style: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textSecondary),
                   ),
                 ),
-                if (testOk) Text('Ubuntu 24.04 · arm64', style: sans(size: 11.5, weight: FontWeight.w500, color: AppColors.textDim)),
-                if (testIdle) GhostButton(label: 'Test connection', onTap: s.testConnection),
+                if (testIdle || testFailed) GhostButton(label: 'Test connection', onTap: _testConnection),
               ],
             ),
           ),
@@ -159,7 +192,7 @@ class _AddMachineFormState extends State<_AddMachineForm> {
             runSpacing: 10,
             children: [
               ElevatedButton(
-                onPressed: testOk ? s.closeAddMachine : null,
+                onPressed: (testOk && !_submitting) ? _addMachine : null,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: testOk ? AppColors.cyan : const Color(0xFF2A3040),
                   disabledBackgroundColor: const Color(0xFF2A3040),
@@ -180,13 +213,14 @@ class _AddMachineFormState extends State<_AddMachineForm> {
     );
   }
 
-  Widget _field(String label, String hint) {
+  Widget _field(String label, String hint, TextEditingController controller) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: sans(size: 12, weight: FontWeight.w500, color: AppColors.textMuted)),
         const SizedBox(height: 6),
         TextField(
+          controller: controller,
           style: sans(size: 13, weight: FontWeight.w500),
           decoration: InputDecoration(
             hintText: hint,

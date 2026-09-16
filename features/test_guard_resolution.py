@@ -10,7 +10,7 @@ an imported module. The CLI's own wiring is covered by runbook_dispatch.feature.
 
 What is faked is the leaf adapters the executor imports directly -- `secrets`,
 `rclone`, `runner`, `inventory` -- plus the two prompt calls. Everything
-between (`declared()` ordering, `_is_controller` gating, `_path_satisfied`,
+between (`declared()` ordering, `is_controller` gating, `path_satisfied`,
 the dispatch table, upstream recursion) is the production code path. This is
 the pattern from tests/unit/adapters/test_guard_executor.py rather than
 Stage 2's, which fakes `execute` wholesale -- the very thing under test here.

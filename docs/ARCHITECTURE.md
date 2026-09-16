@@ -108,22 +108,37 @@ See `README.md` for what each server app does, the rclone mount/serve workflows,
 
 ## The GUI
 
-`gui/` is a Flutter app over the runbook catalog -- three screens (Runbooks, Server apps, Machines) sharing one `AppState`. It is a second consumer of `discovery`, `guard` and `inventory`, and it reaches them through exactly one seam: the JSON snapshot `strata/cli/gui_server.py`'s `build_gui_data()` produces.
+`gui/` is a Flutter app over the runbook catalog -- three screens (Runbooks, Server apps, Machines) sharing one `AppState`. It is a second consumer of `discovery`, `guard` and `inventory`, and it reaches them through one HTTP server: `strata gui` (`strata/cli/gui_server.py`), which serves both the read-only snapshot and an action API that actually runs runbooks, manages devices and sets secrets.
 
 ```text
-strata gui                         strata dev gui-data
-  -> gui_server.serve()              -> gui_server.build_gui_data()
-      GET /api/gui-data                  -> json on stdout
-        -> build_gui_data()
-      GET /*  -> gui/build/web/
-      webbrowser.open(127.0.0.1:port)
+strata gui
+  -> gui_server.serve()
+      GET  /api/gui-data          -> build_gui_data()              (open)
+      GET  /api/runbook-status    -> gui_actions.get_runbook_status (open)
+      GET  /api/vault-status                                        (open)
+      GET  /api/reachable         -> gui_actions.get_reachable      (open)
+      GET  /api/run/<id>          -> gui_actions.get_run_status     (token)
+      POST /api/run               -> gui_actions.post_run           (token)
+      POST /api/devices           -> gui_actions.post_device        (token)
+      DELETE /api/devices/<name>  -> gui_actions.delete_device      (token)
+      POST /api/secrets           -> gui_actions.post_secret        (token)
+      POST /api/vault-password    -> gui_actions.post_vault_password (token)
+      GET  /*  -> gui/build/web/
+      webbrowser.open(127.0.0.1:port/?token=...)
+
+strata dev gui-data   -> gui_server.build_gui_data() -> json on stdout
+strata dev gui-token  -> gui_token.get_or_create_token() / rotate_token()
 ```
 
-That snapshot is **declarations only**: `discovery.iter_runbooks()` for the catalog and `guard.declared(main)` for each guard chain, plus `inventory.all_hosts()`. No runbook's `main()` or `check()` is invoked and no playbook runs, so dotted names, categories, aliases, descriptions, guard chains and hosts are real while install status, guard resolution, machine reachability and runs are still simulated in the Dart layer (`gui/lib/mock_data.dart`, which is also the fallback when the seam is unreachable).
+`GET /api/gui-data` is still **declarations only**: `discovery.iter_runbooks()` for the catalog and `guard.declared(main)` for each guard chain, plus `inventory.all_hosts()`. Every other route is a thin bridge in `strata/cli/gui_actions.py` onto something that already exists -- `post_device` is `inventory.add`, `post_secret` is `secrets.set_secret`, `post_run` spawns a background thread running the real `guard_executor.execute()` and buffers its reported lines (`QueueReporter`) for `GET /api/run/<id>` to poll. `strata/adapters/guard_status.py`'s `guard_status()` is the read-only counterpart to `guard_executor`'s prompting/mutating `_satisfy_one()`, used by `/api/runbook-status` to report each guard as `"satisfied"`/`"missing"`/`"unknown"` without ever prompting or running a playbook.
 
-Two consumers because the app has two builds: desktop shells out via `dart:io` (`strata dev gui-data`), and web has no `dart:io` so it fetches `/api/gui-data` from the origin `strata gui` serves it on. `strata gui` binds 127.0.0.1 only; `tailscale serve <port>` is the supported way to reach it from the tailnet, never `tailscale funnel`.
+Because the action routes can run privileged playbooks, every mutating one (`POST`/`DELETE`) requires `Authorization: Bearer <token>` -- `strata/adapters/gui_token.py`, a keychain entry alongside the vault password (service `strata`, account `gui_token`). `strata gui` embeds the token in the URL it opens locally and also prints it; `strata dev gui-token` reprints (or `--rotate`s) it for pasting into a second device reached via `tailscale serve <port>` (never `tailscale funnel`) -- the server still binds `127.0.0.1` only, so the token is what stops another tailnet device from running a playbook against this box, not a replacement for that boundary.
 
-The snapshot is an untyped wire format shared with Dart, so `tests/unit/cli/test_gui_server.py` pins it: the exact key set of each object, and -- driven off the `Requirement` union -- that every requirement type has a label in `_GUARD_LABELERS`. Both sides degrade silently otherwise (Python falls back to the class name, Dart to `GuardType.requires`), so a new `@guard.*` needs a labeler here and a `GuardType` in `gui/lib/data/strata_cli.dart`.
+Desktop and web share one HTTP client (`gui/lib/data/strata_cli.dart`'s `StrataApi`, reached via `connectToStrata()`): web reads the token from its own URL and talks to the origin it was served from; desktop has no server of its own, so it spawns `strata gui --no-browser` as a subprocess and parses the URL/token it announces on startup. `strata dev gui-data` still exists as a standalone read-only snapshot printer (handy for inspection by hand) but nothing in `gui/` shells out to it any more.
+
+The snapshot and the action payloads are an untyped wire format shared with Dart, so `tests/unit/cli/test_gui_server.py`, `tests/unit/cli/test_gui_actions.py` and `tests/unit/adapters/test_guard_status.py` pin them: the exact key set of each object, and -- driven off the `Requirement` union -- that every requirement type has a label in `_GUARD_LABELERS`. Both sides degrade silently otherwise (Python falls back to the class name, Dart to `GuardType.requires`), so a new `@guard.*` needs a labeler here and a `GuardType` in `gui/lib/data/strata_cli.dart`.
+
+Only one run is tracked at a time (`strata/cli/gui_actions.py`'s `_current_run`) -- a second `POST /api/run` while one is in flight gets `409`. This is a single-operator tool, not a run queue.
 
 Only `gui/lib/`, the pubspec pair, `analysis_options.yaml` and `.metadata` are tracked -- the platform runner directories are `flutter create` output and are gitignored, so a fresh checkout runs `flutter create .` before `flutter build web`. `gui/build/web/` is likewise gitignored, which is why `strata gui` handles it being absent. No Dart is covered by `uv run pytest`; `flutter analyze` is not wired into the gate.
 

@@ -94,7 +94,7 @@ def restic_initialized(ctx: dict[str, Any], tmp_path: Path) -> None:
     ctx["vault"]["restic_repository"] = str(repo)
     ctx["vault"]["restic_password"] = "pw"
     ctx["vault"]["sudo_password"] = "sudo-pw"
-    # The upstream fast path is gated on _is_controller(target): an unknown
+    # The upstream fast path is gated on is_controller(target): an unknown
     # host is not the controller, so without this the executor skips check()
     # and provisions the whole restic chain instead of short-circuiting it.
     ctx["device_for"] = {

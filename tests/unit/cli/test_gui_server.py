@@ -158,6 +158,8 @@ def served(tmp_path: Path) -> str:
     ready = threading.Event()
 
     def announce(line: str) -> None:
+        if " on " not in line:
+            return
         urls.append(line.rsplit(" on ", 1)[1].split(" ", maxsplit=1)[0])
         ready.set()
 

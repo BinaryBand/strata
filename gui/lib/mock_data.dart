@@ -284,31 +284,46 @@ const Map<GuardType, bool> knownGuards = {
   GuardType.path: true,
 };
 
-Readiness computeReadiness(Runbook r, bool targetIsController) {
-  if (r.guards.any((g) => g.type == GuardType.controllerOnly) && !targetIsController) {
-    return const Readiness(
-      key: 'blocked',
-      text: 'Blocked',
-      title: 'Controller-only — switch target to This machine',
-      color: 0xFFFDA4AF,
-      background: 0x1FFB7185,
-    );
-  }
-  final asks = r.guards.where((g) => knownGuards[g.type] == false).length;
-  if (asks > 0) {
-    return Readiness(
+const _blockedReadiness = Readiness(
+  key: 'blocked',
+  text: 'Blocked',
+  title: 'Controller-only — switch target to This machine',
+  color: 0xFFFDA4AF,
+  background: 0x1FFB7185,
+);
+
+const _readyReadiness = Readiness(
+  key: 'ready',
+  text: 'Ready',
+  title: 'Everything it needs is on hand',
+  color: 0xFF6EE7B7,
+  background: 0x1F34D399,
+);
+
+Readiness _asksReadiness(int asks) => Readiness(
       key: 'asks',
       text: asks == 1 ? 'Asks 1 thing' : 'Asks $asks things',
-      title: 'Will prompt you before running',
+      title: 'Needs a value from you before it can run',
       color: 0xFFFCD34D,
       background: 0x1FFBBF24,
     );
+
+/// Summarizes a runbook's readiness to run.
+///
+/// [liveSteps] is the real per-guard status from `GET /api/runbook-status`;
+/// pass null while that fetch hasn't landed yet (or failed) to fall back to
+/// guessing from guard *type* alone, so the badge has something to show
+/// immediately rather than blank.
+Readiness computeReadiness(Runbook r, bool targetIsController, {List<GuardStep>? liveSteps}) {
+  if (r.guards.any((g) => g.type == GuardType.controllerOnly) && !targetIsController) {
+    return _blockedReadiness;
   }
-  return const Readiness(
-    key: 'ready',
-    text: 'Ready',
-    title: 'Everything it needs is on hand',
-    color: 0xFF6EE7B7,
-    background: 0x1F34D399,
-  );
+  if (liveSteps == null) {
+    final asks = r.guards.where((g) => knownGuards[g.type] == false).length;
+    return asks > 0 ? _asksReadiness(asks) : _readyReadiness;
+  }
+  final asks = liveSteps
+      .where((step) => step.needsInputWhenMissing && step.status == GuardReadiness.missing)
+      .length;
+  return asks > 0 ? _asksReadiness(asks) : _readyReadiness;
 }

@@ -11,12 +11,12 @@ absolute host paths this suite must not touch or need root to create:
 
   * `shutil.which` decides install_podman's check(); a scenario says whether
     podman is present rather than depending on the machine running the tests.
-  * `_path_satisfied` is answered from a per-scenario set, so "already
+  * `path_satisfied` is answered from a per-scenario set, so "already
     provisioned" does not mean chown-ing /srv/jellyfin. Whether a stat result
     actually satisfies a LocalPath is guard_resolution.feature's job, and is
     covered there against real directories.
 
-Everything else -- ordering, `_is_controller` gating, upstream check()
+Everything else -- ordering, `is_controller` gating, upstream check()
 short-circuits -- runs unfaked.
 """
 
@@ -60,7 +60,7 @@ def _journey_seams(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None
 
     monkeypatch.setattr(
         guard_executor,
-        "_path_satisfied",
+        "path_satisfied",
         lambda spec: spec.path in ctx["satisfied_paths"],
     )
 
@@ -211,7 +211,7 @@ def runs_before(ctx: dict[str, Any], first: str, second: str) -> None:
 def chain_not_skipped(ctx: dict[str, Any]) -> None:
     """On a non-controller target every local fast path is off by design.
 
-    _path_satisfied, the pwd lookup, the mount check and upstream check() all
+    path_satisfied, the pwd lookup, the mount check and upstream check() all
     interrogate the controller, so on a remote host they would report another
     machine's state as this one's.
     """

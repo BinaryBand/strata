@@ -8,12 +8,12 @@ Fast paths
 ----------
 Each requirement has a cheap local check that can skip the playbook. Those
 checks are only meaningful when the machine being provisioned is the one we are
-running on, so they are gated on `_is_controller(target)`.
+running on, so they are gated on `is_controller(target)`.
 
 This condition used to be `target is not None`, which dated from when a target
 of None meant "local". The CLI later started always resolving a target -- for
 the local box, its own hostname -- so the condition was permanently true and
-every fast path was dead code: `check()`, `_path_satisfied` and the pwd lookup
+every fast path was dead code: `check()`, `path_satisfied` and the pwd lookup
 had not run in production for as long as that resolution has been in place.
 Asking the inventory whether the target is the controller restores the
 intended meaning.
@@ -39,7 +39,7 @@ from strata.core import guard, ports
 from strata.core import requirements as req
 
 
-def _is_controller(target: str | None) -> bool:
+def is_controller(target: str | None) -> bool:
     """Report whether `target` is the machine we are running on.
 
     No target at all means the controller -- that is the pre-inventory
@@ -51,7 +51,7 @@ def _is_controller(target: str | None) -> bool:
     typed for it, and the plausible reasons for the lookup to fail -- a typo,
     a host removed from the inventory, an ansible group rather than a host --
     all describe somewhere that is not this machine. Answering True made
-    every fast path (_path_satisfied, the pwd lookup, the mount check,
+    every fast path (path_satisfied, the pwd lookup, the mount check,
     upstream check()) interrogate the controller on that host's behalf and
     report work as already done.
     """
@@ -126,7 +126,7 @@ def _ensure_secret(
     secrets.set_secret(vault_key, entry)
 
 
-def _path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
+def path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
     """Report whether the path already has the requested type, owner, group and mode.
 
     One return per unmet condition reads better than nesting them; PLR0911
@@ -152,7 +152,7 @@ def _path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
 
 def _ensure_local_path(spec: req.LocalPath, *, target: str | None) -> int | None:
     """Provision `spec` via ensure_path.yml unless it is already satisfied."""
-    if _is_controller(target) and _path_satisfied(spec):
+    if is_controller(target) and path_satisfied(spec):
         return None
     extravars: dict[str, object] = {"guard_path": spec.path, "guard_state": spec.state}
     if spec.owner is not None:
@@ -179,7 +179,7 @@ def _ensure_mount(remote_path: str, *, target: str | None, writable: bool = Fals
 
     # os.path.exists(resolved) describes the controller's mount state, so it can
     # only stand in for a remote host's when they are the same machine.
-    mounted = _is_controller(target) and Path(rclone.resolve(remote_path)).exists()
+    mounted = is_controller(target) and Path(rclone.resolve(remote_path)).exists()
     if not needs_remount and mounted:
         return None
     exit_code = runner.run_playbook("playbooks/enable_rclone.yml", target=target)
@@ -187,7 +187,7 @@ def _ensure_mount(remote_path: str, *, target: str | None, writable: bool = Fals
 
 
 def _ensure_user(username: str, playbook: str, *, target: str | None) -> int | None:
-    if _is_controller(target):
+    if is_controller(target):
         try:
             pwd.getpwnam(username)
         except KeyError:
@@ -239,7 +239,7 @@ def _ensure_storage(requirement: req.Storage, *, target: str | None) -> int | No
 def _refuse_non_controller(
     requirement: req.ControllerOnly, *, target: str | None, reporter: ports.Reporter
 ) -> int | None:
-    if _is_controller(target):
+    if is_controller(target):
         return None
     reporter.info(f"This runbook only runs on the controller, not {target!r}: {requirement.reason}")
     return 1
@@ -296,7 +296,7 @@ def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Repor
     """Run an upstream runbook unless its own check() says it is satisfied."""
     module = importlib.import_module(f"strata.core.runbooks.{dotted_name}")
     check = getattr(module, "check", None)
-    if _is_controller(target) and check is not None and _checks_satisfied(check, reporter):
+    if is_controller(target) and check is not None and check_safely(check, reporter):
         return None
     # Forward the reporter rather than letting execute() install a null one:
     # a runbook's own progress messages were shown when it was invoked
@@ -305,7 +305,7 @@ def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Repor
     return exit_code or None
 
 
-def _checks_satisfied(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
+def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
     """Report whether `check()` says the upstream runbook is already satisfied.
 
     check() gets the same adapter injection main() does. It used to be called

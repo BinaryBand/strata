@@ -6,7 +6,7 @@ isolation.
 
 rclone/runner/secrets are monkeypatched so these never shell out to rclone,
 ansible-runner, or ansible-vault. target is left as None throughout, which
-_is_controller() treats as the controller, so local fast paths apply.
+is_controller() treats as the controller, so local fast paths apply.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ _MY_GROUP = grp.getgrgid(os.getgid()).gr_name
 
 def test_path_satisfied_missing_path_is_unsatisfied(tmp_path: Path) -> None:
     missing = tmp_path / "nope"
-    assert not guard_executor._path_satisfied(
+    assert not guard_executor.path_satisfied(
         req.LocalPath(path=str(missing), owner=None, group=None, mode=None, state="directory")
     )
 
@@ -40,41 +40,41 @@ def test_path_satisfied_missing_path_is_unsatisfied(tmp_path: Path) -> None:
 def test_path_satisfied_wrong_type_is_unsatisfied(tmp_path: Path) -> None:
     file_path = tmp_path / "a_file"
     file_path.write_text("x")
-    assert not guard_executor._path_satisfied(
+    assert not guard_executor.path_satisfied(
         req.LocalPath(path=str(file_path), owner=None, group=None, mode=None, state="directory")
     )
 
 
 def test_path_satisfied_directory_with_no_constraints() -> None:
-    assert guard_executor._path_satisfied(
+    assert guard_executor.path_satisfied(
         req.LocalPath(path="/tmp", owner=None, group=None, mode=None, state="directory")
     )
 
 
 def test_path_satisfied_owner_and_group_match(tmp_path: Path) -> None:
-    assert guard_executor._path_satisfied(
+    assert guard_executor.path_satisfied(
         req.LocalPath(path=str(tmp_path), owner=_ME, group=_MY_GROUP, mode=None, state="directory")
     )
 
 
 def test_path_satisfied_owner_mismatch(tmp_path: Path) -> None:
-    assert not guard_executor._path_satisfied(
+    assert not guard_executor.path_satisfied(
         req.LocalPath(path=str(tmp_path), owner="root", group=None, mode=None, state="directory")
     )
 
 
 def test_path_satisfied_group_mismatch(tmp_path: Path) -> None:
-    assert not guard_executor._path_satisfied(
+    assert not guard_executor.path_satisfied(
         req.LocalPath(path=str(tmp_path), owner=None, group="root", mode=None, state="directory")
     )
 
 
 def test_path_satisfied_mode_match_and_mismatch(tmp_path: Path) -> None:
     tmp_path.chmod(0o755)
-    assert guard_executor._path_satisfied(
+    assert guard_executor.path_satisfied(
         req.LocalPath(path=str(tmp_path), owner=None, group=None, mode="0755", state="directory")
     )
-    assert not guard_executor._path_satisfied(
+    assert not guard_executor.path_satisfied(
         req.LocalPath(path=str(tmp_path), owner=None, group=None, mode="0700", state="directory")
     )
 
@@ -248,7 +248,7 @@ def test_requirements_are_satisfied_in_decorator_order(
     monkeypatch.setattr(
         guard_executor, "_PREREQUISITES", {"_test_marker": lambda: calls.append("prereq")}
     )
-    monkeypatch.setattr(guard_executor, "_path_satisfied", lambda *_a, **_kw: False)
+    monkeypatch.setattr(guard_executor, "path_satisfied", lambda *_a, **_kw: False)
     monkeypatch.setattr(pwd, "getpwnam", lambda name: (_ for _ in ()).throw(KeyError(name)))
 
     def fake_run_playbook(playbook: str, **_kwargs: object) -> int:
@@ -271,7 +271,7 @@ def test_failing_requirement_short_circuits_before_main(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A guard that fails must return its exit code without main() running."""
-    monkeypatch.setattr(guard_executor, "_path_satisfied", lambda *_a, **_kw: False)
+    monkeypatch.setattr(guard_executor, "path_satisfied", lambda *_a, **_kw: False)
     monkeypatch.setattr(runner, "run_playbook", lambda *_a, **_kw: 3)
 
     ran: list[str] = []
@@ -344,11 +344,11 @@ def test_an_unknown_target_is_not_treated_as_the_controller(
     """A typo'd --target used to get every local fast path applied to it."""
     monkeypatch.setattr(inventory, "get", lambda _name: None)
 
-    assert guard_executor._is_controller("typoed-host") is False
+    assert guard_executor.is_controller("typoed-host") is False
 
 
 def test_no_target_at_all_is_still_the_controller() -> None:
-    assert guard_executor._is_controller(None) is True
+    assert guard_executor.is_controller(None) is True
 
 
 def test_a_blank_answer_is_re_prompted_rather_than_stored(
@@ -404,7 +404,7 @@ def test_check_receives_the_adapters_it_declares() -> None:
         seen.append(secrets)
         return True
 
-    assert guard_executor._checks_satisfied(check, ports.NullReporter()) is True
+    assert guard_executor.check_safely(check, ports.NullReporter()) is True
     assert seen == [secrets]
 
 
@@ -415,4 +415,4 @@ def test_a_check_that_cannot_reach_the_vault_is_not_fatal() -> None:
         msg = "ansible-vault view failed"
         raise RuntimeError(msg)
 
-    assert guard_executor._checks_satisfied(check, ports.NullReporter()) is False
+    assert guard_executor.check_safely(check, ports.NullReporter()) is False

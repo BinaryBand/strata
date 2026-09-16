@@ -8,9 +8,11 @@ strata itself.
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
 import typer
 
+from strata.adapters import gui_token
 from strata.cli import gui_server
 from strata.core.models import ServerAppsDefaults
 
@@ -37,10 +39,27 @@ def dev_schema() -> None:
 def dev_gui_data() -> None:
     """Print a JSON snapshot of the runbook catalog and device inventory.
 
-    This is what gui/ shells out to (`strata dev gui-data`) on desktop to
-    replace its mock runbook/device lists with the real catalog -- install
-    status and machine reachability are not in scope here, only the static
-    declarations. `strata gui` serves the same snapshot over HTTP for the web
-    build; both read it from strata.cli.gui_server.
+    Read-only declarations only -- install status, guard readiness and
+    machine reachability come from `strata gui`'s live /api/* routes instead.
+    Useful for inspecting the catalog by hand; `strata.cli.gui_server` is the
+    single source both this and `strata gui` read from.
     """
     typer.echo(json.dumps(gui_server.build_gui_data(), indent=2))
+
+
+@app.command("gui-token")
+def dev_gui_token(
+    rotate: Annotated[
+        bool,
+        typer.Option("--rotate", help="Generate a new token, invalidating the old one."),
+    ] = False,
+) -> None:
+    """Print the GUI's access token, generating one first if none exists.
+
+    `strata gui`'s action routes (run a runbook, add a device, set a secret)
+    require this as a bearer token. `strata gui` embeds it automatically when
+    it opens a browser locally; this is for pasting it into a second device's
+    GUI, e.g. one reached over `tailscale serve`.
+    """
+    token = gui_token.rotate_token() if rotate else gui_token.get_or_create_token()
+    typer.echo(token)

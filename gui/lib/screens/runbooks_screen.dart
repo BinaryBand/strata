@@ -362,7 +362,7 @@ class _DetailView extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = state;
     final rb = s.selectedRunbook;
-    final readiness = computeReadiness(rb, s.targetIsController);
+    final readiness = computeReadiness(rb, s.targetIsController, liveSteps: s.statusLoaded ? s.guardSteps : null);
     final blocked = s.selectedBlockedByTarget;
 
     return SingleChildScrollView(
@@ -441,6 +441,7 @@ class _DetailView extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
+          if (s.needsVaultPasswordFirst) _VaultPasswordRow(state: s),
           if (rb.guards.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -449,7 +450,7 @@ class _DetailView extends StatelessWidget {
           else
             Column(
               children: [
-                for (final g in rb.guards) _buildGuardChip(context, g, s),
+                for (final step in s.guardSteps) _buildGuardChip(context, step, s),
               ],
             ),
           if (blocked)
@@ -475,17 +476,17 @@ class _DetailView extends StatelessWidget {
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        PrimaryButton(label: 'Run on ${s.activeDevice.name}', onTap: blocked ? null : s.startRun, expand: true),
+                        PrimaryButton(label: 'Run on ${s.activeDevice.name}', onTap: s.canRun ? s.startRun : null, expand: true),
                         const SizedBox(height: 7),
-                        Text(_runHint(readiness), textAlign: TextAlign.center, style: sans(size: 11.5, color: AppColors.textDim)),
+                        Text(_runHint(s, readiness), textAlign: TextAlign.center, style: sans(size: 11.5, color: AppColors.textDim)),
                       ],
                     )
                   : Row(
                       children: [
-                        PrimaryButton(label: 'Run on ${s.activeDevice.name}', onTap: blocked ? null : s.startRun),
+                        PrimaryButton(label: 'Run on ${s.activeDevice.name}', onTap: s.canRun ? s.startRun : null),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text(_runHint(readiness), style: sans(size: 11.5, color: AppColors.textDim)),
+                          child: Text(_runHint(s, readiness), style: sans(size: 11.5, color: AppColors.textDim)),
                         ),
                       ],
                     ),
@@ -496,23 +497,31 @@ class _DetailView extends StatelessWidget {
     );
   }
 
-  String _runHint(Readiness r) {
-    if (r.key == 'ready') return 'Everything it needs is on hand — no prompts expected.';
-    if (r.key == 'asks') return 'You’ll be asked for what’s missing before anything changes.';
-    return 'Switch the target to run this.';
+  String _runHint(AppState s, Readiness r) {
+    if (!s.hasLiveApi) return 'Not connected to strata — run `strata gui` to enable this.';
+    if (s.selectedBlockedByTarget) return 'Switch the target to run this.';
+    if (s.needsVaultPasswordFirst) return 'Unlock the vault above before running.';
+    if (r.key == 'asks') return 'Fill in what\'s missing above before running.';
+    if (!s.statusLoaded) return 'Checking what this needs…';
+    return 'Everything it needs is on hand — no prompts expected.';
   }
 
-  Widget _buildGuardChip(BuildContext context, Guard g, AppState s) {
+  Widget _buildGuardChip(BuildContext context, GuardStep step, AppState s) {
+    final g = step.guard;
     final meta = guardMeta[g.type]!;
     final hint = guardHint[g.type]!;
-    final known = knownGuards[g.type];
-    final blocked = g.type == GuardType.controllerOnly && s.targetId != 'local';
-    final asks = known == false;
+    final loading = !s.statusLoaded;
+    final missing = step.status == GuardReadiness.missing;
+    final needsInput = step.needsInputWhenMissing && missing;
     final isReq = g.type == GuardType.requires;
 
-    final stateText = blocked ? 'Blocked' : (asks ? 'Will ask' : 'OK');
-    final stateColor = blocked ? AppColors.pinkText : (asks ? AppColors.amberText : AppColors.greenText);
-    final stateBg = blocked ? AppColors.pink.withValues(alpha: 0.12) : (asks ? AppColors.amber.withValues(alpha: 0.12) : AppColors.green.withValues(alpha: 0.12));
+    final (stateText, stateColor, stateBg) = switch (step.status) {
+      _ when loading => ('Checking…', AppColors.textMuted, AppColors.border(0.05)),
+      GuardReadiness.satisfied => ('OK', AppColors.greenText, AppColors.green.withValues(alpha: 0.12)),
+      GuardReadiness.unknown => ("Can't tell", AppColors.textMuted, AppColors.border(0.05)),
+      GuardReadiness.missing when needsInput => ('Needs input', AppColors.amberText, AppColors.amber.withValues(alpha: 0.12)),
+      GuardReadiness.missing => ('Will resolve automatically', AppColors.textMuted, AppColors.border(0.05)),
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: 7),
@@ -522,42 +531,211 @@ class _DetailView extends StatelessWidget {
         borderRadius: BorderRadius.circular(9),
         border: Border.all(color: AppColors.border(0.07)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 5),
-            child: Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: meta.color.withValues(alpha: 0.85)),
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: meta.color.withValues(alpha: 0.85)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(g.label, style: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textSecondary)),
+                    const SizedBox(height: 2),
+                    Text(hint, style: sans(size: 11.5, color: AppColors.textDim)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Pill(text: stateText, color: stateColor, background: stateBg),
+              if (isReq)
+                TextButton(
+                  onPressed: () => s.jumpTo(g.label.replaceFirst('Requires ', '')),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
+                  child: Text('Open →', style: sans(size: 12, weight: FontWeight.w600, color: AppColors.cyan)),
+                ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(g.label, style: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textSecondary)),
-                const SizedBox(height: 2),
-                Text(hint, style: sans(size: 11.5, color: AppColors.textDim)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Pill(text: stateText, color: stateColor, background: stateBg),
-          if (isReq)
-            TextButton(
-              onPressed: () => s.jumpTo(g.label.replaceFirst('Requires ', '')),
-              style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4)),
-              child: Text('Open →', style: sans(size: 12, weight: FontWeight.w600, color: AppColors.cyan)),
-            ),
+          if (needsInput && !s.needsVaultPasswordFirst) _GuardInputRow(state: s, guard: g),
         ],
       ),
     );
   }
 }
 
+class _VaultPasswordRow extends StatefulWidget {
+  final AppState state;
+
+  const _VaultPasswordRow({required this.state});
+
+  @override
+  State<_VaultPasswordRow> createState() => _VaultPasswordRowState();
+}
+
+class _VaultPasswordRowState extends State<_VaultPasswordRow> {
+  final _controller = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _submitting = true);
+    await widget.state.submitVaultPassword(_controller.text);
+    _controller.clear();
+    if (mounted) setState(() => _submitting = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppColors.amber.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: AppColors.amber.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Vault password needed', style: sans(size: 12.5, weight: FontWeight.w600, color: AppColors.amberText)),
+          const SizedBox(height: 3),
+          Text(
+            'This runbook needs to read or write a vaulted secret. Unlock the vault first.',
+            style: sans(size: 11.5, color: AppColors.textDim),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  obscureText: true,
+                  enabled: !_submitting,
+                  style: sans(size: 12.5, weight: FontWeight.w500),
+                  decoration: InputDecoration(
+                    hintText: 'Vault password…',
+                    hintStyle: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textDim),
+                    filled: true,
+                    fillColor: AppColors.bg,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      borderSide: BorderSide(color: AppColors.amber.withValues(alpha: 0.35)),
+                    ),
+                  ),
+                  onSubmitted: (_) => _submit(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _submitting ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.amber,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+                child: Text('Unlock', style: sans(size: 12.5, weight: FontWeight.w600, color: const Color(0xFF221A03))),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GuardInputRow extends StatefulWidget {
+  final AppState state;
+  final Guard guard;
+
+  const _GuardInputRow({required this.state, required this.guard});
+
+  @override
+  State<_GuardInputRow> createState() => _GuardInputRowState();
+}
+
+class _GuardInputRowState extends State<_GuardInputRow> {
+  final _controller = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _submitting = true);
+    await widget.state.submitGuardValue(widget.guard, _controller.text);
+    _controller.clear();
+    if (mounted) setState(() => _submitting = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 9),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              obscureText: true,
+              enabled: !_submitting,
+              style: sans(size: 12.5, weight: FontWeight.w500),
+              decoration: InputDecoration(
+                hintText: 'Paste value…',
+                hintStyle: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textDim),
+                filled: true,
+                fillColor: AppColors.bg,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: AppColors.amber.withValues(alpha: 0.35)),
+                ),
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _submitting ? null : _submit,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.amber,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            ),
+            child: Text('Save', style: sans(size: 12.5, weight: FontWeight.w600, color: const Color(0xFF221A03))),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shows a real run's live status and output, polled from `GET /api/run/<id>`.
+///
+/// There is no per-guard progress here (only per-requirement/top-level lines
+/// as guard_executor.execute() reports them) -- the readiness checklist above
+/// this view, on [_DetailView], is the last per-guard detail available before
+/// the run starts.
 class _RunFlowView extends StatelessWidget {
   final AppState state;
   final bool isMobile;
@@ -568,58 +746,32 @@ class _RunFlowView extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = state;
     final rb = s.selectedRunbook;
-    final steps = s.buildRunSteps(rb, s.runScenario);
-    final outputRevealed = s.runScenario == RunScenario.complete;
-    final doneSteps = steps.where((x) => x.status == GuardStepStatus.satisfied).length;
-    final pct = outputRevealed ? 100 : (steps.isNotEmpty ? ((doneSteps / (steps.length + 1)) * 100).round() : 50);
+    final run = s.run;
+    final lines = run?.lines ?? const <String>[];
 
-    final runTitle = switch (s.runScenario) {
-      RunScenario.complete => 'Finished ${rb.alias}',
-      RunScenario.failed => 'Could not run ${rb.alias}',
-      RunScenario.progress => 'Running ${rb.alias}',
+    final runTitle = switch (run?.status) {
+      RunLifecycle.succeeded => 'Finished ${rb.alias}',
+      RunLifecycle.failed => 'Could not run ${rb.alias}',
+      _ => 'Running ${rb.alias}',
     };
-    final (statusText, statusColor, statusBg) = switch (s.runScenario) {
-      RunScenario.complete => ('Completed', AppColors.greenText, AppColors.green.withValues(alpha: 0.12)),
-      RunScenario.failed => ('Stopped — a check failed', AppColors.redText, AppColors.red.withValues(alpha: 0.12)),
-      RunScenario.progress => (
-          'Step ${(doneSteps + 1).clamp(0, steps.isEmpty ? 1 : steps.length)} of ${steps.isEmpty ? 1 : steps.length}',
-          AppColors.cyanSoft,
-          AppColors.cyan.withValues(alpha: 0.12),
-        ),
+    final (statusText, statusColor, statusBg) = switch (run?.status) {
+      RunLifecycle.succeeded => ('Completed', AppColors.greenText, AppColors.green.withValues(alpha: 0.12)),
+      RunLifecycle.failed => ('Failed (exit ${run?.exitCode})', AppColors.redText, AppColors.red.withValues(alpha: 0.12)),
+      _ => ('Starting…', AppColors.cyanSoft, AppColors.cyan.withValues(alpha: 0.12)),
     };
-    final progressColor = switch (s.runScenario) {
-      RunScenario.failed => AppColors.red,
-      RunScenario.complete => AppColors.green,
-      RunScenario.progress => AppColors.cyan,
+    final progressColor = switch (run?.status) {
+      RunLifecycle.failed => AppColors.red,
+      RunLifecycle.succeeded => AppColors.green,
+      _ => AppColors.cyan,
     };
+    final finished = run != null && run.status != RunLifecycle.running;
 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(isMobile ? 16 : 26, isMobile ? 14 : 22, isMobile ? 16 : 26, 40),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          isMobile
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _backButton(),
-                    const SizedBox(height: 10),
-                    _scenarioGroup(),
-                  ],
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _backButton(),
-                    Row(
-                      children: [
-                        Text('Preview state', style: sans(size: 11, color: const Color(0xFF3A4150))),
-                        const SizedBox(width: 8),
-                        _scenarioGroup(),
-                      ],
-                    ),
-                  ],
-                ),
+          _backButton(finished),
           const SizedBox(height: 16),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -644,15 +796,12 @@ class _RunFlowView extends StatelessWidget {
               height: 4,
               color: const Color(0xFF1A1F2A),
               alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: pct / 100,
-                child: Container(color: progressColor),
-              ),
+              child: finished
+                  ? Container(color: progressColor)
+                  : const LinearProgressIndicator(minHeight: 4, backgroundColor: Color(0xFF1A1F2A), color: AppColors.cyan),
             ),
           ),
           const SizedBox(height: 20),
-          for (var i = 0; i < steps.length; i++) _buildStep(context, steps[i], i, steps.length),
-          const SizedBox(height: 6),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
             constraints: const BoxConstraints(minHeight: 70),
@@ -664,31 +813,22 @@ class _RunFlowView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text('Output', style: sans(size: 12.5, weight: FontWeight.w600, color: AppColors.textMuted)),
-                    if (!outputRevealed) ...[
-                      const SizedBox(width: 8),
-                      Text('shown once everything above is ready', style: sans(size: 11, color: AppColors.textDim)),
-                    ],
-                  ],
-                ),
+                Text('Output', style: sans(size: 12.5, weight: FontWeight.w600, color: AppColors.textMuted)),
                 const SizedBox(height: 8),
-                if (!outputRevealed)
+                if (lines.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Text('Waiting on the checks above…', style: sans(size: 12.5, color: const Color(0xFF4A5160))),
+                    child: Text('Waiting for output…', style: sans(size: 12.5, color: const Color(0xFF4A5160))),
                   )
                 else
                   Text(
-                    rb.fakeOutput ??
-                        'PLAY [${rb.alias}] ***\nTASK [Run] ... ok\n\nPLAY RECAP\nlocalhost : ok=1 changed=1 unreachable=0 failed=0',
+                    lines.join('\n'),
                     style: mono(size: 12, weight: FontWeight.w400, color: const Color(0xFF8EE6B8)),
                   ),
               ],
             ),
           ),
-          if (outputRevealed)
+          if (finished)
             Padding(
               padding: const EdgeInsets.only(top: 16),
               child: Wrap(
@@ -699,7 +839,7 @@ class _RunFlowView extends StatelessWidget {
                   PrimaryButton(label: 'Done', onTap: s.finishRun),
                   if (rb.category == RunbookCategory.services)
                     GhostButton(label: 'View in Server apps', onTap: s.selectScreenApps),
-                  GhostButton(label: 'Run again', onTap: () => s.setScenario(RunScenario.progress)),
+                  GhostButton(label: 'Run again', onTap: s.retryRun),
                 ],
               ),
             ),
@@ -708,223 +848,17 @@ class _RunFlowView extends StatelessWidget {
     );
   }
 
-  Widget _backButton() {
+  Widget _backButton(bool finished) {
     return TextButton(
-      onPressed: state.backToDetail,
+      onPressed: finished ? state.backToDetail : null,
       style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
       child: Text(
         '‹ Back',
-        style: sans(size: isMobile ? 13 : 12, weight: isMobile ? FontWeight.w600 : FontWeight.w500, color: isMobile ? AppColors.cyan : AppColors.textDim),
-      ),
-    );
-  }
-
-  Widget _scenarioGroup() {
-    Widget btn(String label, RunScenario value) {
-      final active = state.runScenario == value;
-      return Expanded(
-        child: InkWell(
-          onTap: () => state.setScenario(value),
-          borderRadius: BorderRadius.circular(isMobile ? 7 : 5),
-          child: Container(
-            height: isMobile ? 38 : 28,
-            alignment: Alignment.center,
-            padding: EdgeInsets.symmetric(horizontal: isMobile ? 6 : 10),
-            decoration: BoxDecoration(
-              color: active ? AppColors.cyan : Colors.transparent,
-              borderRadius: BorderRadius.circular(isMobile ? 7 : 5),
-            ),
-            child: Text(
-              label,
-              style: sans(size: isMobile ? 12 : 11.5, weight: FontWeight.w600, color: active ? const Color(0xFF04222A) : AppColors.textMuted),
-            ),
-          ),
+        style: sans(
+          size: isMobile ? 13 : 12,
+          weight: isMobile ? FontWeight.w600 : FontWeight.w500,
+          color: finished ? (isMobile ? AppColors.cyan : AppColors.textDim) : AppColors.textDim.withValues(alpha: 0.4),
         ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.inputBg,
-        border: Border.all(color: AppColors.border(0.08)),
-        borderRadius: BorderRadius.circular(isMobile ? 9 : 7),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          btn('In progress', RunScenario.progress),
-          const SizedBox(width: 4),
-          btn('Guard failed', RunScenario.failed),
-          const SizedBox(width: 4),
-          btn('Complete', RunScenario.complete),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStep(BuildContext context, GuardStep step, int index, int total) {
-    final meta = guardMeta[step.guard.type]!;
-    final s = state;
-    final (glyph, wrapColor, statusText, labelColor) = switch (step.status) {
-      GuardStepStatus.satisfied => ('✓', AppColors.green, 'Satisfied', AppColors.textPrimary),
-      GuardStepStatus.pending => ('·', const Color(0xFF2A3040), 'Pending', AppColors.textDim),
-      GuardStepStatus.resolving => ('', AppColors.cyan, 'Checking…', AppColors.textPrimary),
-      GuardStepStatus.prompting => ('!', AppColors.amber, 'Needs input', AppColors.textPrimary),
-      GuardStepStatus.failed => ('✕', AppColors.red, 'Failed', AppColors.textPrimary),
-    };
-    final isSpinner = step.status == GuardStepStatus.resolving;
-    final showConnector = index < total - 1;
-    final anyUnsatisfiedBefore = index == 0;
-    final connectorColor = anyUnsatisfiedBefore && step.status == GuardStepStatus.satisfied ? AppColors.green : const Color(0xFF262C38);
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: 0),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Column(
-              children: [
-                Container(
-                  width: 22,
-                  height: 22,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isSpinner ? Colors.transparent : wrapColor,
-                    border: isSpinner ? Border.all(color: Colors.white.withValues(alpha: 0.3), width: 2) : null,
-                  ),
-                  child: isSpinner
-                      ? const SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.cyan),
-                        )
-                      : Text(glyph, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: step.status == GuardStepStatus.pending ? AppColors.textDim : AppColors.bg)),
-                ),
-                if (showConnector) Expanded(child: Container(width: 2, color: connectorColor, margin: const EdgeInsets.symmetric(vertical: 2))),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(meta.abbr, style: mono(size: 10.5, weight: FontWeight.w600, color: meta.color.withValues(alpha: 0.9), letterSpacing: 0.4)),
-                        const SizedBox(width: 8),
-                        Text(step.guard.label, style: sans(size: 13, weight: FontWeight.w600, color: labelColor)),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(statusText, style: sans(size: 11.5, weight: FontWeight.w500, color: AppColors.textDim)),
-                    if (step.status == GuardStepStatus.prompting) _promptInput(step),
-                    if (step.status == GuardStepStatus.failed) _failureBox(step, s),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _promptInput(GuardStep step) {
-    final placeholder = step.guard.type == GuardType.secret ? 'Paste secret value…' : 'Path or remote:subpath…';
-    return Padding(
-      padding: const EdgeInsets.only(top: 9),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              obscureText: true,
-              style: sans(size: 12.5, weight: FontWeight.w500),
-              decoration: InputDecoration(
-                hintText: placeholder,
-                hintStyle: sans(size: 12.5, weight: FontWeight.w500, color: AppColors.textDim),
-                filled: true,
-                fillColor: AppColors.bg,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: AppColors.amber.withValues(alpha: 0.35)),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton(
-            onPressed: () {},
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.amber,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            ),
-            child: Text('Continue', style: sans(size: 12.5, weight: FontWeight.w600, color: const Color(0xFF221A03))),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _failureBox(GuardStep step, AppState s) {
-    final hasFix = step.guard.type == GuardType.requires || step.guard.type == GuardType.mount;
-    final fixLabel = step.guard.type == GuardType.requires
-        ? 'Run ${step.guard.label.replaceFirst('Requires ', '').split('.').last.replaceAll('_', ' ')} first'
-        : 'Reconnect remote';
-    void onFix() {
-      if (step.guard.type == GuardType.requires) {
-        s.jumpTo(step.guard.label.replaceFirst('Requires ', ''));
-      } else {
-        s.jumpTo('infrastructure.sync_rclone_remote');
-      }
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(top: 7),
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-      decoration: BoxDecoration(
-        color: AppColors.red.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: AppColors.red.withValues(alpha: 0.25)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(step.reason ?? '', style: sans(size: 12, height: 1.5, color: AppColors.redText)),
-          const SizedBox(height: 9),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (hasFix)
-                ElevatedButton(
-                  onPressed: onFix,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.red,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  ),
-                  child: Text(fixLabel, style: sans(size: 12, weight: FontWeight.w600, color: const Color(0xFF2A0A0A))),
-                ),
-              OutlinedButton(
-                onPressed: () => s.setScenario(RunScenario.progress),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: AppColors.red.withValues(alpha: 0.35)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                ),
-                child: Text('Retry', style: sans(size: 12, weight: FontWeight.w600, color: AppColors.redText)),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }

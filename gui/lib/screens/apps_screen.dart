@@ -185,8 +185,11 @@ class _AppCard extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            GhostButton(label: app.toggleLabel),
-            GhostButton(label: 'Re-run install runbook', onTap: () => state.jumpTo(app.installDotted)),
+            Tooltip(
+              message: 'Not supported from the GUI yet — use `strata runbook` on the machine.',
+              child: GhostButton(label: app.toggleLabel),
+            ),
+            GhostButton(label: 'Re-run install runbook', onTap: () => state.installApp(app.installDotted)),
           ],
         ),
       ),
@@ -202,7 +205,7 @@ class _AppCard extends StatelessWidget {
             Text("Install runbook hasn't been run yet.", style: sans(size: 12.5, color: AppColors.textDim)),
             const SizedBox(height: 10),
             OutlinedButton(
-              onPressed: () => state.jumpTo(app.installDotted),
+              onPressed: () => state.installApp(app.installDotted),
               style: OutlinedButton.styleFrom(
                 backgroundColor: AppColors.surfaceAlt,
                 side: BorderSide(color: AppColors.cyan.withValues(alpha: 0.3)),

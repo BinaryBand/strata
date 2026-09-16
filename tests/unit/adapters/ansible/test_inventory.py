@@ -303,7 +303,7 @@ def test_a_remote_host_without_an_explicit_connection_is_not_the_controller(
 ) -> None:
     """get() defaulted connection to "local" for hosts in any group.
 
-    _is_controller() is built on this, so such a host made every guard fast
+    is_controller() is built on this, so such a host made every guard fast
     path inspect the local machine and skip provisioning the remote one.
     """
     ini_path.write_text("[remote]\nnas ansible_host=10.0.0.1\n")

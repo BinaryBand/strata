@@ -1,18 +1,24 @@
-"""The GUI's data snapshot and the loopback server that hands it to a browser.
+"""The GUI's data snapshot and the loopback server serving it plus the action API.
 
-`gui/` is a Flutter app over the runbook catalog. It reads strata through one
-seam: the JSON snapshot `build_gui_data()` produces. Two commands consume that
-seam -- `strata gui` serves it alongside the built web app and opens a browser,
-and the hidden `strata dev gui-data` prints it once for the desktop build to
-shell out to.
+`gui/` is a Flutter app over the runbook catalog. It reads and drives strata
+through one seam. `GET /api/gui-data` is read-only -- the declarations
+`discovery`/`guard.declared()`/`inventory` produced, nothing executed. Every
+other `/api/*` route's body lives in `gui_actions.py`, a thin bridge onto
+something that already exists (`guard_executor.execute`, `inventory.add`,
+`secrets.set_secret`, ...); this module's job is serving and routing only.
+`strata gui` serves this alongside the built web app and opens a browser;
+`strata dev gui-data` prints the read-only snapshot once for the desktop build.
 
-Everything here is read-only. No runbook's `main()` or `check()` is invoked and
-no playbook runs; the snapshot is the declarations only -- what `discovery`
-found and what `guard.declared()` recorded.
+Because the action routes can run privileged playbooks, they require a bearer
+token (`strata/adapters/gui_token.py`) that `strata gui` prints and embeds in
+the URL it opens locally. The server itself still only binds 127.0.0.1 --
+reaching it from another device is still `tailscale serve <port>`, never
+`tailscale funnel` -- so the token's job is to stop anything else already on
+that tailnet from running a playbook against this box, not to replace the
+loopback boundary.
 
-This sits in `cli/` rather than `adapters/` because it is a presentation-layer
-server: it holds no domain logic, and the I/O it does is serving files and
-reading a catalog that `adapters` already gathered.
+This sits in `cli/` rather than `adapters/` for the same reason it always
+has: it is a presentation-layer server with no domain logic of its own.
 """
 
 from __future__ import annotations
@@ -20,7 +26,6 @@ from __future__ import annotations
 import contextlib
 import http.server
 import importlib
-import json
 import socket
 import socketserver
 import threading
@@ -28,8 +33,12 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
-from strata.adapters.ansible import inventory
+from strata.adapters import gui_token
+from strata.adapters.ansible import inventory, vault_pass
+from strata.cli import gui_actions
+from strata.cli.gui_http import read_json_body, send_json
 from strata.core import discovery, guard
 from strata.core import requirements as req
 
@@ -117,39 +126,99 @@ def build_gui_data() -> dict[str, Any]:
     return {"runbooks": runbooks, "import_failures": import_failures, "devices": devices}
 
 
-def _request_handler(web_dir: Path) -> type[http.server.SimpleHTTPRequestHandler]:
-    """Build a request handler serving `web_dir` plus a live /api/gui-data.
+def _match(parts: list[str], pattern: tuple[str | None, ...]) -> bool:
+    """Report whether `parts` (a path split on "/") matches `pattern`.
 
-    A closure rather than a module-level class because the static root is
-    only known once the server starts, and SimpleHTTPRequestHandler takes it
-    via an __init__ kwarg that ThreadingHTTPServer's handler_class slot
-    doesn't otherwise let us thread through.
+    `None` in `pattern` matches any single segment -- a tiny path-template
+    matcher so a route's segment count never appears as a bare magic number
+    at the call site.
+    """
+    return len(parts) == len(pattern) and all(
+        expected is None or actual == expected
+        for actual, expected in zip(parts, pattern, strict=True)
+    )
+
+
+_RUN_STATUS = ("api", "run", None)
+_DEVICE = ("api", "devices", None)
+
+
+class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves the built Flutter web app, the read-only snapshot, and the action API.
+
+    `_web_dir`/`_token` are class attributes rather than instance state
+    because `http.server` builds one instance per request and only lets a
+    `ThreadingHTTPServer` hand it a `handler_class`, not an already-configured
+    instance; `_request_handler` sets them once, before the server accepts
+    its first request, and a process only ever runs one `strata gui` server.
     """
 
-    class GuiRequestHandler(http.server.SimpleHTTPRequestHandler):
-        """Serves the built Flutter web app and its JSON data endpoint."""
+    _web_dir: Path
+    _token: str
 
-        def __init__(
-            self,
-            request: socket.socket,
-            client_address: tuple[str, int],
-            server: socketserver.BaseServer,
-        ) -> None:
-            """Bind the static file root before delegating to the base handler."""
-            super().__init__(request, client_address, server, directory=str(web_dir))
+    def __init__(
+        self,
+        request: socket.socket,
+        client_address: tuple[str, int],
+        server: socketserver.BaseServer,
+    ) -> None:
+        """Bind the static file root before delegating to the base handler."""
+        super().__init__(request, client_address, server, directory=str(self._web_dir))
 
-        def do_GET(self) -> None:
-            """Serve /api/gui-data live, everything else as a static file."""
-            if self.path == _DATA_ROUTE:
-                body = json.dumps(build_gui_data()).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
+    def _authorized(self) -> bool:
+        return self.headers.get("Authorization") == f"Bearer {self._token}"
+
+    def _unauthorized(self) -> None:
+        send_json(self, 401, {"error": "missing or invalid access token"})
+
+    def do_GET(self) -> None:
+        """Serve the action/read API live, everything else as a static file."""
+        parsed = urlsplit(self.path)
+        parts = parsed.path.strip("/").split("/")
+
+        if parsed.path == _DATA_ROUTE:
+            send_json(self, 200, build_gui_data())
+        elif parsed.path == "/api/runbook-status":
+            gui_actions.get_runbook_status(self, parse_qs(parsed.query))
+        elif parsed.path == "/api/vault-status":
+            send_json(self, 200, {"has_vault_password": vault_pass.has_vault_password()})
+        elif parsed.path == "/api/reachable":
+            gui_actions.get_reachable(self, parse_qs(parsed.query))
+        elif _match(parts, _RUN_STATUS):
+            if self._authorized():
+                gui_actions.get_run_status(self, parts[2])
+            else:
+                self._unauthorized()
+        else:
             super().do_GET()
 
+    def do_POST(self) -> None:
+        """Handle the mutating routes; all require the access token."""
+        if not self._authorized():
+            self._unauthorized()
+            return
+        route = gui_actions.POST_ROUTES.get(self.path)
+        if route is None:
+            send_json(self, 404, {"error": "not found"})
+            return
+        route(self, read_json_body(self))
+
+    def do_DELETE(self) -> None:
+        """Handle `DELETE /api/devices/<name>`; requires the access token."""
+        if not self._authorized():
+            self._unauthorized()
+            return
+        parts = urlsplit(self.path).path.strip("/").split("/")
+        if _match(parts, _DEVICE):
+            gui_actions.delete_device(self, parts[2])
+        else:
+            send_json(self, 404, {"error": "not found"})
+
+
+def _request_handler(web_dir: Path, token: str) -> type[http.server.SimpleHTTPRequestHandler]:
+    """Configure and return `GuiRequestHandler` for one `strata gui` process's lifetime."""
+    GuiRequestHandler._web_dir = web_dir  # noqa: SLF001 -- this module owns GuiRequestHandler
+    GuiRequestHandler._token = token  # noqa: SLF001
     return GuiRequestHandler
 
 
@@ -160,26 +229,28 @@ def serve(
     open_browser: bool,
     announce: Callable[[str], None],
 ) -> None:
-    """Serve `web_dir` plus /api/gui-data on loopback until interrupted.
+    """Serve `web_dir` plus the /api/* routes on loopback until interrupted.
 
     Binds 127.0.0.1 only. The caller is responsible for having checked that
     `web_dir` exists -- this raises OSError through the socket bind if the port
     is taken, which the caller turns into an operator-facing message.
 
-    `announce` receives the URL line to print; passing it in keeps this module
+    `announce` receives the lines to print; passing it in keeps this module
     free of Typer so the server can be exercised without a CLI runner.
     """
-    handler = _request_handler(web_dir)
+    token = gui_token.get_or_create_token()
+    handler = _request_handler(web_dir, token)
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         # Read the port back off the socket rather than echoing the argument:
         # port 0 means "let the kernel choose", and then the requested port is
         # not the one a browser needs to be pointed at.
         url = f"http://127.0.0.1:{httpd.server_address[1]}"
         announce(f"Serving {web_dir} on {url} (Ctrl+C to stop)")
+        announce(f"Access token: {token}")
         if open_browser:
             # Deferred to a timer thread: webbrowser.open can block for
             # seconds while it launches a browser, and on a cold start the
             # browser may request the page before serve_forever() is running.
-            threading.Timer(0.3, lambda: webbrowser.open(url)).start()
+            threading.Timer(0.3, lambda: webbrowser.open(f"{url}/?token={token}")).start()
         with contextlib.suppress(KeyboardInterrupt):
             httpd.serve_forever()

@@ -1,8 +1,12 @@
 enum Screen { runbooks, apps, machines }
 
-enum RunScenario { progress, failed, complete }
+/// A guard's live readiness, as reported by `GET /api/runbook-status`.
+enum GuardReadiness { satisfied, missing, unknown }
 
-enum TestState { idle, testing, ok }
+/// A started run's live status, as reported by `GET /api/run/<id>`.
+enum RunLifecycle { running, succeeded, failed }
+
+enum TestState { idle, testing, ok, failed }
 
 enum CheckState { installed, notInstalled, unknown }
 
@@ -146,14 +150,22 @@ class ServerApp {
   });
 }
 
-enum GuardStepStatus { satisfied, pending, resolving, prompting, failed }
-
+/// One guard in the pre-run readiness checklist: a declared [Guard] paired
+/// with its live [GuardReadiness] from `GET /api/runbook-status`.
 class GuardStep {
   final Guard guard;
-  final GuardStepStatus status;
-  final String? reason;
+  final GuardReadiness status;
 
-  const GuardStep({required this.guard, required this.status, this.reason});
+  const GuardStep({required this.guard, required this.status});
+
+  /// Secret-like guards are the only ones a missing status can't self-heal
+  /// during a run -- Path/Mount/SystemUser/UpstreamRunbook are provisioned
+  /// automatically by guard_executor.execute(), but a Secret, Storage or
+  /// Prerequisite needs a value from the operator before the run can start.
+  bool get needsInputWhenMissing =>
+      guard.type == GuardType.secret ||
+      guard.type == GuardType.storage ||
+      guard.type == GuardType.prerequisite;
 }
 
 class Readiness {
