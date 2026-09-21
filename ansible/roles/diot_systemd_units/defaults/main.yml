@@ -1,0 +1,9 @@
+---
+# The rclone binary the mount and serve units execute. A role default is the
+# lowest-precedence place a variable can live, so group_vars or host_vars
+# override it (a play var would outrank them and shadow the override -- see the
+# note on rclone_remotes in enable_rclone.yml). Set it in
+# inventory/host_vars/<host>.yml to run a build other than the distro's, e.g.
+# Homebrew's `/home/linuxbrew/.linuxbrew/bin/rclone`; enable_rclone.yml then
+# stops installing the distro package.
+rclone_bin: /usr/bin/rclone

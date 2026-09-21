@@ -127,6 +127,8 @@ strata rclone list                          # pcloud -> /mnt/rclone/pcloud
 strata runbook infrastructure.enable_rclone   # copies rclone.conf to diot, starts mount unit
 ```
 
+The mount and serve units run `/usr/bin/rclone` from the distro package. To run another build, set `rclone_bin` for the host in `inventory/host_vars/<host>.yml`, for example `rclone_bin: /home/linuxbrew/.linuxbrew/bin/rclone`. `enable_rclone` then skips the distro `rclone` package and both `enable_rclone` and `enable_rclone_http` write that path into their units. The path must be executable by `diot`. `fuse3` still comes from the distro, because `fusermount3` has to be setuid root.
+
 ## Jellyfin media pipeline
 
 Jellyfin reads its library from `/mnt/rclone/pcloud/Media` (a subpath of the pcloud root mount). The Jellyfin Quadlet declares `RequiresMountsFor=/mnt/rclone/pcloud/Media` so systemd holds the service until that path is actually mounted. It does not use `BindsTo=rclone-pcloud.service`: Jellyfin runs as a diot *user* unit and the mount is a *system* unit, and a user unit cannot order against a system one.

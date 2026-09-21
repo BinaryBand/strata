@@ -40,12 +40,19 @@
         update_cache: true
       when: ansible_facts.pkg_mgr == 'apt'
 
-    - name: Install rclone and the FUSE userspace toolchain
+    - name: Install the FUSE userspace toolchain
       ansible.builtin.package:
-        name:
-          - rclone
-          - fuse3
+        name: fuse3
         state: present
+
+    - name: Install rclone from the distro
+      # Skipped when the host points rclone_bin at another build (see the
+      # diot_systemd_units role defaults): the units run that binary, so the
+      # distro package would only be a second, unused copy.
+      ansible.builtin.package:
+        name: rclone
+        state: present
+      when: rclone_bin | default('/usr/bin/rclone') == '/usr/bin/rclone'
 
     - name: Allow non-root FUSE mounts to expose themselves to other users
       # --allow-other (so Jellyfin can read the mount) is refused unless
