@@ -7,20 +7,20 @@ class Antigravity < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.14-6049473256882176/darwin-arm/cli_mac_arm64.tar.gz"
-      sha256 "1415071b4e4f15c05e4fdb92542235c914295ab6e7f67bfc2691fad4b986b6c45fb06b5bcc2fde5f9429a89efcc246d1c444288491770a32f879c28595db7aff"
+      sha256 "44fb1db46b67d8566fdafe31ff44722c02ad1655d588cc18029ee349122bb3a3"
     else
       url "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.14-6049473256882176/darwin-x64/cli_mac_x64.tar.gz"
-      sha256 "214668e2813c2846a7af90944fe9bcb0a43673f561768272bc04daf1961359a56b9c5732aca8428539700ac191aba9fc7378de5b54a065897cc32ab3d2a53fc5"
+      sha256 "75a2840202f67a25396b5fb758ab77c212636a6a0e934a5b4175c49e79ae6df4"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.14-6049473256882176/linux-arm/cli_linux_arm64.tar.gz"
-      sha256 "b9a08c738c11a88afc33eefe40e5df26cbf8494029d8263e0d54e8a5dc7a6ef4516228e2f7b7ad8734d09e37c447ab108d96276ff8b67b7d7af1f04bb3d9d770"
+      sha256 "992653b4de4fe667ee5bd66ca259edd6b88b308f20a31880a77002624204e277"
     else
       url "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.0.14-6049473256882176/linux-x64/cli_linux_x64.tar.gz"
-      sha256 "b950854e5e7ca88ed8595a472f4d655331275f9ddf2e9ebe3810f89c74c86d30e508cc08771ea42e0d112f65bf42f5680f4109e1aeedafc5d61f39d88ff66982"
+      sha256 "7170d598193ee0addcaba7d8c3a2c2e307ae8622dacf749831128bd1ad3ca458"
     end
   end
 
