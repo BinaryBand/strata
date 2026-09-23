@@ -1,0 +1,53 @@
+---
+# Give the account strata connects as read-write access to AnythingLLM's
+# plugins folder, so custom skills and flows can be written there directly --
+# from an editor over SSH, say -- without a terminal session as diot. The
+# account gets nothing else in storage: not the .env holding the provider API
+# keys, not the chat database. See files/anythingllm_plugins_access.sh for
+# how that is enforced.
+#
+# The account is whoever strata logs in as, read at run time, so no account
+# name is written into this repository. Skills written this way skip the
+# strata-workshop review: they run as soon as they are switched on.
+- name: Grant the operator account access to AnythingLLM's plugins folder
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+
+  tasks:
+    - name: Require the storage directory extravar
+      ansible.builtin.assert:
+        that:
+          - anythingllm_storage_dir | default('') | length > 0
+        fail_msg: >-
+          anythingllm_storage_dir must be set; run this through the
+          services.enable_anythingllm_plugins_access runbook.
+
+    - name: Read the account strata logs in as
+      become: false
+      ansible.builtin.command: id -un
+      register: anythingllm_operator
+      changed_when: false
+
+    # Root already has every permission, and the service user owns the tree;
+    # granting either would only muddy the ACLs.
+    - name: Require an ordinary login account
+      ansible.builtin.assert:
+        that:
+          - anythingllm_operator.stdout not in ['root', diot_user]
+        fail_msg: >-
+          strata logs in to this host as {{ anythingllm_operator.stdout }},
+          which needs no grant. Connect as your own login account.
+
+    - name: Grant plugins-folder access
+      ansible.builtin.script:
+        cmd: >-
+          anythingllm_plugins_access.sh
+          {{ anythingllm_storage_dir | quote }}
+          {{ anythingllm_operator.stdout | quote }}
+          {{ diot_user | quote }}
+      register: anythingllm_plugins_access
+      changed_when: "'CHANGED' in anythingllm_plugins_access.stdout"

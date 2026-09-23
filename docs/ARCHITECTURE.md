@@ -102,6 +102,7 @@ flowchart TD
     podman --> anythingllm[install_anythingllm]
     tailscale[enable_tailscale] --> anythingllm
     anythingllm --> anythingllm_workshop[enable_anythingllm_workshop]
+    anythingllm --> anythingllm_plugins_access[enable_anythingllm_plugins_access]
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
