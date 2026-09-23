@@ -101,6 +101,7 @@ flowchart TD
     podman --> minio[install_minio]
     podman --> anythingllm[install_anythingllm]
     tailscale[enable_tailscale] --> anythingllm
+    anythingllm --> anythingllm_filestore[enable_anythingllm_filestore]
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
