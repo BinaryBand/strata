@@ -28,6 +28,19 @@ STORAGE_DIR = "/srv/anythingllm/storage"
 # UserNS=keep-id onto the image's uid/gid 1000 instead: the container writes as
 # diot, and the directory stays closed to everyone outside the group.
 @guard.path(STORAGE_DIR, owner="diot", group="anythingllm", mode="2770")
+# Single-user login needs both: AUTH_TOKEN is the password, JWT_SECRET signs the
+# sessions it issues. Vaulting them lets a runbook or script log in without the
+# operator pasting the password anywhere.
+@guard.secret(
+    "anythingllm_password",
+    prompt="AnythingLLM login password (blank to generate one)",
+    generate=True,
+)
+@guard.secret(
+    "anythingllm_jwt_secret",
+    prompt="AnythingLLM session-signing secret (blank to generate one)",
+    generate=True,
+)
 def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
     """Stand up the AnythingLLM container and its storage volume."""
     return runner.run_playbook(

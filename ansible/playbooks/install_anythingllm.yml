@@ -46,6 +46,23 @@
         group: "{{ anythingllm_group }}"
         mode: "0660"
 
+    # The login password and session secret come from the vault. AnythingLLM
+    # rewrites the rest of this file itself from its settings pages, so only
+    # these two lines are managed; a password changed in the UI is reset to
+    # the vault's on the next run.
+    - name: Set the AnythingLLM login secrets
+      ansible.builtin.lineinfile:
+        path: "{{ anythingllm_storage_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}='{{ item.value }}'"
+      loop:
+        - {key: AUTH_TOKEN, value: "{{ anythingllm_password }}"}
+        - {key: JWT_SECRET, value: "{{ anythingllm_jwt_secret }}"}
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      notify: Restart AnythingLLM
+
     # A desktop entry is only meaningful where a menu exists to hold it. Gating
     # on /usr/share/applications keeps a headless target from growing a
     # launcher nothing can ever show, without needing the play to know which
