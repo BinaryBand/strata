@@ -1,0 +1,33 @@
+{
+  "active": true,
+  "hubId": "strata-workshop",
+  "name": "strata-workshop",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Draft AnythingLLM customizations from chat: custom agent skills, Agent Flows, MCP servers and workspace system prompts. Call action=guide with the kind first to get the exact format. Drafted skills, flows and MCP servers stay off until the user switches them on in Settings; nothing can be switched on or deleted from here.",
+  "author": "strata",
+  "license": "MIT",
+  "imported": true,
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {"type": "string", "description": "One of: guide, list, draft_skill, draft_flow, draft_mcp, workspace."},
+      "kind": {"type": "string", "description": "For guide and list: skill, flow, mcp or workspace."},
+      "hubId": {"type": "string", "description": "draft_skill: the skill's id, lowercase letters, digits and dashes."},
+      "manifest": {"type": "string", "description": "draft_skill: plugin.json as a JSON string."},
+      "handler": {"type": "string", "description": "draft_skill: the full JavaScript source of handler.js."},
+      "name": {"type": "string", "description": "draft_flow, draft_mcp, workspace: the name."},
+      "config": {"type": "string", "description": "draft_flow: the flow as a JSON string with description and steps."},
+      "uuid": {"type": "string", "description": "draft_flow: an existing flow's uuid, to redraft it."},
+      "command": {"type": "string", "description": "draft_mcp: the command to launch, e.g. npx."},
+      "args": {"type": "string", "description": "draft_mcp: the arguments as a JSON array of strings."},
+      "env": {"type": "string", "description": "draft_mcp: environment variables as a JSON object of strings."},
+      "slug": {"type": "string", "description": "workspace: an existing workspace's slug, to update it."},
+      "systemPrompt": {"type": "string", "description": "workspace: the system prompt."}
+    }
+  },
+  "examples": [
+    {"prompt": "How do I make a custom skill?", "call": "{\"action\": \"guide\", \"kind\": \"skill\"}"},
+    {"prompt": "What customizations exist?", "call": "{\"action\": \"list\"}"}
+  ]
+}

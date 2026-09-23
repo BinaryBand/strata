@@ -1,0 +1,90 @@
+---
+# Install the strata-workshop custom agent skill into AnythingLLM. The storage
+# root is declared by install_anythingllm.py and arrives as an extravar.
+#
+# AnythingLLM re-requires a skill's handler on every agent session, so a
+# changed handler takes effect from the next chat without a restart.
+- name: Install the strata-workshop skill into AnythingLLM
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    anythingllm_group: anythingllm
+    anythingllm_workshop_dir: "{{ anythingllm_storage_dir }}/plugins/agent-skills/strata-workshop"
+    anythingllm_workshop_manifest: "{{ anythingllm_workshop_dir }}/plugin.json"
+
+  tasks:
+    - name: Require the storage directory extravar
+      ansible.builtin.assert:
+        that:
+          - anythingllm_storage_dir | default('') | length > 0
+        fail_msg: >-
+          anythingllm_storage_dir must be set; run this through the
+          services.enable_anythingllm_workshop runbook.
+
+    - name: Ensure the skill directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "2770"
+      loop:
+        - "{{ anythingllm_workshop_dir }}"
+        - "{{ anythingllm_workshop_dir }}/lib"
+
+    # plugin.json is written separately below; everything else is copied as is.
+    - name: Copy the skill's code
+      ansible.builtin.copy:
+        src: "strata-workshop/{{ item }}"
+        dest: "{{ anythingllm_workshop_dir }}/{{ item }}"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+      loop:
+        - handler.js
+        - lib/drafts.js
+        - lib/guides.js
+        - lib/validate.js
+        - lib/workspaces.js
+
+    - name: Check for an installed manifest
+      ansible.builtin.stat:
+        path: "{{ anythingllm_workshop_manifest }}"
+      register: anythingllm_workshop_manifest_stat
+
+    - name: Read the installed manifest
+      ansible.builtin.slurp:
+        src: "{{ anythingllm_workshop_manifest }}"
+      register: anythingllm_workshop_manifest_raw
+      when: anythingllm_workshop_manifest_stat.stat.exists
+
+    # The settings page switches a skill on and off by rewriting `active` in
+    # plugin.json. Carrying the installed value over keeps this play from
+    # silently switching the workshop back on after the user turned it off;
+    # only a first install takes the repository's `active: true`.
+    - name: Build the manifest
+      vars:
+        anythingllm_workshop_current: >-
+          {{ (anythingllm_workshop_manifest_raw.content | b64decode | from_json)
+             if anythingllm_workshop_manifest_stat.stat.exists else {} }}
+        anythingllm_workshop_wanted: "{{ lookup('ansible.builtin.file', 'strata-workshop/plugin.json') | from_json }}"
+      ansible.builtin.set_fact:
+        anythingllm_workshop_current_manifest: "{{ anythingllm_workshop_current }}"
+        anythingllm_workshop_manifest_content: >-
+          {{ anythingllm_workshop_wanted
+             | combine({'active': anythingllm_workshop_current.active}
+                       if anythingllm_workshop_current.active is defined else {}) }}
+
+    # Gated on the parsed manifest, not bytes: the settings page re-serialises
+    # the file in its own format.
+    - name: Write the manifest
+      ansible.builtin.copy:
+        dest: "{{ anythingllm_workshop_manifest }}"
+        content: "{{ anythingllm_workshop_manifest_content | to_nice_json(indent=2) }}\n"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+      when: anythingllm_workshop_manifest_content != anythingllm_workshop_current_manifest

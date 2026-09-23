@@ -48,6 +48,7 @@ EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
         "anythingllm_filestore_dir",
         "anythingllm_container_storage_dir",
     ),
+    "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "install_anythingllm.yml": ("anythingllm_storage_dir", "anythingllm_container_storage_dir"),
     "install_baikal.yml": ("baikal_data_dir",),
     "install_jellyfin.yml": ("jellyfin_config_dir", "jellyfin_cache_dir"),
