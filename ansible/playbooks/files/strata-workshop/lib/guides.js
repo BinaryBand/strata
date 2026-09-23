@@ -51,7 +51,7 @@ Agent Flows, and works from the next chat after that.`,
   Pin the package to a version series.
 - env (optional): a JSON object of string values.
 It is registered with autoStart off: the user starts it from Settings > Agent Skills >
-MCP Servers. The name "filestore" belongs to strata and is refused.`,
+MCP Servers.`,
 
   workspace: `Call workspace with:
 - name: to create a workspace, or rename one given by slug.

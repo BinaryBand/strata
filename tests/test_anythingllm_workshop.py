@@ -219,17 +219,17 @@ def test_a_refused_flow_draft_writes_nothing(storage: Path, step: dict) -> None:
 
 def test_an_mcp_draft_keeps_siblings_and_never_autostarts(storage: Path) -> None:
     config_file = storage / "plugins" / "anythingllm_mcp_servers.json"
-    filestore = {"command": "npx", "args": ["x"], "anythingllm": {"autoStart": True}}
-    config_file.write_text(json.dumps({"mcpServers": {"filestore": filestore}}))
+    sibling = {"command": "npx", "args": ["x"], "anythingllm": {"autoStart": True}}
+    config_file.write_text(json.dumps({"mcpServers": {"sibling": sibling}}))
 
     run(storage, call("draft_mcp", name="memory", command="npx", args='["-y", "m@1"]'))
     servers = json.loads(config_file.read_text())["mcpServers"]
-    assert servers["filestore"] == filestore
+    assert servers["sibling"] == sibling
     assert servers["memory"]["anythingllm"] == {"autoStart": False}
 
-    [res] = run(storage, call("draft_mcp", name="filestore", command="sh"))
-    assert res["text"].startswith("Rejected")
-    assert json.loads(config_file.read_text())["mcpServers"]["filestore"] == filestore
+    run(storage, call("draft_mcp", name="sibling", command="npx", args='["y"]'))
+    redrafted = json.loads(config_file.read_text())["mcpServers"]["sibling"]
+    assert redrafted["anythingllm"] == {"autoStart": False}
 
 
 def test_workspace_create_then_update(storage: Path) -> None:

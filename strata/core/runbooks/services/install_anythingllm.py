@@ -13,9 +13,7 @@ from strata.core.ports import PlaybookRunner
 # it, the playbook binds it into the container, and it learns the root as an
 # extravar rather than repeating the literal in its own `vars:` block.
 STORAGE_DIR = "/srv/anythingllm/storage"
-# Where the unit binds it inside the container. A playbook that hands the
-# container a path under storage (enable_anythingllm_filestore) builds it from
-# this, so moving the bind cannot leave that path pointing nowhere.
+# Where the unit binds it inside the container.
 CONTAINER_STORAGE_DIR = "/app/server/storage"
 
 

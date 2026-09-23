@@ -4,8 +4,6 @@
 const vm = require("vm");
 
 const SELF_HUB_ID = "strata-workshop";
-// Strata's enable_anythingllm_filestore runbook owns this MCP entry.
-const PROTECTED_MCP = new Set(["filestore"]);
 const HUB_ID = /^[a-z0-9][a-z0-9-]{1,48}$/;
 const MCP_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -114,8 +112,6 @@ function mcp(nameValue, commandValue, argsValue, envValue) {
   const name = requireString("name", nameValue, 64);
   if (!MCP_NAME.test(name))
     throw new DraftError("name must be letters, digits, dashes or underscores, up to 64.");
-  if (PROTECTED_MCP.has(name))
-    throw new DraftError(`${name} is managed by strata and cannot be redrafted from chat.`);
   const command = requireString("command", commandValue, 1000);
   const args = argsValue === undefined || argsValue === "" ? [] : parseJson("args", argsValue);
   if (!Array.isArray(args) || !args.every((a) => typeof a === "string"))

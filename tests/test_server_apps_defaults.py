@@ -43,11 +43,6 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
 # playbook file -> vars that must arrive as extravars from the runbook, and so
 # must NOT appear in the play's own `vars:` block.
 EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
-    "enable_anythingllm_filestore.yml": (
-        "anythingllm_storage_dir",
-        "anythingllm_filestore_dir",
-        "anythingllm_container_storage_dir",
-    ),
     "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "install_anythingllm.yml": ("anythingllm_storage_dir", "anythingllm_container_storage_dir"),
     "install_baikal.yml": ("baikal_data_dir",),
