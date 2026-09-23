@@ -1,0 +1,80 @@
+---
+# Serve the AnythingLLM agent's site folder to the tailnet over HTTPS. The
+# folder is declared (and created by guard.path) in enable_anythingllm_site.py
+# and arrives as an extravar; the port comes from server_apps_defaults.
+#
+# The agent writes the pages; this play only places the house rules and
+# publishes the folder. tailscaled serves it as root, so the folder's
+# permissions need not open up to anyone.
+- name: Serve AnythingLLM's site folder to the tailnet
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    anythingllm_group: anythingllm
+    anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
+
+  tasks:
+    - name: Require the site directory extravar
+      ansible.builtin.assert:
+        that:
+          - anythingllm_site_dir | default('') | length > 0
+        fail_msg: >-
+          anythingllm_site_dir must be set; run this through the
+          services.enable_anythingllm_site runbook.
+
+    # Placed once and never overwritten: the rules are the agent's and the
+    # user's to change from chat after that.
+    - name: Place the site rules
+      ansible.builtin.copy:
+        src: anythingllm-site/README.md
+        dest: "{{ anythingllm_site_dir }}/README.md"
+        force: false
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+
+    - name: Read the tailscale serve config
+      ansible.builtin.command: tailscale serve status --json
+      register: anythingllm_site_serve_status
+      changed_when: false
+
+    - name: Select the port's current web handlers
+      vars:
+        anythingllm_site_serve: "{{ anythingllm_site_serve_status.stdout | default('{}', true) | from_json }}"
+      ansible.builtin.set_fact:
+        anythingllm_site_listener: >-
+          {{ (anythingllm_site_serve.TCP | default({})).get(anythingllm_site_port | string, {}) }}
+        anythingllm_site_paths: >-
+          {{ (anythingllm_site_serve.Web | default({}))
+             | dict2items
+             | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
+             | map(attribute='value.Handlers') | map('dict2items') | flatten
+             | selectattr('key', 'eq', '/')
+             | map(attribute='value.Path') | select('defined') | list }}
+
+    # A listener already on the port only counts as this play's if it serves
+    # the site folder at the root; anything else is another service's.
+    - name: Require an existing listener on the port to serve the site folder
+      ansible.builtin.assert:
+        that:
+          - anythingllm_site_dir in anythingllm_site_paths
+        fail_msg: >-
+          Port {{ anythingllm_site_port }} is already served on the tailnet,
+          but not from {{ anythingllm_site_dir }} (root paths:
+          {{ anythingllm_site_paths }}). Check `tailscale serve status`,
+          remove that listener with `tailscale serve
+          --https={{ anythingllm_site_port }} off` if it is stale, then re-run.
+      when: anythingllm_site_listener | length > 0
+
+    - name: Serve the site folder to the tailnet over HTTPS
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - --bg
+          - "--https={{ anythingllm_site_port }}"
+          - "{{ anythingllm_site_dir }}"
+      when: anythingllm_site_listener | length == 0

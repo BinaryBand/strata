@@ -34,6 +34,7 @@ from tests._ansible import PLAYBOOKS_DIR
 
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
+    "enable_anythingllm_site.yml": ("anythingllm_site_port",),
     "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),
     "install_jellyfin.yml": ("jellyfin_http_port", "jellyfin_image"),
@@ -45,6 +46,7 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
 EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
     "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_plugins_access.yml": ("anythingllm_storage_dir",),
+    "enable_anythingllm_site.yml": ("anythingllm_site_dir",),
     "install_anythingllm.yml": ("anythingllm_storage_dir", "anythingllm_container_storage_dir"),
     "install_baikal.yml": ("baikal_data_dir",),
     "install_jellyfin.yml": ("jellyfin_config_dir", "jellyfin_cache_dir"),

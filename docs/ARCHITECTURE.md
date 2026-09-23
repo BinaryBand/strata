@@ -103,6 +103,7 @@ flowchart TD
     tailscale[enable_tailscale] --> anythingllm
     anythingllm --> anythingllm_workshop[enable_anythingllm_workshop]
     anythingllm --> anythingllm_plugins_access[enable_anythingllm_plugins_access]
+    anythingllm --> anythingllm_site[enable_anythingllm_site]
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```

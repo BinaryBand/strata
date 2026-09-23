@@ -25,6 +25,9 @@ server_apps_defaults:
     # AnythingLLM listens on 3001 inside the container and its own UI builds
     # absolute links from that port, so the published port matches it.
     port: 3001
+    # The agent-written site (enable_anythingllm_site), served by tailscale on
+    # its own port so its pages are a separate origin from AnythingLLM's UI.
+    site_port: 8443
   baikal:
     image: docker.io/ckulka/baikal:nginx
     port: 8080

@@ -54,6 +54,7 @@ class AnythingLlmDefaults(BaseModel):
 
     image: str = "docker.io/mintplexlabs/anythingllm:1.16"
     port: int = 3001
+    site_port: int = 8443
 
 
 class ServerAppsDefaults(BaseModel):
