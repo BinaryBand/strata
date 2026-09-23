@@ -1,10 +1,10 @@
 ---
 # Deploy AnythingLLM as a rootless Podman container owned by diot, mirroring
-# the Baikal/MinIO pattern. The admin account and the LLM provider credentials
-# are entered through AnythingLLM's own onboarding on first visit -- this play
-# only stands up the service and its storage volume. The storage root is
-# declared with guard.path by install_anythingllm.py and passed in as an
-# extravar; the image and published port come from the server_apps_defaults
+# the Baikal/MinIO pattern. The login password and session secret come from
+# the vault; the LLM provider and its credentials are entered through
+# AnythingLLM's own onboarding on first visit. The storage root and its path
+# inside the container are declared by install_anythingllm.py and passed in as
+# extravars; the image and published port come from the server_apps_defaults
 # group_var.
 - name: Deploy AnythingLLM as a rootless Podman container owned by diot
   hosts: all
@@ -24,10 +24,29 @@
       ansible.builtin.assert:
         that:
           - anythingllm_storage_dir | default('') | length > 0
+          - anythingllm_container_storage_dir | default('') | length > 0
         fail_msg: >-
-          anythingllm_storage_dir must be set; run this through the
-          services.install_anythingllm runbook, which owns the storage
-          directory layout.
+          anythingllm_storage_dir and anythingllm_container_storage_dir must
+          be set; run this through the services.install_anythingllm runbook,
+          which owns the storage directory layout.
+
+    # Without tailnet HTTPS enabled, `tailscale serve --https` does not fail:
+    # it blocks waiting for consent in the admin console. The assert turns that
+    # hang into an instruction, and runs before anything is deployed so a host
+    # that cannot serve AnythingLLM is not left with a half-configured one.
+    - name: Read this host's tailnet status
+      ansible.builtin.command: tailscale status --json
+      register: anythingllm_tailnet_status
+      changed_when: false
+
+    - name: Require HTTPS certificates on the tailnet
+      ansible.builtin.assert:
+        that:
+          - (anythingllm_tailnet_status.stdout | from_json).CertDomains | default([], true) | length > 0
+        fail_msg: >-
+          Tailnet HTTPS is off. In the Tailscale admin console, open DNS and
+          enable HTTPS Certificates, then re-run this runbook. Certificate
+          names are published in public Certificate Transparency logs.
 
     # AnythingLLM keeps its settings -- the login password, the JWT secret, the
     # LLM provider and its API key -- in /app/server/.env, outside the storage
@@ -45,6 +64,21 @@
         owner: "{{ diot_user }}"
         group: "{{ anythingllm_group }}"
         mode: "0660"
+
+    # The file quotes each value in single quotes, and dotenv ends a value at
+    # the next one, so a password containing ' would be cut short and no
+    # longer match the vault -- silently. Refuse it instead.
+    - name: Require login secrets the settings file can hold
+      ansible.builtin.assert:
+        that:
+          - "\"'\" not in anythingllm_password"
+          - "'\\n' not in anythingllm_password"
+          - "\"'\" not in anythingllm_jwt_secret"
+          - "'\\n' not in anythingllm_jwt_secret"
+        fail_msg: >-
+          anythingllm_password and anythingllm_jwt_secret must not contain a
+          single quote or a newline. Reset the offending one with
+          `strata config secret <name>` and re-run.
 
     # The login password and session secret come from the vault. AnythingLLM
     # rewrites the rest of this file itself from its settings pages, so only
@@ -114,8 +148,8 @@
           # The document collector renders pages through a headless Chromium,
           # whose sandbox needs to mount its own namespaces.
           AddCapability=SYS_ADMIN
-          Environment=STORAGE_DIR=/app/server/storage
-          Volume={{ anythingllm_storage_dir }}:/app/server/storage:Z
+          Environment=STORAGE_DIR={{ anythingllm_container_storage_dir }}
+          Volume={{ anythingllm_storage_dir }}:{{ anythingllm_container_storage_dir }}:Z
           Volume={{ anythingllm_storage_dir }}/.env:/app/server/.env:Z
           # Loopback only: the tailnet reaches it through `tailscale serve`
           # below, and nothing on the LAN reaches it at all.
@@ -123,6 +157,10 @@
 
           [Service]
           Restart=always
+          # A start that finds the image missing (after a prune, or a reboot
+          # onto reset storage) pulls several GB inside ExecStart; the default
+          # 90 s start timeout would fail it and Restart=always would loop.
+          TimeoutStartSec=900
 
           [Install]
           WantedBy=default.target
@@ -132,24 +170,6 @@
     # certificate, on the container's port so AnythingLLM's absolute links
     # still resolve. The listener sits on the host's tailnet address, so it
     # shares the port number with the loopback publish without colliding.
-    #
-    # Without tailnet HTTPS enabled, `tailscale serve --https` does not fail:
-    # it blocks waiting for consent in the admin console. The assert turns that
-    # hang into an instruction.
-    - name: Read this host's tailnet status
-      ansible.builtin.command: tailscale status --json
-      register: anythingllm_tailnet_status
-      changed_when: false
-
-    - name: Require HTTPS certificates on the tailnet
-      ansible.builtin.assert:
-        that:
-          - (anythingllm_tailnet_status.stdout | from_json).CertDomains | default([], true) | length > 0
-        fail_msg: >-
-          Tailnet HTTPS is off. In the Tailscale admin console, open DNS and
-          enable HTTPS Certificates, then re-run this runbook. Certificate
-          names are published in public Certificate Transparency logs.
-
     - name: Read the tailscale serve config
       ansible.builtin.command: tailscale serve status --json
       register: anythingllm_serve_status
@@ -160,6 +180,29 @@
         anythingllm_serve_listener: >-
           {{ ((anythingllm_serve_status.stdout | default('{}', true) | from_json).TCP
               | default({})).get(anythingllm_http_port | string, {}) }}
+
+    # An HTTPS listener already on the port only counts as this play's if it
+    # proxies the site root to AnythingLLM. Anything else was set up by hand
+    # for another service; overwriting it is the operator's call.
+    - name: Require an existing HTTPS listener on the port to serve AnythingLLM
+      vars:
+        anythingllm_serve_proxies: >-
+          {{ ((anythingllm_serve_status.stdout | default('{}', true) | from_json).Web | default({}))
+             | dict2items
+             | selectattr('key', 'match', '.*:' ~ anythingllm_http_port ~ '$')
+             | map(attribute='value.Handlers') | map('dict2items') | flatten
+             | selectattr('key', 'eq', '/')
+             | map(attribute='value.Proxy') | list }}
+      ansible.builtin.assert:
+        that:
+          - ('http://127.0.0.1:' ~ anythingllm_http_port) in anythingllm_serve_proxies
+        fail_msg: >-
+          Port {{ anythingllm_http_port }} is already served over HTTPS on the
+          tailnet, but not to AnythingLLM (root proxies: {{ anythingllm_serve_proxies }}).
+          Check `tailscale serve status`, remove that listener with
+          `tailscale serve --https={{ anythingllm_http_port }} off` if it is
+          stale, then re-run.
+      when: anythingllm_serve_listener.HTTPS | default(false)
 
     # A port holds one listener type, and earlier runs of this play served it
     # as plain HTTP.

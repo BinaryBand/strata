@@ -15,8 +15,6 @@
     ansible_python_interpreter: /usr/bin/python3
     diot_user: diot
     anythingllm_group: anythingllm
-    # Where the container binds the storage directory (install_anythingllm.yml).
-    anythingllm_container_storage: /app/server/storage
     anythingllm_mcp_config: "{{ anythingllm_storage_dir }}/plugins/anythingllm_mcp_servers.json"
     # Pinned by series: the package versions by date, so @2026 takes fixes
     # within the year and a new year's series is a deliberate edit.
@@ -25,7 +23,7 @@
       args:
         - -y
         - "@modelcontextprotocol/server-filesystem@2026"
-        - "{{ anythingllm_container_storage }}{{ anythingllm_filestore_dir | replace(anythingllm_storage_dir, '', 1) }}"
+        - "{{ anythingllm_container_storage_dir }}{{ anythingllm_filestore_dir | replace(anythingllm_storage_dir, '', 1) }}"
       env: {}
 
   tasks:
@@ -34,13 +32,15 @@
         that:
           - anythingllm_storage_dir | default('') | length > 0
           - anythingllm_filestore_dir | default('') | length > 0
+          - anythingllm_container_storage_dir | default('') | length > 0
           # The container sees only the storage bind mount, so the folder
           # must live under it to exist at the path the MCP server is given.
           - anythingllm_filestore_dir.startswith(anythingllm_storage_dir ~ '/')
         fail_msg: >-
-          anythingllm_storage_dir and anythingllm_filestore_dir must be set,
-          with the filestore inside the storage directory; run this through
-          the services.enable_anythingllm_filestore runbook.
+          anythingllm_storage_dir, anythingllm_filestore_dir and
+          anythingllm_container_storage_dir must be set, with the filestore
+          inside the storage directory; run this through the
+          services.enable_anythingllm_filestore runbook.
 
     - name: Check for an existing MCP config
       ansible.builtin.stat:
@@ -72,13 +72,22 @@
 
     # Two non-recursive combines: the outer keeps every top-level key, the
     # inner keeps every sibling server and replaces `filestore` whole, so no
-    # stale field from an earlier edit survives inside it.
+    # stale field from an earlier edit survives inside it. The one exception
+    # is the entry's own `anythingllm` object, where AnythingLLM's settings
+    # page keeps its per-server switches (e.g. autoStart); carrying it over
+    # keeps this play from silently undoing a choice made in the UI.
     - name: Merge the filestore entry into the MCP config
+      vars:
+        anythingllm_filestore_current: "{{ (anythingllm_mcp_current.mcpServers | default({})).filestore | default({}) }}"
+        anythingllm_filestore_wanted: >-
+          {{ anythingllm_filestore_entry
+             | combine({'anythingllm': anythingllm_filestore_current.anythingllm}
+                       if anythingllm_filestore_current.anythingllm is defined else {}) }}
       ansible.builtin.set_fact:
         anythingllm_mcp_merged: >-
           {{ anythingllm_mcp_current | combine({'mcpServers':
                (anythingllm_mcp_current.mcpServers | default({}))
-               | combine({'filestore': anythingllm_filestore_entry})}) }}
+               | combine({'filestore': anythingllm_filestore_wanted})}) }}
 
     - name: Ensure the plugins directory exists
       ansible.builtin.file:
@@ -89,7 +98,10 @@
         mode: "2770"
 
     # No `backup: true`: it would drop timestamped copies beside the file,
-    # inside a directory restic already snapshots.
+    # inside a directory restic already snapshots. The write is gated on the
+    # parsed config differing, not on bytes: AnythingLLM re-serialises the
+    # file in its own key order and indent, and a formatting difference alone
+    # must not rewrite it or restart the service.
     - name: Write the MCP config
       ansible.builtin.copy:
         dest: "{{ anythingllm_mcp_config }}"
@@ -98,12 +110,13 @@
         group: "{{ anythingllm_group }}"
         mode: "0660"
       register: anythingllm_mcp_config_write
+      when: anythingllm_mcp_merged != anythingllm_mcp_current
 
     - name: "Look up {{ diot_user }}'s uid"
       ansible.builtin.getent:
         database: passwd
         key: "{{ diot_user }}"
-      when: anythingllm_mcp_config_write.changed
+      when: anythingllm_mcp_config_write is changed
 
     # AnythingLLM reads the MCP config when it boots its MCP servers, so a
     # changed file only takes effect after a restart.
@@ -115,4 +128,4 @@
         name: anythingllm.service
         state: restarted
         scope: user
-      when: anythingllm_mcp_config_write.changed
+      when: anythingllm_mcp_config_write is changed

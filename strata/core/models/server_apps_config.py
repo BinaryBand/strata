@@ -52,7 +52,7 @@ class MinioDefaults(BaseModel):
 class AnythingLlmDefaults(BaseModel):
     """Defaults for the AnythingLLM document-chat server."""
 
-    image: str = "docker.io/mintplexlabs/anythingllm:latest"
+    image: str = "docker.io/mintplexlabs/anythingllm:1.16"
     port: int = 3001
 
 

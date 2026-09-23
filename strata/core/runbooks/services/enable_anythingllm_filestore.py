@@ -9,7 +9,10 @@ sibling .env holding the provider API keys out of the agent's reach.
 
 from strata.core import guard
 from strata.core.ports import PlaybookRunner
-from strata.core.runbooks.services.install_anythingllm import STORAGE_DIR
+from strata.core.runbooks.services.install_anythingllm import (
+    CONTAINER_STORAGE_DIR,
+    STORAGE_DIR,
+)
 
 _FILESTORE_DIR = f"{STORAGE_DIR}/files"
 
@@ -25,6 +28,7 @@ def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
         extravars={
             "anythingllm_storage_dir": STORAGE_DIR,
             "anythingllm_filestore_dir": _FILESTORE_DIR,
+            "anythingllm_container_storage_dir": CONTAINER_STORAGE_DIR,
         },
         target=target,
     )

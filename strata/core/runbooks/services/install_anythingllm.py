@@ -13,6 +13,10 @@ from strata.core.ports import PlaybookRunner
 # it, the playbook binds it into the container, and it learns the root as an
 # extravar rather than repeating the literal in its own `vars:` block.
 STORAGE_DIR = "/srv/anythingllm/storage"
+# Where the unit binds it inside the container. A playbook that hands the
+# container a path under storage (enable_anythingllm_filestore) builds it from
+# this, so moving the bind cannot leave that path pointing nowhere.
+CONTAINER_STORAGE_DIR = "/app/server/storage"
 
 
 @guard.alias("install AnythingLLM")
@@ -45,6 +49,9 @@ def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
     """Stand up the AnythingLLM container and its storage volume."""
     return runner.run_playbook(
         "playbooks/install_anythingllm.yml",
-        extravars={"anythingllm_storage_dir": STORAGE_DIR},
+        extravars={
+            "anythingllm_storage_dir": STORAGE_DIR,
+            "anythingllm_container_storage_dir": CONTAINER_STORAGE_DIR,
+        },
         target=target,
     )

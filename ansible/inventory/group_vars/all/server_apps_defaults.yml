@@ -17,7 +17,11 @@
 # drift apart.
 server_apps_defaults:
   anythingllm:
-    image: docker.io/mintplexlabs/anythingllm:latest
+    # Pinned by minor series: upstream moves the 1.16 tag across patch
+    # releases, and moving to 1.17 is a deliberate edit here. The Quadlet role
+    # pulls only a missing image, so a host keeps the 1.16 build it first
+    # pulled until the image is removed.
+    image: docker.io/mintplexlabs/anythingllm:1.16
     # AnythingLLM listens on 3001 inside the container and its own UI builds
     # absolute links from that port, so the published port matches it.
     port: 3001

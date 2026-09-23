@@ -47,6 +47,43 @@
     database: passwd
     key: "{{ quadlet_user }}"
 
+# The first start of a unit whose image is not local pulls it inside
+# ExecStart, and a multi-gigabyte image outlasts systemd's start timeout: the
+# start job fails even though the container comes up once the pull finishes.
+# Pulling here, outside any systemd job, takes that wait off the start. It runs
+# before the unit is written because writing it can flush a caller's restart
+# handler (quadlet_extra_notify), which would otherwise start the service
+# before the image is local. The image is read from the unit's own Image= line
+# so it has one spelling. Only a missing image is pulled; refreshing a tag
+# already present is not this role's job.
+- name: "Require an Image= line in the {{ quadlet_name }} unit"
+  ansible.builtin.assert:
+    that:
+      - (quadlet_content | regex_search('^Image=(.+)$', multiline=True)) is not none
+    fail_msg: >-
+      quadlet_content for {{ quadlet_name }} has no line of the form
+      `Image=<ref>` at the start of a line; the role reads the image to pull
+      from it.
+
+- name: "Ensure the {{ quadlet_name }} image is present"
+  become_user: "{{ quadlet_user }}"
+  vars:
+    quadlet_image: "{{ quadlet_content | regex_search('^Image=(.+)$', '\\1', multiline=True) | first }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
+  block:
+    - name: "Check whether the {{ quadlet_name }} image is local"
+      ansible.builtin.command:
+        argv: [podman, image, exists, "{{ quadlet_image }}"]
+      register: quadlet_image_exists
+      changed_when: false
+      failed_when: quadlet_image_exists.rc not in [0, 1]
+
+    - name: "Pull the {{ quadlet_name }} image"
+      ansible.builtin.command:
+        argv: [podman, pull, "{{ quadlet_image }}"]
+      when: quadlet_image_exists.rc == 1
+
 - name: "Write the {{ quadlet_name }} Quadlet unit"
   become_user: "{{ quadlet_user }}"
   vars:
@@ -73,32 +110,6 @@
 
     - name: Generate the service from the new Quadlet before starting it
       ansible.builtin.meta: flush_handlers
-
-# The first start of a unit whose image is not local pulls it inside
-# ExecStart, and a multi-gigabyte image outlasts systemd's start timeout: the
-# start job fails even though the container comes up once the pull finishes.
-# Pulling here, outside any systemd job, takes that wait off the start. The
-# image is read from the unit's own Image= line so it has one spelling. Only a
-# missing image is pulled; refreshing a tag already present is not this role's
-# job.
-- name: "Ensure the {{ quadlet_name }} image is present"
-  become_user: "{{ quadlet_user }}"
-  vars:
-    quadlet_image: "{{ quadlet_content | regex_search('^Image=(.+)$', '\\1', multiline=True) | first }}"
-  environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[quadlet_user][1] }}"
-  block:
-    - name: "Check whether the {{ quadlet_name }} image is local"
-      ansible.builtin.command:
-        argv: [podman, image, exists, "{{ quadlet_image }}"]
-      register: quadlet_image_exists
-      changed_when: false
-      failed_when: quadlet_image_exists.rc not in [0, 1]
-
-    - name: "Pull the {{ quadlet_name }} image"
-      ansible.builtin.command:
-        argv: [podman, pull, "{{ quadlet_image }}"]
-      when: quadlet_image_exists.rc == 1
 
 # Always regenerate systemd units from Quadlet files so that a
 # previously-generated service that was lost (reboot, systemd reset, …)
