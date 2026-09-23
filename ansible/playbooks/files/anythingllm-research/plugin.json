@@ -1,0 +1,32 @@
+{
+  "active": true,
+  "hubId": "research",
+  "name": "research",
+  "schema": "skill-1.0.0",
+  "version": "1.0.0",
+  "description": "Deep web research with verified citations: decompose a question into briefs, search and fetch pages, quote numbers verbatim, and write a report that must pass a mechanical check. Use when a question needs published evidence, not for one-fact lookups. Always call action=guide first and follow it; it explains every other action.",
+  "author": "strata",
+  "license": "MIT",
+  "imported": true,
+  "entrypoint": {
+    "file": "handler.js",
+    "params": {
+      "action": {"type": "string", "description": "One of: guide, init, search, fetch, quote, status, write, read, check, finish."},
+      "run": {"type": "string", "description": "The run's slug, 2-60 lowercase letters, digits and dashes, e.g. llm-judges."},
+      "brief": {"type": "string", "description": "search, fetch: the brief id this serves, e.g. 01."},
+      "query": {"type": "string", "description": "search: the query, 3 to 8 words."},
+      "counter": {"type": "boolean", "description": "search: true for a search for counter-evidence."},
+      "url": {"type": "string", "description": "fetch, quote: the page URL."},
+      "text": {"type": "string", "description": "quote: a short literal phrase from the page, 2 to 6 words."},
+      "file": {"type": "string", "description": "write, read, check: briefs/NN.md, handbacks/NN.json or reports/final.md."},
+      "content": {"type": "string", "description": "write: the file's content, or one part of it."},
+      "part": {"type": "number", "description": "write: this part's number, from 1, when sending a file in parts."},
+      "parts": {"type": "number", "description": "write: how many parts the file is sent in; omit for one."},
+      "max_searches": {"type": "number", "description": "init: the run's search cap, default 24."},
+      "max_fetches": {"type": "number", "description": "init: the run's fetch cap, default 60."}
+    }
+  },
+  "examples": [
+    {"prompt": "Research whether LLM judges agree with human raters", "call": "{\"action\": \"guide\"}"}
+  ]
+}

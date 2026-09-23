@@ -105,6 +105,7 @@ flowchart TD
     anythingllm --> anythingllm_plugins_access[enable_anythingllm_plugins_access]
     anythingllm --> anythingllm_site[enable_anythingllm_site]
     anythingllm --> anythingllm_prompt[enable_anythingllm_prompt]
+    anythingllm --> anythingllm_research[enable_anythingllm_research]
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```

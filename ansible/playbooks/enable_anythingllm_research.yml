@@ -1,0 +1,129 @@
+---
+# Install the `research` custom agent skill into AnythingLLM. strata owns the
+# tool (files/anythingllm-research/); the engine it drives is the operator's
+# research skill, copied from the controller on every run so a change there
+# reaches AnythingLLM on the next run. Its location defaults to
+# ~/.cline/skills/research and can be overridden with
+# anythingllm_research_source.
+- name: Install the research skill into AnythingLLM
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    anythingllm_group: anythingllm
+    anythingllm_research_source: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cline/skills/research"
+    anythingllm_research_dir: "{{ anythingllm_storage_dir }}/plugins/agent-skills/research"
+    anythingllm_research_manifest: "{{ anythingllm_research_dir }}/plugin.json"
+
+  tasks:
+    - name: Require the storage directory extravar
+      ansible.builtin.assert:
+        that:
+          - anythingllm_storage_dir | default('') | length > 0
+        fail_msg: >-
+          anythingllm_storage_dir must be set; run this through the
+          services.enable_anythingllm_research runbook.
+
+    - name: Check for the research skill on the controller
+      delegate_to: localhost
+      become: false
+      ansible.builtin.stat:
+        path: "{{ anythingllm_research_source }}/scripts/research.py"
+      register: anythingllm_research_engine
+
+    - name: Require the research skill on the controller
+      ansible.builtin.assert:
+        that:
+          - anythingllm_research_engine.stat.exists
+        fail_msg: >-
+          No research skill at {{ anythingllm_research_source }}. Install it
+          there, or pass anythingllm_research_source pointing at the skill's
+          directory (the one holding SKILL.md, contracts/ and scripts/).
+
+    - name: Ensure the skill directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "2770"
+      loop:
+        - "{{ anythingllm_research_dir }}"
+        - "{{ anythingllm_research_dir }}/engine"
+        - "{{ anythingllm_research_dir }}/engine/contracts"
+
+    - name: Copy the research tool
+      ansible.builtin.copy:
+        src: anythingllm-research/handler.js
+        dest: "{{ anythingllm_research_dir }}/handler.js"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+
+    # Only the files the engine runs from: no caches, no tests.
+    - name: Copy the research skill's instructions from the controller
+      ansible.builtin.copy:
+        src: "{{ anythingllm_research_source }}/SKILL.md"
+        dest: "{{ anythingllm_research_dir }}/engine/SKILL.md"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+
+    - name: Copy the research skill's contracts from the controller
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ anythingllm_research_dir }}/engine/contracts/{{ item | basename }}"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+      loop: "{{ query('ansible.builtin.fileglob', anythingllm_research_source ~ '/contracts/*.md') }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Copy the research engine's scripts from the controller
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ anythingllm_research_dir }}/engine/{{ item | basename }}"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+      loop: "{{ query('ansible.builtin.fileglob', anythingllm_research_source ~ '/scripts/*.py') }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Check for an installed manifest
+      ansible.builtin.stat:
+        path: "{{ anythingllm_research_manifest }}"
+      register: anythingllm_research_manifest_stat
+
+    - name: Read the installed manifest
+      ansible.builtin.slurp:
+        src: "{{ anythingllm_research_manifest }}"
+      register: anythingllm_research_manifest_raw
+      when: anythingllm_research_manifest_stat.stat.exists
+
+    # Keeps the user's on/off switch from the settings page, as the workshop's
+    # play does; only a first install takes the repository's `active: true`.
+    - name: Build the manifest
+      vars:
+        anythingllm_research_current: >-
+          {{ (anythingllm_research_manifest_raw.content | b64decode | from_json)
+             if anythingllm_research_manifest_stat.stat.exists else {} }}
+        anythingllm_research_wanted: "{{ lookup('ansible.builtin.file', 'anythingllm-research/plugin.json') | from_json }}"
+      ansible.builtin.set_fact:
+        anythingllm_research_current_manifest: "{{ anythingllm_research_current }}"
+        anythingllm_research_manifest_content: >-
+          {{ anythingllm_research_wanted
+             | combine({'active': anythingllm_research_current.active}
+                       if anythingllm_research_current.active is defined else {}) }}
+
+    - name: Write the manifest
+      ansible.builtin.copy:
+        dest: "{{ anythingllm_research_manifest }}"
+        content: "{{ anythingllm_research_manifest_content | to_nice_json(indent=2) }}\n"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+      when: anythingllm_research_manifest_content != anythingllm_research_current_manifest
