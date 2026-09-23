@@ -58,7 +58,7 @@ def secrets_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Redirect the secrets file, and pretend the vault password already exists."""
     directory = tmp_path / "secrets"
     monkeypatch.setattr(secrets, "_SECRETS_DIR", directory)
-    monkeypatch.setattr(secrets, "_SECRETS_FILE", directory / "all.yml")
+    monkeypatch.setattr(secrets, "SECRETS_FILE", directory / "all.yml")
     monkeypatch.setattr(secrets.vault_pass, "has_vault_password", lambda: True)
     monkeypatch.setattr(secrets.vault_pass, "get_vault_password", lambda: "keychain-pw")
     return directory / "all.yml"

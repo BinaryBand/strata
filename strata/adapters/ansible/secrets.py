@@ -11,7 +11,8 @@ from strata.adapters.ansible import vault_pass
 from strata.core import paths
 
 _SECRETS_DIR = paths.GROUP_VARS_DIR / "secrets"
-_SECRETS_FILE = _SECRETS_DIR / "all.yml"
+# The one spelling of the vault file; the CLI reports it from here.
+SECRETS_FILE = _SECRETS_DIR / "all.yml"
 
 # `ansible-vault encrypt_string` indents the vault text ten spaces under the
 # key, and wraps the payload at 80 columns; VaultLib.encrypt() produces the
@@ -87,9 +88,9 @@ def has_secret(name: str) -> bool:
     Returns:
         True if the secrets file exists and declares `name`.
     """
-    if not _SECRETS_FILE.exists():
+    if not SECRETS_FILE.exists():
         return False
-    return bool(re.search(rf"(?m)^{re.escape(name)}:", _SECRETS_FILE.read_text()))
+    return bool(re.search(rf"(?m)^{re.escape(name)}:", SECRETS_FILE.read_text()))
 
 
 def get_secret(name: str) -> str | None:
@@ -107,7 +108,7 @@ def get_secret(name: str) -> str | None:
     if not has_secret(name):
         return None
 
-    content = _SECRETS_FILE.read_text()
+    content = SECRETS_FILE.read_text()
     match = re.search(rf"(?m)^{re.escape(name)}: !vault \|\n((?:[ \t]+.*\n)*)", content)
     if not match:
         return None
@@ -134,7 +135,7 @@ def set_secret(name: str, value: str) -> None:
     _SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     block = _encrypt(name, value) + "\n"
 
-    content = _SECRETS_FILE.read_text() if _SECRETS_FILE.exists() else ""
+    content = SECRETS_FILE.read_text() if SECRETS_FILE.exists() else ""
     pattern = rf"(?m)^{re.escape(name)}:[ \t]*.*\n(?:[ \t]+.*\n)*"
 
     if re.search(pattern, content):
@@ -149,4 +150,4 @@ def set_secret(name: str, value: str) -> None:
     # This directory is gitignored, so all.yml is the only copy of every
     # credential the tool has stored -- a truncate-then-write interrupted
     # halfway loses all of them at once.
-    fs.write_text(_SECRETS_FILE, content)
+    fs.write_text(SECRETS_FILE, content)

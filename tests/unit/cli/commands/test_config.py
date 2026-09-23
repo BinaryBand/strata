@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
 from strata.cli.commands.config import app
+from strata.core import paths
 
 runner = CliRunner()
 
@@ -112,6 +113,15 @@ def test_secret_encrypts_given_value(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert calls == [("jellyfin_api_key", "abc123")]
     assert "Encrypted and stored 'jellyfin_api_key'" in result.output
+
+
+def test_secret_reports_the_file_it_actually_wrote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The message once named ansible/group_vars/, a directory that does not exist."""
+    monkeypatch.setattr(secrets, "set_secret", lambda _n, _v: None)
+
+    result = runner.invoke(app, ["secret", "jellyfin_api_key", "--value", "abc123"])
+    written = secrets.SECRETS_FILE.relative_to(paths.PROJECT_ROOT)
+    assert f"in {written}" in result.output
 
 
 def test_secret_prompts_hidden_with_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:

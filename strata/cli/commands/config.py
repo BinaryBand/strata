@@ -5,6 +5,9 @@ from __future__ import annotations
 import typer
 
 from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
+from strata.core import paths
+
+_SECRETS_FILE = secrets.SECRETS_FILE.relative_to(paths.PROJECT_ROOT)
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -52,7 +55,7 @@ def config_vault_password(
 
 @app.command("secret")
 def config_secret(
-    name: str = typer.Argument(..., help="Secret name in ansible/group_vars/secrets/all.yml."),
+    name: str = typer.Argument(..., help=f"Secret name in {_SECRETS_FILE}."),
     value: str | None = typer.Option(
         None,
         "--value",
@@ -60,12 +63,12 @@ def config_secret(
         help="Value to encrypt. Prompted (hidden) if not provided.",
     ),
 ) -> None:
-    """Vault-encrypt a secret and store it in ansible/group_vars/secrets/all.yml."""
+    """Vault-encrypt a secret and store it in the vault file."""
     if value is None:
         value = typer.prompt(name, hide_input=True, confirmation_prompt=True)
 
     secrets.set_secret(name, value)
-    typer.echo(f"Encrypted and stored {name!r} in ansible/group_vars/secrets/all.yml")
+    typer.echo(f"Encrypted and stored {name!r} in {_SECRETS_FILE}")
 
 
 @app.command("key")
