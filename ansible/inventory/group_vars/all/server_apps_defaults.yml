@@ -16,6 +16,11 @@
 # so the directory a guard creates and the directory the container binds cannot
 # drift apart.
 server_apps_defaults:
+  anythingllm:
+    image: docker.io/mintplexlabs/anythingllm:latest
+    # AnythingLLM listens on 3001 inside the container and its own UI builds
+    # absolute links from that port, so the published port matches it.
+    port: 3001
   baikal:
     image: docker.io/ckulka/baikal:nginx
     port: 8080

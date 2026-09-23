@@ -49,6 +49,13 @@ class MinioDefaults(BaseModel):
     console_port: int = 9001
 
 
+class AnythingLlmDefaults(BaseModel):
+    """Defaults for the AnythingLLM document-chat server."""
+
+    image: str = "docker.io/mintplexlabs/anythingllm:latest"
+    port: int = 3001
+
+
 class ServerAppsDefaults(BaseModel):
     """Top-level group_var holding all server-app canonical defaults.
 
@@ -56,6 +63,7 @@ class ServerAppsDefaults(BaseModel):
     ``ansible/inventory/group_vars/all/server_apps_defaults.yml``.
     """
 
+    anythingllm: AnythingLlmDefaults
     baikal: BaikalDefaults
     jellyfin: JellyfinDefaults
     minio: MinioDefaults

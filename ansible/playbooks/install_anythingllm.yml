@@ -1,0 +1,161 @@
+---
+# Deploy AnythingLLM as a rootless Podman container owned by diot, mirroring
+# the Baikal/MinIO pattern. The admin account and the LLM provider credentials
+# are entered through AnythingLLM's own onboarding on first visit -- this play
+# only stands up the service and its storage volume. The storage root is
+# declared with guard.path by install_anythingllm.py and passed in as an
+# extravar; the image and published port come from the server_apps_defaults
+# group_var.
+- name: Deploy AnythingLLM as a rootless Podman container owned by diot
+  hosts: all
+  become: true
+
+  vars:
+    # become_user: diot runs module code as diot, who cannot read operator's
+    # project venv; pin the system interpreter both users can execute.
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    anythingllm_group: anythingllm
+    anythingllm_image: "{{ server_apps_defaults.anythingllm.image }}"
+    anythingllm_http_port: "{{ server_apps_defaults.anythingllm.port }}"
+
+  tasks:
+    - name: Require the storage directory extravar
+      ansible.builtin.assert:
+        that:
+          - anythingllm_storage_dir | default('') | length > 0
+        fail_msg: >-
+          anythingllm_storage_dir must be set; run this through the
+          services.install_anythingllm runbook, which owns the storage
+          directory layout.
+
+    # AnythingLLM reads its settings from $STORAGE_DIR/.env and refuses to boot
+    # if the path is absent -- the container creates a *directory* there on a
+    # bind mount that has no file, and then fails to parse it. Creating it
+    # host-side as diot, before the unit starts, is what the upstream Docker
+    # instructions do with `touch`.
+    - name: Ensure the AnythingLLM settings file exists
+      ansible.builtin.copy:
+        dest: "{{ anythingllm_storage_dir }}/.env"
+        content: ""
+        force: false
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+
+    # A desktop entry is only meaningful where a menu exists to hold it. Gating
+    # on /usr/share/applications keeps a headless target from growing a
+    # launcher nothing can ever show, without needing the play to know which
+    # hosts are workstations.
+    - name: Check whether this host has a desktop application menu
+      ansible.builtin.stat:
+        path: /usr/share/applications
+      register: applications_dir
+
+    - name: Install the AnythingLLM desktop entry
+      when: applications_dir.stat.isdir | default(false)
+      ansible.builtin.copy:
+        dest: /usr/share/applications/anythingllm.desktop
+        mode: "0644"
+        # Icon is the stock freedesktop network symbol: the image ships no
+        # icon to the host, and inventing an asset path here would name a file
+        # nothing installs.
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=AnythingLLM
+          Comment=Chat with your documents, served locally by Podman
+          Exec=xdg-open http://localhost:{{ anythingllm_http_port }}
+          Icon=applications-internet
+          Categories=Network;
+          Terminal=false
+          Keywords=LLM;AI;documents;chat;
+
+    - name: Deploy and start AnythingLLM
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ anythingllm_group }}"
+        quadlet_name: anythingllm
+        quadlet_content: |
+          [Unit]
+          Description=AnythingLLM document chat server
+
+          [Container]
+          Image={{ anythingllm_image }}
+          # The image runs as its own uid/gid 1000. Without keep-id rootless
+          # Podman maps that onto a subordinate host UID that is neither diot
+          # nor in the anythingllm group, and the storage volume would have to
+          # be opened to 2777 for the container to write -- into a directory
+          # that holds the operator's LLM API keys.
+          UserNS=keep-id:uid=1000,gid=1000
+          # The document collector renders pages through a headless Chromium,
+          # whose sandbox needs to mount its own namespaces.
+          AddCapability=SYS_ADMIN
+          Environment=STORAGE_DIR=/app/server/storage
+          Volume={{ anythingllm_storage_dir }}:/app/server/storage:Z
+          # Loopback only: the tailnet reaches it through `tailscale serve`
+          # below, and nothing on the LAN reaches it at all.
+          PublishPort=127.0.0.1:{{ anythingllm_http_port }}:3001
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target
+
+    # The container publishes on loopback only, so this is the one way in from
+    # another device. It is served over HTTPS with the tailnet's own
+    # certificate, on the container's port so AnythingLLM's absolute links
+    # still resolve. The listener sits on the host's tailnet address, so it
+    # shares the port number with the loopback publish without colliding.
+    #
+    # Without tailnet HTTPS enabled, `tailscale serve --https` does not fail:
+    # it blocks waiting for consent in the admin console. The assert turns that
+    # hang into an instruction.
+    - name: Read this host's tailnet status
+      ansible.builtin.command: tailscale status --json
+      register: anythingllm_tailnet_status
+      changed_when: false
+
+    - name: Require HTTPS certificates on the tailnet
+      ansible.builtin.assert:
+        that:
+          - (anythingllm_tailnet_status.stdout | from_json).CertDomains | default([], true) | length > 0
+        fail_msg: >-
+          Tailnet HTTPS is off. In the Tailscale admin console, open DNS and
+          enable HTTPS Certificates, then re-run this runbook. Certificate
+          names are published in public Certificate Transparency logs.
+
+    - name: Read the tailscale serve config
+      ansible.builtin.command: tailscale serve status --json
+      register: anythingllm_serve_status
+      changed_when: false
+
+    - name: Select the port's current tailscale serve listener
+      ansible.builtin.set_fact:
+        anythingllm_serve_listener: >-
+          {{ ((anythingllm_serve_status.stdout | default('{}', true) | from_json).TCP
+              | default({})).get(anythingllm_http_port | string, {}) }}
+
+    # A port holds one listener type, and earlier runs of this play served it
+    # as plain HTTP.
+    - name: Remove a plain-HTTP listener left on the port
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - "--http={{ anythingllm_http_port }}"
+          - "off"
+      when: anythingllm_serve_listener.HTTP | default(false)
+
+    - name: Serve AnythingLLM to the tailnet over HTTPS
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - --bg
+          - "--https={{ anythingllm_http_port }}"
+          - "http://127.0.0.1:{{ anythingllm_http_port }}"
+      when: not (anythingllm_serve_listener.HTTPS | default(false))

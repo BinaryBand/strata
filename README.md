@@ -101,6 +101,8 @@ flowchart TD
     rclone --> rclone_http[enable_rclone_http]
     podman --> baikal[install_baikal]
     podman --> minio[install_minio]
+    podman --> anythingllm[install_anythingllm]
+    tailscale[enable_tailscale] --> anythingllm
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
@@ -110,6 +112,7 @@ flowchart TD
 - `enable_rclone_http` -- serve registered rclone paths over local HTTP instead of mounting them (see "Serving rclone paths over local HTTP" below).
 - `install_jellyfin` -- Jellyfin media server on port 8096; config and cache at `/srv/jellyfin/{config,cache}` (`diot:jellyfin`, setgid), with the read-only media library bound from `/mnt/rclone/pcloud/Media`.
 - `install_baikal` -- Baikal CalDAV/CardDAV server on port 8080; data at `/srv/baikal/{config,Specific}` (`diot:baikal`, setgid).
+- `install_anythingllm` -- AnythingLLM document-chat server on port 3001, published on loopback only and served to the tailnet over HTTPS with `tailscale serve` at `https://<host>.<tailnet>.ts.net:3001`, so no LAN device can reach it. It needs HTTPS Certificates enabled once in the Tailscale admin console, and fails with that instruction until they are; storage at `/srv/anythingllm/storage` (`diot:anythingllm`, setgid). The admin account, the LLM provider and its API keys are set through the web onboarding on first visit and land in that directory, so the unit pins `UserNS=keep-id` onto the image's uid/gid 1000 and the container writes as `diot` rather than the volume being opened to 2777. On a host that has `/usr/share/applications`, it also installs an `anythingllm.desktop` launcher that opens the served port in your browser; a headless target skips that task.
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
 ## rclone mounts

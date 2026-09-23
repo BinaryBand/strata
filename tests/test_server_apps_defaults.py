@@ -34,6 +34,7 @@ from tests._ansible import PLAYBOOKS_DIR
 
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
+    "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),
     "install_jellyfin.yml": ("jellyfin_http_port", "jellyfin_image"),
     "install_minio.yml": ("minio_api_port", "minio_console_port", "minio_image"),
@@ -42,6 +43,7 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
 # playbook file -> vars that must arrive as extravars from the runbook, and so
 # must NOT appear in the play's own `vars:` block.
 EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
+    "install_anythingllm.yml": ("anythingllm_storage_dir",),
     "install_baikal.yml": ("baikal_data_dir",),
     "install_jellyfin.yml": ("jellyfin_config_dir", "jellyfin_cache_dir"),
     "install_minio.yml": ("minio_data_dir",),
