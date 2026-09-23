@@ -25,16 +25,19 @@
           anythingllm_site_dir must be set; run this through the
           services.enable_anythingllm_site runbook.
 
-    # Placed once and never overwritten: the rules are the agent's and the
-    # user's to change from chat after that.
-    - name: Place the site rules
+    # Placed once and never overwritten: the rules and the list of
+    # publications are the agent's and the user's to change from chat.
+    - name: Place the site rules and the empty list of publications
       ansible.builtin.copy:
-        src: anythingllm-site/README.md
-        dest: "{{ anythingllm_site_dir }}/README.md"
+        src: "anythingllm-site/{{ item }}"
+        dest: "{{ anythingllm_site_dir }}/{{ item }}"
         force: false
         owner: "{{ diot_user }}"
         group: "{{ anythingllm_group }}"
         mode: "0660"
+      loop:
+        - README.md
+        - index.html
 
     - name: Read the tailscale serve config
       ansible.builtin.command: tailscale serve status --json
