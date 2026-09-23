@@ -34,6 +34,7 @@ from tests._ansible import PLAYBOOKS_DIR
 
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
+    "enable_anythingllm_prompt.yml": ("anythingllm_http_port", "anythingllm_site_port"),
     "enable_anythingllm_site.yml": ("anythingllm_site_port",),
     "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),

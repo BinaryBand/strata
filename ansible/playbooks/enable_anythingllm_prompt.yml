@@ -1,0 +1,110 @@
+---
+# Write AnythingLLM's default system prompt from
+# templates/anythingllm-system-prompt.j2, through AnythingLLM's own API.
+#
+# AnythingLLM copies the default into each workspace when the workspace is
+# created, so existing workspaces are updated one by one. Both the default
+# and each workspace are written only while untouched: still AnythingLLM's
+# built-in prompt, or exactly what this play last wrote, which is recorded in
+# a root-only file. A prompt edited in AnythingLLM's settings therefore wins
+# over this play, the same way the settings page's switches do elsewhere.
+- name: Set AnythingLLM's default system prompt
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    anythingllm_http_port: "{{ server_apps_defaults.anythingllm.port }}"
+    anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
+    anythingllm_api: "http://127.0.0.1:{{ anythingllm_http_port }}/api"
+    anythingllm_prompt_record: /srv/anythingllm/strata-system-prompt.txt
+
+  tasks:
+    - name: Read this host's tailnet status
+      ansible.builtin.command: tailscale status --json
+      register: anythingllm_prompt_tailnet
+      changed_when: false
+
+    - name: Render the prompt
+      vars:
+        anythingllm_cert_domain: "{{ ((anythingllm_prompt_tailnet.stdout | from_json).CertDomains | default([], true) | first) | default(inventory_hostname) }}"
+        anythingllm_host_label: "{{ inventory_hostname }}"
+        anythingllm_site_url: "https://{{ anythingllm_cert_domain }}:{{ anythingllm_site_port }}"
+      ansible.builtin.set_fact:
+        anythingllm_prompt_wanted: "{{ lookup('ansible.builtin.template', 'anythingllm-system-prompt.j2') | trim }}"
+
+    - name: Log in to AnythingLLM
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/request-token"
+        method: POST
+        body_format: json
+        body: {password: "{{ anythingllm_password }}"}
+      register: anythingllm_prompt_login
+      no_log: true
+
+    - name: Read the current default prompt
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/system/default-system-prompt"
+        headers: {Authorization: "Bearer {{ anythingllm_prompt_login.json.token }}"}
+      register: anythingllm_prompt_default
+
+    - name: Read the workspaces
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/workspaces"
+        headers: {Authorization: "Bearer {{ anythingllm_prompt_login.json.token }}"}
+      register: anythingllm_prompt_workspaces
+
+    - name: Check for this play's last-written prompt
+      ansible.builtin.stat:
+        path: "{{ anythingllm_prompt_record }}"
+      register: anythingllm_prompt_record_stat
+
+    - name: Read this play's last-written prompt
+      ansible.builtin.slurp:
+        src: "{{ anythingllm_prompt_record }}"
+      register: anythingllm_prompt_record_raw
+      when: anythingllm_prompt_record_stat.stat.exists
+
+    # A prompt counts as untouched when it is empty, AnythingLLM's own
+    # built-in prompt, or exactly what this play wrote last time.
+    - name: Collect the prompts that count as untouched
+      ansible.builtin.set_fact:
+        anythingllm_prompt_untouched: >-
+          {{ ['', anythingllm_prompt_default.json.saneDefaultSystemPrompt | trim]
+             + ([anythingllm_prompt_record_raw.content | b64decode | trim]
+                if anythingllm_prompt_record_stat.stat.exists else []) }}
+
+    - name: Write the default prompt
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/system/default-system-prompt"
+        method: POST
+        headers: {Authorization: "Bearer {{ anythingllm_prompt_login.json.token }}"}
+        body_format: json
+        body: {defaultSystemPrompt: "{{ anythingllm_prompt_wanted }}"}
+      changed_when: true
+      when:
+        - (anythingllm_prompt_default.json.defaultSystemPrompt | trim) != anythingllm_prompt_wanted
+        - (anythingllm_prompt_default.json.defaultSystemPrompt | trim) in anythingllm_prompt_untouched
+
+    - name: Write the prompt into untouched workspaces
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/workspace/{{ item.slug }}/update"
+        method: POST
+        headers: {Authorization: "Bearer {{ anythingllm_prompt_login.json.token }}"}
+        body_format: json
+        body: {openAiPrompt: "{{ anythingllm_prompt_wanted }}"}
+      changed_when: true
+      loop: "{{ anythingllm_prompt_workspaces.json.workspaces }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      when:
+        - (item.openAiPrompt | default('', true) | trim) != anythingllm_prompt_wanted
+        - (item.openAiPrompt | default('', true) | trim) in anythingllm_prompt_untouched
+
+    - name: Record the prompt this play wrote
+      ansible.builtin.copy:
+        dest: "{{ anythingllm_prompt_record }}"
+        content: "{{ anythingllm_prompt_wanted }}\n"
+        owner: root
+        group: root
+        mode: "0600"
