@@ -29,11 +29,14 @@
           services.install_anythingllm runbook, which owns the storage
           directory layout.
 
-    # AnythingLLM reads its settings from $STORAGE_DIR/.env and refuses to boot
-    # if the path is absent -- the container creates a *directory* there on a
-    # bind mount that has no file, and then fails to parse it. Creating it
-    # host-side as diot, before the unit starts, is what the upstream Docker
-    # instructions do with `touch`.
+    # AnythingLLM keeps its settings -- the login password, the JWT secret, the
+    # LLM provider and its API key -- in /app/server/.env, outside the storage
+    # directory. The unit recreates the container on every start, so unless
+    # that file is bound to the host, each restart or reboot wipes them. It is
+    # bound from here; the file must exist first, or Podman creates a
+    # *directory* at the source and AnythingLLM fails to parse it. Creating it
+    # host-side as diot is what the upstream Docker instructions do with
+    # `touch`.
     - name: Ensure the AnythingLLM settings file exists
       ansible.builtin.copy:
         dest: "{{ anythingllm_storage_dir }}/.env"
@@ -78,6 +81,7 @@
         quadlet_user: "{{ diot_user }}"
         quadlet_group: "{{ anythingllm_group }}"
         quadlet_name: anythingllm
+        quadlet_extra_notify: [Restart AnythingLLM]
         quadlet_content: |
           [Unit]
           Description=AnythingLLM document chat server
@@ -95,6 +99,7 @@
           AddCapability=SYS_ADMIN
           Environment=STORAGE_DIR=/app/server/storage
           Volume={{ anythingllm_storage_dir }}:/app/server/storage:Z
+          Volume={{ anythingllm_storage_dir }}/.env:/app/server/.env:Z
           # Loopback only: the tailnet reaches it through `tailscale serve`
           # below, and nothing on the LAN reaches it at all.
           PublishPort=127.0.0.1:{{ anythingllm_http_port }}:3001
@@ -159,3 +164,18 @@
           - "--https={{ anythingllm_http_port }}"
           - "http://127.0.0.1:{{ anythingllm_http_port }}"
       when: not (anythingllm_serve_listener.HTTPS | default(false))
+
+  handlers:
+    # The role only reloads systemd when the unit changes, and a running
+    # service keeps the container it started with, so a new mount or image
+    # would wait for the next reboot. The daemon-reload here regenerates the
+    # service first, whatever order the handlers run in.
+    - name: Restart AnythingLLM
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+      ansible.builtin.systemd_service:
+        name: anythingllm.service
+        state: restarted
+        scope: user
+        daemon_reload: true
