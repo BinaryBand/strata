@@ -151,6 +151,25 @@ def test_source_and_model_text_render_as_text(mods) -> None:
     assert "&lt;b&gt;resume&lt;/b&gt; &amp; &quot;hope&quot;" in body
 
 
+def test_a_story_shows_its_credited_picture_or_its_region_illustration(mods) -> None:
+    del mods  # the fixture put the service's modules on sys.path
+    page = importlib.import_module("story_page")
+    image = {
+        "file": "cranes.jpg",
+        "credit": "Jane <Doe>",
+        "source": "https://commons.wikimedia.org/wiki/File:C.jpg",
+        "license": "CC0",
+    }
+    pictured = page.story_page(DAY, {**STORY, "image": image}, ["Text."], [])
+    assert '<img src="/news/images/cranes.jpg" alt="">' in pictured
+    assert (
+        'Photo: <a href="https://commons.wikimedia.org/wiki/File:C.jpg">Jane &lt;Doe&gt;</a>, CC0'
+        in pictured
+    )
+    plain = page.story_page(DAY, {**STORY, "region": "Europe & Sweden"}, ["Text."], [])
+    assert '<img src="/news/regions/europe-sweden.svg" alt="">' in plain
+
+
 def test_a_damaged_cache_entry_is_ignored(mods) -> None:
     story, _, _ = mods
     (story.CACHE / f"{story.story_key(STORY)}.json").write_text('{"paragraphs": 3}')

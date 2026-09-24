@@ -19,14 +19,17 @@ class Invalid(Exception):  # noqa: N818 -- reads as "raise Invalid(...)"
 
 @dataclass
 class Result:
-    """Zola content to write, the stylesheet, and every skipped file with its reason."""
+    """Zola content to write, the stylesheet and photos, and every skipped file with its reason."""
 
     files: dict[str, str] = field(default_factory=dict)
     css: bytes | None = None
+    images: dict[str, bytes] = field(default_factory=dict)
     rejected: list[tuple[str, str]] = field(default_factory=list)
     waiting: list[str] = field(default_factory=list)
     editions: int = 0
     stories: dict[str, list[dict]] = field(default_factory=dict)
+    # Each built edition's page title and edition.toml, held until images resolve.
+    meta: dict[str, tuple[str, dict]] = field(default_factory=dict)
 
 
 def read_no_follow(root: Path, rel: str, limit: int) -> bytes:

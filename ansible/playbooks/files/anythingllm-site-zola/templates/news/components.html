@@ -1,6 +1,6 @@
 {% component news_sources(sources) %}<p class="sources">{% for s in sources %}<a href="{{ s.url }}">{{ s.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endcomponent news_sources %}
 
-{% component news_photo(region, size: string = "wide") %}<div class="photo photo--{{ size }} photo--{{ region | slugify }}" aria-hidden="true"><span>{{ region }}</span></div>{% endcomponent news_photo %}
+{% component news_photo(story, size: string = "wide") %}{% if story.image %}<figure class="photo photo--{{ size }}"><img src="{{ get_url(path='news/images/' ~ story.image.file) }}" alt="" loading="lazy"><figcaption>Photo: <a href="{{ story.image.source }}">{{ story.image.credit }}</a>, {{ story.image.license }}</figcaption></figure>{% else %}{% set slug = story.region | slugify %}<div class="photo photo--{{ size }} photo--{{ slug }}" aria-hidden="true"><img src="{{ get_url(path='news/regions/' ~ slug ~ '.svg') }}" alt=""></div>{% endif %}{% endcomponent news_photo %}
 
 {% component news_headline(story, tag: string = "h3") %}<{{ tag }} class="headline"><a href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></{{ tag }}>{% endcomponent news_headline %}
 
@@ -26,7 +26,7 @@
 <div class="frontpage">
 {% for story in stories %}{% if story.lead %}
 <article class="lead">
-{{<news_photo region={story.region} size="wide" />}}
+{{<news_photo story={story} size="wide" />}}
 <p class="kicker">{{ story.region }}</p>
 {{<news_headline story={story} tag="h2" />}}
 <p class="dek">{{ story.summary }}</p>
@@ -63,7 +63,7 @@
 <div class="cards">
 {% for story in top %}
 <article class="card">
-{{<news_photo region={story.region} size="card" />}}
+{{<news_photo story={story} size="card" />}}
 <p class="kicker">{{ story.region }}</p>
 {{<news_headline story={story} />}}
 <p class="summary">{{ story.summary }}</p>
@@ -81,7 +81,7 @@
 {% if in_region | length > 0 %}
 {% set feature = in_region | first %}
 <article class="desk__feature">
-{{<news_photo region={region} size="card" />}}
+{{<news_photo story={feature} size="card" />}}
 {{<news_headline story={feature} />}}
 <p class="summary">{{ feature.summary }}</p>
 {{<news_sources sources={feature.sources} />}}

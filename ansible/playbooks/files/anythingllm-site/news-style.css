@@ -1,5 +1,5 @@
 /* The Daily Seek -- colours and type. Yours to edit.
-   Layout (grid, widths, the ticker, image placeholders) lives in strata's
+   Layout (grid, widths, the ticker, pictures) lives in strata's
    layout.css, loaded before this file; everything here is custom properties
    and type, so a change here restyles every page without breaking the
    layout. Before changing this file, copy it into news/previous/. */

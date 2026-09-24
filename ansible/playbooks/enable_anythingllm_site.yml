@@ -66,6 +66,16 @@
         group: "{{ anythingllm_group }}"
         mode: "2770"
 
+    # The picture desk skill's photos and their records; the builder checks
+    # every file again before a page may show it.
+    - name: Ensure the news images folder exists
+      ansible.builtin.file:
+        path: "{{ anythingllm_site_dir }}/news/images"
+        state: directory
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "2770"
+
     - name: Place the default news stylesheet
       ansible.builtin.copy:
         src: anythingllm-site/news-style.css
@@ -182,6 +192,7 @@
         - "{{ anythingllm_site_zola_dir }}/templates/news"
         - "{{ anythingllm_site_zola_dir }}/static"
         - "{{ anythingllm_site_zola_dir }}/static/news"
+        - "{{ anythingllm_site_zola_dir }}/static/news/regions"
         - "{{ anythingllm_site_build_dir }}"
 
     # Root-owned: the agent cannot change what a page is built from.
@@ -203,6 +214,9 @@
         - templates/news/edition.html
         - templates/news/front.html
         - static/news/layout.css
+        - static/news/regions/america.svg
+        - static/news/regions/europe-sweden.svg
+        - static/news/regions/world.svg
 
     - name: Install the builder
       ansible.builtin.copy:
@@ -214,6 +228,7 @@
       loop:
         - build.py
         - common.py
+        - pictures.py
         - validate.py
       notify: Restart the site builder
 

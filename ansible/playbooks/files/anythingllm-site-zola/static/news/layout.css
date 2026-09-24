@@ -93,17 +93,18 @@ main.wrap { padding-top: var(--gap); padding-bottom: calc(var(--gap) * 2); }
 .sources a { text-decoration: none; }
 .sources a:hover { color: var(--accent); }
 
-/* Image placeholders until the site has a light image source. */
-.photo {
-  display: flex; align-items: flex-end; aspect-ratio: 16 / 9;
-  background: repeating-linear-gradient(135deg, var(--tint) 0 10px, transparent 10px 20px), var(--paper-edge);
-  border: 1px solid var(--rule);
+/* Photos from the picture desk, or the region's illustration when a story has none. */
+.photo { margin: 0; }
+.photo img {
+  display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+  background: var(--paper-edge); border: 1px solid var(--rule);
 }
-.photo span {
-  margin: .5rem; padding: .1rem .4rem; background: var(--paper);
-  font-family: var(--sans); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint);
+.photo--card img { aspect-ratio: 3 / 2; }
+.photo figcaption {
+  margin-top: .3rem; font-family: var(--sans); font-size: .62rem; letter-spacing: .04em; color: var(--ink-faint);
 }
-.photo--card { aspect-ratio: 3 / 2; }
+.photo figcaption a { text-decoration: none; }
+.photo figcaption a:hover { color: var(--accent); }
 
 /* ---------- Front page ---------- */
 

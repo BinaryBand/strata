@@ -68,6 +68,10 @@ def assemble(project: Path, result: validate.Result) -> None:
     if result.css is not None:
         (project / "static" / "news").mkdir(parents=True, exist_ok=True)
         (project / "static" / "news" / "style.css").write_bytes(result.css)
+    folder = project / "static" / "news" / "images"
+    for name, data in result.images.items():  # names built by pictures.py from checked parts
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(data)
 
 
 def zola(project: Path, output: Path) -> tuple[bool, str]:
@@ -149,7 +153,7 @@ def report(result: validate.Result, *, ok: bool, log: str, release: str | None) 
         lines += [
             "## Waiting",
             "",
-            "These editions have no edition.toml yet, so they are not built:",
+            "Not built yet: editions without edition.toml, and pictures without their record:",
             "",
         ]
         lines += [f"- `{w}`" for w in result.waiting] + [""]
