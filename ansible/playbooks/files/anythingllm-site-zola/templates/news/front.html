@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block title %}{{ config.title }}{% endblock title %}
+{% block dateline %}{% set paths = [p for p in section.subsections if "/archive/" not in p] | sort %}{% if paths | length > 0 %}{{<news_dateline edition={get_section(path=paths | last)} numbers={config.extra.numbers} />}}{% else %}<span>No edition yet</span>{% endif %}{% endblock dateline %}
+{% block body %}{% set paths = [p for p in section.subsections if "/archive/" not in p] | sort %}{% if paths | length > 0 %}{{<news_edition edition={get_section(path=paths | last)} regions={config.extra.regions} />}}{% else %}<p>The first edition has not been published yet.</p>{% endif %}{% endblock body %}

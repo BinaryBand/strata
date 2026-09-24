@@ -57,6 +57,7 @@ class AnythingLlmDefaults(BaseModel):
     site_port: int = 8443
     site_local_port: int = 8088
     site_image: str = "docker.io/nginxinc/nginx-unprivileged:1.30-alpine"
+    zola_series: str = "0.23"
 
 
 class ServerAppsDefaults(BaseModel):

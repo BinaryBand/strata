@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }}{% endblock title %}
+{% block dateline %}<span>{{ page.title }}</span>{% endblock dateline %}
+{% block body %}<article class="prose">{{ page.content | safe }}</article>{% endblock body %}

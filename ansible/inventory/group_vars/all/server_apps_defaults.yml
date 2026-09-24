@@ -35,6 +35,10 @@ server_apps_defaults:
     # deliberate edit here.
     site_local_port: 8088
     site_image: docker.io/nginxinc/nginx-unprivileged:1.30-alpine
+    # The Zola release series that builds the site: the newest 0.23.x is
+    # installed and checked against GitHub's published SHA-256. Moving to a
+    # new series (0.23 templates use Tera 2) is a deliberate edit here.
+    zola_series: "0.23"
   baikal:
     image: docker.io/ckulka/baikal:nginx
     port: 8080

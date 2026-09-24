@@ -17,8 +17,14 @@ from strata.core.runbooks.services.install_anythingllm import STORAGE_DIR
 # The built-in File System skill's default root is <storage>/anythingllm-fs,
 # and the agent names files relative to it, so the site is "site/..." there.
 _SITE_DIR = f"{STORAGE_DIR}/anythingllm-fs/site"
-# Beside storage, not in it: nothing the agent can write reaches nginx's config.
-_NGINX_DIR = f"{STORAGE_DIR.rsplit('/', 1)[0]}/site-nginx"
+_ROOT = STORAGE_DIR.rsplit("/", 1)[0]
+# Beside storage, not in it: nothing the agent can write reaches nginx's
+# config, the Zola skeleton the pages are built from, the builder's code, or
+# the built site nginx serves.
+_NGINX_DIR = f"{_ROOT}/site-nginx"
+_ZOLA_DIR = f"{_ROOT}/site-zola"
+_BUILD_DIR = f"{_ROOT}/site-build"
+_PUBLIC_DIR = f"{_ROOT}/site-public"
 
 
 @guard.alias("enable AnythingLLM site")
@@ -27,10 +33,17 @@ _NGINX_DIR = f"{STORAGE_DIR.rsplit('/', 1)[0]}/site-nginx"
 @guard.requires("infrastructure.enable_tailscale")
 @guard.requires("infrastructure.install_podman")
 @guard.path(_SITE_DIR, owner="diot", group="anythingllm", mode="2770")
+@guard.path(_PUBLIC_DIR, owner="diot", group="anythingllm", mode="2750")
 def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
     """Seed the site folder's README and serve the folder to the tailnet."""
     return runner.run_playbook(
         "playbooks/enable_anythingllm_site.yml",
-        extravars={"anythingllm_site_dir": _SITE_DIR, "anythingllm_site_nginx_dir": _NGINX_DIR},
+        extravars={
+            "anythingllm_site_dir": _SITE_DIR,
+            "anythingllm_site_nginx_dir": _NGINX_DIR,
+            "anythingllm_site_zola_dir": _ZOLA_DIR,
+            "anythingllm_site_build_dir": _BUILD_DIR,
+            "anythingllm_site_public_dir": _PUBLIC_DIR,
+        },
         target=target,
     )

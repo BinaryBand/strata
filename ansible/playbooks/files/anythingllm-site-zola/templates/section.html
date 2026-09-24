@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }}{% endblock title %}
+{% block dateline %}<span>{{ section.title }}</span>{% endblock dateline %}
+{% block body %}
+<section class="section">
+<h2 class="section__label">{{ section.title }}</h2>
+<ul class="archive">{% for page in section.pages %}<li class="archive__item"><a class="archive__link" href="{{ page.permalink }}">{{ page.title }}</a>{% if page.description %}<p class="archive__lead">{{ page.description }}</p>{% endif %}</li>{% endfor %}</ul>
+</section>
+{% endblock body %}

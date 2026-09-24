@@ -1,8 +1,13 @@
 ---
-# Serve the AnythingLLM agent's site folder to the tailnet over HTTPS through
-# nginx. The folder and nginx's config directory are declared in
-# enable_anythingllm_site.py and arrive as extravars; the image and ports come
-# from server_apps_defaults.
+# Build the AnythingLLM agent's site with Zola and serve it to the tailnet
+# over HTTPS through nginx. The folders are declared in
+# enable_anythingllm_site.py and arrive as extravars; the image, ports and the
+# Zola series come from server_apps_defaults.
+#
+# The agent writes small data files into its site folder; a builder service
+# (files/anythingllm-site-build/) validates them, builds the site with
+# strata's templates (files/anythingllm-site-zola/) and publishes each build
+# into the public folder as a release behind a `current` link.
 #
 # nginx, not `tailscale serve <folder>`, because only a web server can send
 # headers: Cache-Control stops browsers from reusing yesterday's front page,
@@ -21,6 +26,11 @@
     anythingllm_site_local_port: "{{ server_apps_defaults.anythingllm.site_local_port }}"
     anythingllm_site_image: "{{ server_apps_defaults.anythingllm.site_image }}"
     anythingllm_site_backend: "http://127.0.0.1:{{ anythingllm_site_local_port }}"
+    anythingllm_zola_series: "{{ server_apps_defaults.anythingllm.zola_series }}"
+    # Zola publishes a static musl build for x86_64 only.
+    anythingllm_zola_target: >-
+      {{ 'x86_64-unknown-linux-musl' if ansible_facts.architecture == 'x86_64'
+         else 'aarch64-unknown-linux-gnu' }}
 
   tasks:
     - name: Require the directory extravars
@@ -28,23 +38,225 @@
         that:
           - anythingllm_site_dir | default('') | length > 0
           - anythingllm_site_nginx_dir | default('') | length > 0
+          - anythingllm_site_public_dir | default('') | length > 0
+          - anythingllm_site_zola_dir | default('') | length > 0
+          - anythingllm_site_build_dir | default('') | length > 0
         fail_msg: >-
-          anythingllm_site_dir and anythingllm_site_nginx_dir must be set; run
-          this through the services.enable_anythingllm_site runbook.
+          The site's directory extravars must be set; run this through the
+          services.enable_anythingllm_site runbook.
 
-    # Placed once and never overwritten: the rules and the list of
-    # publications are the agent's and the user's to change from chat.
-    - name: Place the site rules and the empty list of publications
+    # The rules are placed once and then belong to the agent and the user. The
+    # format spec is strata's: it must match the builder, so it is rewritten.
+    - name: Place the site rules
       ansible.builtin.copy:
-        src: "anythingllm-site/{{ item }}"
-        dest: "{{ anythingllm_site_dir }}/{{ item }}"
+        src: anythingllm-site/README.md
+        dest: "{{ anythingllm_site_dir }}/README.md"
         force: false
         owner: "{{ diot_user }}"
         group: "{{ anythingllm_group }}"
         mode: "0660"
+
+    - name: Write the content format spec
+      ansible.builtin.copy:
+        src: anythingllm-site/FORMAT.md
+        dest: "{{ anythingllm_site_dir }}/FORMAT.md"
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0640"
+
+    # --- Zola, pinned by series -------------------------------------------
+    # The newest release in the series, checked against the SHA-256 GitHub
+    # publishes for the asset. A new patch release is picked up on the next
+    # run; moving to a new series is a deliberate edit of zola_series.
+    - name: Read Zola's releases
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/getzola/zola/releases?per_page=50
+        headers: {Accept: application/vnd.github+json}
+        return_content: true
+      register: anythingllm_zola_releases
+
+    - name: Select the newest release in the series
+      vars:
+        anythingllm_zola_tag_re: "^v{{ anythingllm_zola_series | regex_escape }}\\.[0-9]+$"
+        anythingllm_zola_release: >-
+          {{ anythingllm_zola_releases.json
+             | rejectattr('draft') | rejectattr('prerelease')
+             | selectattr('tag_name', 'match', anythingllm_zola_tag_re)
+             | first }}
+        anythingllm_zola_asset_name: "zola-{{ anythingllm_zola_release.tag_name }}-{{ anythingllm_zola_target }}.tar.gz"
+      ansible.builtin.set_fact:
+        anythingllm_zola_tag: "{{ anythingllm_zola_release.tag_name }}"
+        anythingllm_zola_asset: >-
+          {{ anythingllm_zola_release.assets | selectattr('name', 'eq', anythingllm_zola_asset_name) | first }}
+
+    - name: Require a published SHA-256 for the asset
+      ansible.builtin.assert:
+        that:
+          - (anythingllm_zola_asset.digest | default('')) is match('^sha256:[0-9a-f]{64}$')
+          - anythingllm_zola_asset.browser_download_url is match('^https://github\\.com/getzola/zola/releases/download/')
+        fail_msg: >-
+          Zola {{ anythingllm_zola_tag }} has no usable SHA-256 digest or an
+          unexpected download URL; refusing to install it.
+
+    - name: Check for this Zola version
+      ansible.builtin.stat:
+        path: "/usr/local/lib/zola/{{ anythingllm_zola_tag }}/zola"
+      register: anythingllm_zola_installed
+
+    - name: Download Zola and verify its checksum
+      ansible.builtin.get_url:
+        url: "{{ anythingllm_zola_asset.browser_download_url }}"
+        dest: "/tmp/{{ anythingllm_zola_asset.name }}"
+        checksum: "{{ anythingllm_zola_asset.digest }}"
+        mode: "0600"
+      when: not anythingllm_zola_installed.stat.exists
+
+    - name: Ensure Zola's install directory exists
+      ansible.builtin.file:
+        path: "/usr/local/lib/zola/{{ anythingllm_zola_tag }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Only the one expected member, so a crafted archive cannot place anything else.
+    - name: Unpack the zola binary
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ anythingllm_zola_asset.name }}"
+        dest: "/usr/local/lib/zola/{{ anythingllm_zola_tag }}"
+        remote_src: true
+        include: [zola]
+        owner: root
+        group: root
+      when: not anythingllm_zola_installed.stat.exists
+      notify: Restart the site builder
+
+    - name: Remove the downloaded archive
+      ansible.builtin.file:
+        path: "/tmp/{{ anythingllm_zola_asset.name }}"
+        state: absent
+
+    - name: Point /usr/local/bin/zola at this version
+      ansible.builtin.file:
+        src: "/usr/local/lib/zola/{{ anythingllm_zola_tag }}/zola"
+        dest: /usr/local/bin/zola
+        state: link
+        force: true
+      notify: Restart the site builder
+
+    # --- The builder --------------------------------------------------------
+    - name: Read this host's tailnet name for the site's links
+      ansible.builtin.command: tailscale status --json
+      register: anythingllm_site_tailnet
+      changed_when: false
+
+    - name: Ensure the skeleton and builder directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
       loop:
-        - README.md
-        - index.html
+        - "{{ anythingllm_site_zola_dir }}"
+        - "{{ anythingllm_site_zola_dir }}/templates"
+        - "{{ anythingllm_site_zola_dir }}/templates/news"
+        - "{{ anythingllm_site_build_dir }}"
+
+    # Root-owned: the agent cannot change what a page is built from.
+    - name: Install the Zola skeleton
+      ansible.builtin.copy:
+        src: "anythingllm-site-zola/{{ item }}"
+        dest: "{{ anythingllm_site_zola_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - config.toml
+        - templates/base.html
+        - templates/index.html
+        - templates/page.html
+        - templates/section.html
+        - templates/news/archive.html
+        - templates/news/components.html
+        - templates/news/edition.html
+        - templates/news/front.html
+
+    - name: Install the builder
+      ansible.builtin.copy:
+        src: "anythingllm-site-build/{{ item }}"
+        dest: "{{ anythingllm_site_build_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - build.py
+        - validate.py
+      notify: Restart the site builder
+
+    - name: Install the builder's service
+      vars:
+        anythingllm_site_cert: "{{ (anythingllm_site_tailnet.stdout | from_json).CertDomains | default([], true) | first }}"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/anythingllm-site-build.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Build the AnythingLLM agent's site with Zola whenever it changes
+
+          [Service]
+          User={{ diot_user }}
+          Group={{ anythingllm_group }}
+          ExecStart=/usr/bin/python3 {{ anythingllm_site_build_dir }}/build.py
+          Environment=SITE_SOURCE={{ anythingllm_site_dir }}
+          Environment=SITE_SKELETON={{ anythingllm_site_zola_dir }}
+          Environment=SITE_PUBLIC={{ anythingllm_site_public_dir }}
+          Environment=SITE_ZOLA=/usr/local/bin/zola
+          Environment=SITE_BASE_URL=https://{{ anythingllm_site_cert }}:{{ anythingllm_site_port }}
+          Environment=PYTHONDONTWRITEBYTECODE=1
+          UMask=0027
+          Restart=on-failure
+          # Reads everything it needs; writes only the public folder and the
+          # agent's BUILD.md; no network; no privileges to gain.
+          ProtectSystem=strict
+          ReadWritePaths={{ anythingllm_site_public_dir }} {{ anythingllm_site_dir }}
+          ProtectHome=yes
+          PrivateTmp=yes
+          PrivateNetwork=yes
+          RestrictAddressFamilies=AF_UNIX
+          NoNewPrivileges=yes
+          CapabilityBoundingSet=
+          RestrictNamespaces=yes
+          LockPersonality=yes
+          ProtectKernelTunables=yes
+          ProtectKernelModules=yes
+          ProtectControlGroups=yes
+          SystemCallArchitectures=native
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart the site builder
+
+    - name: Enable and start the builder
+      ansible.builtin.systemd_service:
+        name: anythingllm-site-build.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply a changed builder before waiting for its build
+      ansible.builtin.meta: flush_handlers
+
+    # nginx switches to the build output only once a build has published.
+    - name: Wait for a published build
+      ansible.builtin.stat:
+        path: "{{ anythingllm_site_public_dir }}/current/news/index.html"
+      register: anythingllm_site_built
+      retries: 30
+      delay: 2
+      until: anythingllm_site_built.stat.exists
 
     # Root-owned and outside the agent's folder: the agent cannot change the
     # headers. World-readable so rootless Podman, running as diot, can bind it.
@@ -82,7 +294,9 @@
           # The unprivileged image runs as uid/gid 101; mapping that onto diot
           # lets nginx read the 2770 site folder without opening it up.
           UserNS=keep-id:uid=101,gid=101
-          Volume={{ anythingllm_site_dir }}:/usr/share/nginx/html:ro
+          # The build output's parent, not a release: the builder switches the
+          # `current` link inside it, which a bind mount of a release could not follow.
+          Volume={{ anythingllm_site_public_dir }}:/usr/share/nginx/html:ro
           Volume={{ anythingllm_site_nginx_dir }}/default.conf:/etc/nginx/conf.d/default.conf:ro
           # Loopback only: the tailnet reaches it through `tailscale serve`.
           PublishPort=127.0.0.1:{{ anythingllm_site_local_port }}:8080
@@ -159,6 +373,12 @@
       when: anythingllm_site_backend not in (anythingllm_site_roots | selectattr('Proxy', 'defined') | map(attribute='Proxy') | list)
 
   handlers:
+    - name: Restart the site builder
+      ansible.builtin.systemd_service:
+        name: anythingllm-site-build.service
+        state: restarted
+        daemon_reload: true
+
     - name: Restart the site's nginx
       become_user: "{{ diot_user }}"
       environment:

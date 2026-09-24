@@ -66,6 +66,19 @@ def root(tmp_path: Path) -> Path:
         json.dumps({"mcpServers": {"memory": {"command": "npx", "env": {"KEY": SECRET}}}})
     )
     (tmp_path / "site-nginx" / "default.conf").write_text("server { listen 8080; }")
+    (tmp_path / "site-public").mkdir()
+    (tmp_path / "site-public" / "status.json").write_text(
+        json.dumps(
+            {
+                "time": "t",
+                "ok": False,
+                "release": None,
+                "editions": 2,
+                "rejected": [{"file": "news/x.toml", "reason": "<b>bad</b>"}],
+                "waiting": [],
+            }
+        )
+    )
     db = sqlite3.connect(storage / "anythingllm.db")
     db.executescript(
         f"""
@@ -105,6 +118,9 @@ def test_the_overview_shows_layout_and_status_but_no_secret(monkeypatch, root: P
         "memory",
         "sent_chat",
         "active (anythingllm.service)",
+        "Site build",
+        "FAILED",
+        "&lt;b&gt;bad&lt;/b&gt;",
     ):
         assert shown in page
     for hidden in (SECRET, CHAT, "PROMPT", "boom"):

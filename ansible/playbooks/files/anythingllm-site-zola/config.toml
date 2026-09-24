@@ -1,0 +1,28 @@
+# The Zola project for the AnythingLLM agent's site, managed by strata's
+# enable_anythingllm_site runbook. The builder copies this skeleton into a
+# fresh project on every build, adds the agent's validated content and runs
+# `zola build --base-url ...`; base_url here is only a placeholder.
+base_url = "https://example.invalid"
+title = "The Daily Seek"
+compile_sass = false
+build_search_index = false
+generate_feeds = false
+minify_html = false
+# Never run content through the template engine: Zola 0.23 templates Markdown
+# bodies by default, and a body the agent wrote must never execute template
+# code (load_data can read files and fetch URLs). The builder also rejects
+# template syntax in bodies.
+skip_content_templating = ["**"]
+
+[markdown]
+# Generic pages only; the builder rejects raw HTML in their bodies.
+smart_punctuation = true
+external_links_no_referrer = true
+external_links_target_blank = false
+
+[extra]
+tagline = "The day’s news from America, Europe & Sweden, and the world"
+regions = ["America", "Europe & Sweden", "World"]
+numbers = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+           "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
+           "Eighteen", "Nineteen", "Twenty"]

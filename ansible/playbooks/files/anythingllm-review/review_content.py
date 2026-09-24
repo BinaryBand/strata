@@ -293,6 +293,21 @@ def mcp_servers() -> str:
     return table(heads, rows or [("none", "")])
 
 
+def build_status() -> str:
+    """The site builder's last outcome, from the status file it writes."""
+    try:
+        status = json.loads((ROOT / "site-public" / "status.json").read_text())
+    except (OSError, ValueError):
+        return "<p class=muted>No build status yet.</p>"
+    result = "published" if status.get("ok") else "FAILED"
+    summary = [(status.get("time"), result, status.get("release"), status.get("editions"))]
+    skipped = [(r.get("file"), r.get("reason")) for r in status.get("rejected") or []]
+    waiting = [(w, "no edition.toml yet") for w in status.get("waiting") or []]
+    return table(["last build", "result", "release", "editions"], summary) + table(
+        ["skipped or waiting", "why"], skipped + waiting or [("none", "")]
+    )
+
+
 def service_state(unit: str) -> str:
     """`systemctl --user is-active` for one of diot's units."""
     env = {
@@ -344,6 +359,8 @@ def overview(ttl_seconds: int) -> str:
         "labelled when opened.</p>"
         "<h2>Services</h2>"
         + services()
+        + "<h2>Site build</h2>"
+        + build_status()
         + database_sections()
         + "<h2>MCP servers</h2>"
         + mcp_servers()
