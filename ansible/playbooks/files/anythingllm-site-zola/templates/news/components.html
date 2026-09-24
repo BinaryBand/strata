@@ -1,42 +1,96 @@
-{% component news_sources(sources) %}<p class="sources">Sources: {% for s in sources %}<a href="{{ s.url }}">{{ s.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endcomponent news_sources %}
+{% component news_sources(sources) %}<p class="sources">{% for s in sources %}<a href="{{ s.url }}">{{ s.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endcomponent news_sources %}
 
-{% component news_story(story, kind: string) %}
-<article class="{{ kind }}">
-{% if kind == "lead" %}<p class="kicker">{{ story.region }}</p>
-<h2 class="lead__headline"><a class="headline-link" href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></h2>
-{% else %}<h3 class="story__headline"><a class="headline-link" href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></h3>{% endif %}
-<p class="{{ kind }}__summary">{{ story.summary }}</p>
-{{<news_sources sources={story.sources} />}}
-</article>
-{% endcomponent news_story %}
+{% component news_photo(region, size: string = "wide") %}<div class="photo photo--{{ size }} photo--{{ region | slugify }}" aria-hidden="true"><span>{{ region }}</span></div>{% endcomponent news_photo %}
+
+{% component news_headline(story, tag: string = "h3") %}<{{ tag }} class="headline"><a href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></{{ tag }}>{% endcomponent news_headline %}
 
 {% component news_count(n, numbers, lower: bool = false) %}{% if n < numbers | length %}{% if lower %}{{ numbers[n] | lower }}{% else %}{{ numbers[n] }}{% endif %}{% else %}{{ n }}{% endif %}{% endcomponent news_count %}
 
-{% component news_dateline(edition, numbers) %}<span>{{ edition.extra.date | date(format="%A, %-d %B %Y") }}</span><span>{{<news_count n={edition.extra.stories | length} numbers={numbers} />}} stories from {{<news_count n={edition.extra.feeds_total} numbers={numbers} lower={true} />}} feeds</span><span>Morning edition</span>{% endcomponent news_dateline %}
+{% component news_dateline(edition, numbers) %}<span>{{ edition.extra.date | date(format="%A, %-d %B %Y") }}</span><span>Morning edition</span><span>{{<news_count n={edition.extra.stories | length} numbers={numbers} />}} stories from {{<news_count n={edition.extra.feeds_total} numbers={numbers} lower={true} />}} feeds</span>{% endcomponent news_dateline %}
+
+{% component news_ticker(edition) %}{% set stories = edition.extra.stories %}
+<div class="ticker" aria-label="Headlines">
+<p class="ticker__label">Today</p>
+<div class="ticker__viewport"><ul class="ticker__track">
+{% for story in stories %}<li><a href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></li>{% endfor %}
+{% for story in stories %}<li aria-hidden="true"><a href="{{ story.page | default(value=story.sources[0].url) }}" tabindex="-1">{{ story.title }}</a></li>{% endfor %}
+</ul></div>
+</div>
+{% endcomponent news_ticker %}
 
 {% component news_edition(edition, regions) %}
 {% set stories = edition.extra.stories %}
-{% for story in stories %}{% if story.lead %}{{<news_story story={story} kind="lead" />}}{% endif %}{% endfor %}
-{% for region in regions %}
-{% set in_region = [s for s in stories if s.region == region and not s.lead] %}
-{% if in_region | length > 0 %}
-<section class="section">
-<h2 class="section__label">{{ region }}</h2>
-<div class="columns">
-{% for story in in_region %}{{<news_story story={story} kind="story" />}}{% endfor %}
-</div>
+{% set others = [s for s in stories if not s.lead] %}
+{% set top = others[:3] %}
+{% set rest = others[3:] %}
+<div class="frontpage">
+{% for story in stories %}{% if story.lead %}
+<article class="lead">
+{{<news_photo region={story.region} size="wide" />}}
+<p class="kicker">{{ story.region }}</p>
+{{<news_headline story={story} tag="h2" />}}
+<p class="dek">{{ story.summary }}</p>
+{{<news_sources sources={story.sources} />}}
+</article>
+{% endif %}{% endfor %}
+<aside class="rail">
+{% if others | length > 0 %}
+<section class="rail__block">
+<h2 class="label">Headlines</h2>
+<ol class="ranked">{% for story in others[:5] %}<li>{{<news_headline story={story} tag="h3" />}}<p class="kicker">{{ story.region }}</p></li>{% endfor %}</ol>
 </section>
 {% endif %}
-{% endfor %}
 {% if edition.extra.briefs | length > 0 %}
-<section class="section">
-<h2 class="section__label">Also in the feeds</h2>
+<section class="rail__block">
+<h2 class="label">In brief</h2>
 <ul class="briefs">{% for line in edition.extra.briefs %}<li>{{ line }}</li>{% endfor %}</ul>
 </section>
 {% endif %}
-{% if edition.extra.feed_errors | length > 0 %}
-<aside class="notice notice--error"><p>Feed errors:</p><ul>{% for e in edition.extra.feed_errors %}<li>{{ e }}</li>{% endfor %}</ul></aside>
-{% else %}
-<aside class="notice"><p>All {{ edition.extra.feeds_total }} feeds were fetched.</p></aside>
+<section class="rail__block">
+<h2 class="label">This edition</h2>
+<ul class="tally">{% for region in regions %}{% set n = [s for s in stories if s.region == region] | length %}<li><a href="#{{ region | slugify }}">{{ region }}</a><span>{{ n }}</span></li>{% endfor %}</ul>
+</section>
+<section class="rail__block">
+<h2 class="label">Feeds</h2>
+{% if edition.extra.feed_errors | length > 0 %}<ul class="feed-errors">{% for e in edition.extra.feed_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% else %}<p class="feeds-ok">All {{ edition.extra.feeds_total }} feeds were fetched.</p>{% endif %}
+</section>
+</aside>
+</div>
+{% if top | length > 0 %}
+<section class="band">
+<h2 class="label">More top stories</h2>
+<div class="cards">
+{% for story in top %}
+<article class="card">
+{{<news_photo region={story.region} size="card" />}}
+<p class="kicker">{{ story.region }}</p>
+{{<news_headline story={story} />}}
+<p class="summary">{{ story.summary }}</p>
+{{<news_sources sources={story.sources} />}}
+</article>
+{% endfor %}
+</div>
+</section>
 {% endif %}
+<div class="desks">
+{% for region in regions %}
+{% set in_region = [s for s in rest if s.region == region] %}
+<section class="desk" id="{{ region | slugify }}">
+<h2 class="label">{{ region }}</h2>
+{% if in_region | length > 0 %}
+{% set feature = in_region | first %}
+<article class="desk__feature">
+{{<news_photo region={region} size="card" />}}
+{{<news_headline story={feature} />}}
+<p class="summary">{{ feature.summary }}</p>
+{{<news_sources sources={feature.sources} />}}
+</article>
+{% if in_region | length > 1 %}<ul class="desk__list">{% for story in in_region[1:] %}<li>{{<news_headline story={story} tag="h4" />}}{{<news_sources sources={story.sources} />}}</li>{% endfor %}</ul>{% endif %}
+{% else %}
+<p class="desk__empty">Every {{ region }} story is above.</p>
+{% endif %}
+</section>
+{% endfor %}
+</div>
 {% endcomponent news_edition %}

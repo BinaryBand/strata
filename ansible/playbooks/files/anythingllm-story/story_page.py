@@ -16,6 +16,13 @@ HEADERS = {
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
 }
+NAV = (
+    ("Front page", "/news/"),
+    ("America", "/news/#america"),
+    ("Europe & Sweden", "/news/#europe-sweden"),
+    ("World", "/news/#world"),
+    ("Archive", "/news/archive/"),
+)
 FONTS = (
     "https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500;600"
     "&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400"
@@ -26,6 +33,7 @@ FONTS = (
 def frame(title: str, dateline: str, body: str, *, refresh: str = "") -> str:
     """A whole page around `body`, already escaped; `refresh` is a URL to reload."""
     wait = f'<meta http-equiv="refresh" content="5; url={escape(refresh)}">\n' if refresh else ""
+    nav = "".join(f'<li><a href="{href}">{escape(name)}</a></li>' for name, href in NAV)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,23 +43,29 @@ def frame(title: str, dateline: str, body: str, *, refresh: str = "") -> str:
 <meta name="referrer" content="no-referrer">
 {wait}<title>{escape(title)} - The Daily Seek</title>
 <link rel="stylesheet" href="{escape(FONTS)}">
+<link rel="stylesheet" href="/news/layout.css">
 <link rel="stylesheet" href="/news/style.css">
 </head>
 <body>
-<div class="sheet">
-<header class="masthead">
-<p class="masthead__name"><a href="/news/">The Daily Seek</a></p>
-<p class="dateline"><span>{escape(dateline)}</span></p>
+<header class="site-header">
+<div class="topbar wrap"><span>{escape(dateline)}</span><span>Full story</span></div>
+<div class="masthead wrap"><p class="masthead__name"><a href="/news/">The Daily Seek</a></p></div>
+<nav class="nav-bar" aria-label="Sections"><ul class="wrap">{nav}</ul></nav>
 </header>
-<main>
+<main class="wrap">
 {body}
 </main>
-<footer class="footnotes">
+<footer class="site-footer">
+<div class="wrap">
+<div class="site-footer__about">
+<p class="site-footer__name">The Daily Seek</p>
 <p>Written on request by the AnythingLLM agent from the articles listed under Sources. \
 It can be wrong: read the originals for anything that matters.</p>
-<p class="nav"><a href="/news/">Front page</a><a href="/news/archive/">Archive</a></p>
-</footer>
 </div>
+<ul class="site-footer__links"><li><a href="/news/">Front page</a></li>\
+<li><a href="/news/archive/">Archive</a></li></ul>
+</div>
+</footer>
 </body>
 </html>
 """
@@ -78,11 +92,12 @@ def story_page(day: str, story: dict, paragraphs: list[str], notes: list[str]) -
         if notes
         else ""
     )
-    body = f"""<article class="lead">
+    body = f"""<article class="story">
+<div class="photo" aria-hidden="true"><span>{escape(story["region"])}</span></div>
 <p class="kicker">{escape(story["region"])}</p>
-<h1 class="lead__headline">{escape(story["title"])}</h1>
+<h1 class="headline">{escape(story["title"])}</h1>
 {sources(story)}
-<div class="lead__body">
+<div class="story__body">
 {text}
 </div>
 {missing}
@@ -92,11 +107,12 @@ def story_page(day: str, story: dict, paragraphs: list[str], notes: list[str]) -
 
 def waiting_page(day: str, story: dict, here: str) -> str:
     """Shown while the story is being written; reloads `here`, which never carries ?retry."""
-    body = f"""<article class="lead">
-<h1 class="lead__headline">{escape(story["title"])}</h1>
+    body = f"""<article class="story">
+<p class="kicker">{escape(story["region"])}</p>
+<h1 class="headline">{escape(story["title"])}</h1>
 <aside class="notice"><p>Writing this story from its sources. \
 This usually takes a minute or two; the page refreshes by itself.</p></aside>
-<p class="lead__summary">{escape(story["summary"])}</p>
+<p class="dek">{escape(story["summary"])}</p>
 {sources(story)}
 </article>"""
     return frame(story["title"], dateline(day), body, refresh=here)
@@ -105,11 +121,12 @@ This usually takes a minute or two; the page refreshes by itself.</p></aside>
 def fallback_page(day: str, story: dict, reason: str, retry: str | None) -> str:
     """The feed summary and links, when the story could not be written."""
     again = f' <a href="{escape(retry)}">Try again</a>.' if retry else ""
-    body = f"""<article class="lead">
-<h1 class="lead__headline">{escape(story["title"])}</h1>
+    body = f"""<article class="story">
+<p class="kicker">{escape(story["region"])}</p>
+<h1 class="headline">{escape(story["title"])}</h1>
 <aside class="notice notice--error">\
 <p>The full story could not be written: {escape(reason)}.{again}</p></aside>
-<p class="lead__summary">{escape(story["summary"])}</p>
+<p class="dek">{escape(story["summary"])}</p>
 {sources(story)}
 </article>"""
     return frame(story["title"], dateline(day), body)

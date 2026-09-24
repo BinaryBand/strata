@@ -1,4 +1,5 @@
 {% extends "base.html" %}
 {% block title %}{{ config.title }} — {{ section.extra.date | date(format="%A, %-d %B %Y") }}{% endblock title %}
 {% block dateline %}{{<news_dateline edition={section} numbers={config.extra.numbers} />}}{% endblock dateline %}
+{% block ticker %}{{<news_ticker edition={section} />}}{% endblock ticker %}
 {% block body %}{{<news_edition edition={section} regions={config.extra.regions} />}}{% endblock body %}

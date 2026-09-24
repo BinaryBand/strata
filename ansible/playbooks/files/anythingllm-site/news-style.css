@@ -1,0 +1,46 @@
+/* The Daily Seek -- colours and type. Yours to edit.
+   Layout (grid, widths, the ticker, image placeholders) lives in strata's
+   layout.css, loaded before this file; everything here is custom properties
+   and type, so a change here restyles every page without breaking the
+   layout. Before changing this file, copy it into news/previous/. */
+
+:root {
+  --paper: #f7f3ea;
+  --paper-edge: #efe9dc;
+  --ink: #17130f;
+  --ink-soft: #3f362e;
+  --ink-faint: #62574c;
+  --rule: #cdc3b1;
+  --rule-strong: #1d1813;
+  --accent: #8a2a17;
+  --tint: rgba(138, 42, 23, 0.07);
+
+  --masthead: "Playfair Display", "Bodoni 72", Didot, Georgia, serif;
+  --serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --sans: "Libre Franklin", "Franklin Gothic Medium", "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1814;
+    --paper-edge: #14110e;
+    --ink: #ece5d8;
+    --ink-soft: #cbc1b2;
+    --ink-faint: #a89c8c;
+    --rule: #3d362e;
+    --rule-strong: #d9d0c1;
+    --accent: #e0896f;
+    --tint: rgba(224, 137, 111, 0.08);
+  }
+}
+
+body {
+  font-size: 1.05rem;
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
+}
+
+.headline {
+  font-family: var(--serif);
+  letter-spacing: -0.005em;
+}

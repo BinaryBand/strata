@@ -3,7 +3,7 @@
 {% block dateline %}<span>Publications</span>{% endblock dateline %}
 {% block body %}
 <section class="section">
-<h2 class="section__label">Publications</h2>
+<h2 class="label">Publications</h2>
 <ul class="archive">
 {% for path in section.subsections %}{% set pub = get_section(path=path) %}
 <li class="archive__item"><a class="archive__link" href="{{ pub.permalink }}">{{ pub.title }}</a>{% if pub.description %}<p class="archive__lead">{{ pub.description }}</p>{% endif %}</li>

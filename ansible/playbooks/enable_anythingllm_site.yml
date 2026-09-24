@@ -56,6 +56,25 @@
         group: "{{ anythingllm_group }}"
         mode: "0660"
 
+    # The paper's colours and type: a default for a fresh install, then the
+    # agent's to edit. Layout is strata's layout.css in the skeleton.
+    - name: Ensure the news folder exists
+      ansible.builtin.file:
+        path: "{{ anythingllm_site_dir }}/news"
+        state: directory
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "2770"
+
+    - name: Place the default news stylesheet
+      ansible.builtin.copy:
+        src: anythingllm-site/news-style.css
+        dest: "{{ anythingllm_site_dir }}/news/style.css"
+        force: false
+        owner: "{{ diot_user }}"
+        group: "{{ anythingllm_group }}"
+        mode: "0660"
+
     - name: Write the content format spec
       ansible.builtin.copy:
         src: anythingllm-site/FORMAT.md
@@ -161,6 +180,8 @@
         - "{{ anythingllm_site_zola_dir }}"
         - "{{ anythingllm_site_zola_dir }}/templates"
         - "{{ anythingllm_site_zola_dir }}/templates/news"
+        - "{{ anythingllm_site_zola_dir }}/static"
+        - "{{ anythingllm_site_zola_dir }}/static/news"
         - "{{ anythingllm_site_build_dir }}"
 
     # Root-owned: the agent cannot change what a page is built from.
@@ -181,6 +202,7 @@
         - templates/news/components.html
         - templates/news/edition.html
         - templates/news/front.html
+        - static/news/layout.css
 
     - name: Install the builder
       ansible.builtin.copy:

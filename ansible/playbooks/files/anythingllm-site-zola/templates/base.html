@@ -11,22 +11,41 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500;600&amp;family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400&amp;family=Playfair+Display:wght@900&amp;display=swap">
+<link rel="stylesheet" href="{{ get_url(path='news/layout.css') }}">
 <link rel="stylesheet" href="{{ get_url(path='news/style.css') }}">
 </head>
 <body>
-<div class="sheet">
-<header class="masthead">
+<header class="site-header">
+<div class="topbar wrap">{% block dateline %}{% endblock dateline %}</div>
+<div class="masthead wrap">
 <p class="masthead__name"><a href="{{ get_url(path='news/') }}">{{ config.title }}</a></p>
 <p class="masthead__tagline">{{ config.extra.tagline }}</p>
-<p class="dateline">{% block dateline %}{% endblock dateline %}</p>
+</div>
+<nav class="nav-bar" aria-label="Sections">
+<ul class="wrap">
+<li><a href="{{ get_url(path='news/') }}">Front page</a></li>
+{% for region in config.extra.regions %}<li><a href="{{ get_url(path='news/') }}#{{ region | slugify }}">{{ region }}</a></li>{% endfor %}
+<li><a href="{{ get_url(path='news/archive/') }}">Archive</a></li>
+</ul>
+</nav>
+{% block ticker %}{% endblock ticker %}
 </header>
-<main>
+<main class="wrap">
 {% block body %}{% endblock body %}
 </main>
-<footer class="footnotes">
+<footer class="site-footer">
+<div class="wrap">
+<div class="site-footer__about">
+<p class="site-footer__name">{{ config.title }}</p>
 <p>Compiled each morning by the AnythingLLM agent from public news feeds across three regions. Summaries use only the feeds’ own text, each story lists its sources, and Swedish headlines are translated.</p>
-<p class="nav"><a href="{{ get_url(path='news/') }}">Front page</a><a href="{{ get_url(path='news/archive/') }}">Archive</a></p>
-</footer>
 </div>
+<ul class="site-footer__links">
+<li><a href="{{ get_url(path='news/') }}">Front page</a></li>
+<li><a href="{{ get_url(path='news/archive/') }}">Archive</a></li>
+<li><a href="{{ get_url(path='') }}">All publications</a></li>
+</ul>
+<p class="site-footer__credit">Layout inspired by <a href="https://uicookies.com/demo/theme/gazette/">The Gazette</a>, a free template by <a href="https://uicookies.com/">uiCookies</a>.</p>
+</div>
+</footer>
 </body>
 </html>

@@ -57,7 +57,7 @@ Text is plain text everywhere: write `<` and `&` as they are, never as HTML. The
 
 ### Look
 
-`news/style.css` is the paper's stylesheet. Before changing it, copy the current version into `news/previous/`. Every page uses the same class names, so a change applies site-wide.
+`news/style.css` is the paper's colours and type; the page layout (grid, columns, ticker, image placeholders) is fixed by the site and loads before it. Change the look through the custom properties at the top of `style.css` (`--paper`, `--ink`, `--accent`, `--rule`, `--serif`, `--sans`, `--masthead` and the rest) and through type rules on the site's classes. Before changing it, copy the current version into `news/previous/`. Every page uses the same classes, so a change applies site-wide.
 
 ## Other publications
 
