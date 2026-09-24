@@ -28,6 +28,13 @@ server_apps_defaults:
     # The agent-written site (enable_anythingllm_site), served by tailscale on
     # its own port so its pages are a separate origin from AnythingLLM's UI.
     site_port: 8443
+    # nginx serving that site on loopback, behind tailscale serve. The
+    # unprivileged build runs entirely as uid 101 (mapped onto diot), which the
+    # stock image cannot: its master must create /var/cache/nginx as root.
+    # Pinned by minor series: 1.30 is nginx's stable line, and moving on is a
+    # deliberate edit here.
+    site_local_port: 8088
+    site_image: docker.io/nginxinc/nginx-unprivileged:1.30-alpine
   baikal:
     image: docker.io/ckulka/baikal:nginx
     port: 8080

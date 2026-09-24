@@ -35,7 +35,11 @@ from tests._ansible import PLAYBOOKS_DIR
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
     "enable_anythingllm_prompt.yml": ("anythingllm_http_port", "anythingllm_site_port"),
-    "enable_anythingllm_site.yml": ("anythingllm_site_port",),
+    "enable_anythingllm_site.yml": (
+        "anythingllm_site_port",
+        "anythingllm_site_local_port",
+        "anythingllm_site_image",
+    ),
     "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),
     "install_jellyfin.yml": ("jellyfin_http_port", "jellyfin_image"),
@@ -48,7 +52,7 @@ EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
     "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_plugins_access.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_research.yml": ("anythingllm_storage_dir",),
-    "enable_anythingllm_site.yml": ("anythingllm_site_dir",),
+    "enable_anythingllm_site.yml": ("anythingllm_site_dir", "anythingllm_site_nginx_dir"),
     "install_anythingllm.yml": ("anythingllm_storage_dir", "anythingllm_container_storage_dir"),
     "install_baikal.yml": ("baikal_data_dir",),
     "install_jellyfin.yml": ("jellyfin_config_dir", "jellyfin_cache_dir"),

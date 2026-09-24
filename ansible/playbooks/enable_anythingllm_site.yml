@@ -1,11 +1,14 @@
 ---
-# Serve the AnythingLLM agent's site folder to the tailnet over HTTPS. The
-# folder is declared (and created by guard.path) in enable_anythingllm_site.py
-# and arrives as an extravar; the port comes from server_apps_defaults.
+# Serve the AnythingLLM agent's site folder to the tailnet over HTTPS through
+# nginx. The folder and nginx's config directory are declared in
+# enable_anythingllm_site.py and arrive as extravars; the image and ports come
+# from server_apps_defaults.
 #
-# The agent writes the pages; this play only places the house rules and
-# publishes the folder. tailscaled serves it as root, so the folder's
-# permissions need not open up to anyone.
+# nginx, not `tailscale serve <folder>`, because only a web server can send
+# headers: Cache-Control stops browsers from reusing yesterday's front page,
+# and a Content-Security-Policy header blocks script on every page whatever
+# the agent writes. nginx runs rootless under diot, reads the folder read-only
+# and listens on loopback; tailscale serve proxies the tailnet port to it.
 - name: Serve AnythingLLM's site folder to the tailnet
   hosts: all
   become: true
@@ -15,15 +18,19 @@
     diot_user: diot
     anythingllm_group: anythingllm
     anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
+    anythingllm_site_local_port: "{{ server_apps_defaults.anythingllm.site_local_port }}"
+    anythingllm_site_image: "{{ server_apps_defaults.anythingllm.site_image }}"
+    anythingllm_site_backend: "http://127.0.0.1:{{ anythingllm_site_local_port }}"
 
   tasks:
-    - name: Require the site directory extravar
+    - name: Require the directory extravars
       ansible.builtin.assert:
         that:
           - anythingllm_site_dir | default('') | length > 0
+          - anythingllm_site_nginx_dir | default('') | length > 0
         fail_msg: >-
-          anythingllm_site_dir must be set; run this through the
-          services.enable_anythingllm_site runbook.
+          anythingllm_site_dir and anythingllm_site_nginx_dir must be set; run
+          this through the services.enable_anythingllm_site runbook.
 
     # Placed once and never overwritten: the rules and the list of
     # publications are the agent's and the user's to change from chat.
@@ -39,45 +46,125 @@
         - README.md
         - index.html
 
+    # Root-owned and outside the agent's folder: the agent cannot change the
+    # headers. World-readable so rootless Podman, running as diot, can bind it.
+    - name: Ensure nginx's config directory exists
+      ansible.builtin.file:
+        path: "{{ anythingllm_site_nginx_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write nginx's config
+      ansible.builtin.copy:
+        src: anythingllm-site-nginx.conf
+        dest: "{{ anythingllm_site_nginx_dir }}/default.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart the site's nginx
+
+    - name: Deploy and start nginx
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ anythingllm_group }}"
+        quadlet_name: anythingllm-site
+        quadlet_extra_notify: [Restart the site's nginx]
+        quadlet_content: |
+          [Unit]
+          Description=nginx serving the AnythingLLM agent's site
+
+          [Container]
+          Image={{ anythingllm_site_image }}
+          # The unprivileged image runs as uid/gid 101; mapping that onto diot
+          # lets nginx read the 2770 site folder without opening it up.
+          UserNS=keep-id:uid=101,gid=101
+          Volume={{ anythingllm_site_dir }}:/usr/share/nginx/html:ro
+          Volume={{ anythingllm_site_nginx_dir }}/default.conf:/etc/nginx/conf.d/default.conf:ro
+          # Loopback only: the tailnet reaches it through `tailscale serve`.
+          PublishPort=127.0.0.1:{{ anythingllm_site_local_port }}:8080
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target
+
+    - name: Apply a changed config or unit before checking nginx
+      ansible.builtin.meta: flush_handlers
+
+    # Switch the tailnet port over only once nginx answers with its headers, so
+    # a broken backend leaves the previous setup serving.
+    - name: Check that nginx serves the site with its headers
+      ansible.builtin.uri:
+        url: "{{ anythingllm_site_backend }}/"
+        status_code: 200
+      register: anythingllm_site_health
+      retries: 10
+      delay: 3
+      until:
+        - anythingllm_site_health.status == 200
+        - anythingllm_site_health.cache_control | default('') == 'no-cache'
+        - "'script-src' in (anythingllm_site_health.content_security_policy | default(''))"
+
     - name: Read the tailscale serve config
       ansible.builtin.command: tailscale serve status --json
       register: anythingllm_site_serve_status
       changed_when: false
 
-    - name: Select the port's current web handlers
+    - name: Select the port's current root handler
       vars:
         anythingllm_site_serve: "{{ anythingllm_site_serve_status.stdout | default('{}', true) | from_json }}"
       ansible.builtin.set_fact:
         anythingllm_site_listener: >-
           {{ (anythingllm_site_serve.TCP | default({})).get(anythingllm_site_port | string, {}) }}
-        anythingllm_site_paths: >-
+        anythingllm_site_roots: >-
           {{ (anythingllm_site_serve.Web | default({}))
              | dict2items
              | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
              | map(attribute='value.Handlers') | map('dict2items') | flatten
              | selectattr('key', 'eq', '/')
-             | map(attribute='value.Path') | select('defined') | list }}
+             | map(attribute='value') | list }}
 
-    # A listener already on the port only counts as this play's if it serves
-    # the site folder at the root; anything else is another service's.
-    - name: Require an existing listener on the port to serve the site folder
+    # The port is this play's if its root proxies to nginx, or serves the
+    # folder directly (how this play published it before nginx). Anything else
+    # belongs to another service.
+    - name: Require an existing listener on the port to be this site's
       ansible.builtin.assert:
         that:
-          - anythingllm_site_dir in anythingllm_site_paths
+          - >-
+            (anythingllm_site_roots | selectattr('Proxy', 'defined') | map(attribute='Proxy') | list
+             + anythingllm_site_roots | selectattr('Path', 'defined') | map(attribute='Path') | list)
+            | intersect([anythingllm_site_backend, anythingllm_site_dir]) | length > 0
         fail_msg: >-
           Port {{ anythingllm_site_port }} is already served on the tailnet,
-          but not from {{ anythingllm_site_dir }} (root paths:
-          {{ anythingllm_site_paths }}). Check `tailscale serve status`,
-          remove that listener with `tailscale serve
-          --https={{ anythingllm_site_port }} off` if it is stale, then re-run.
+          but not by this site (root handlers: {{ anythingllm_site_roots }}).
+          Check `tailscale serve status`, remove that listener with `tailscale
+          serve --https={{ anythingllm_site_port }} off` if it is stale, then
+          re-run.
       when: anythingllm_site_listener | length > 0
 
-    - name: Serve the site folder to the tailnet over HTTPS
+    # One command replaces the old folder handler in place, with no gap.
+    - name: Proxy the tailnet port to nginx
       ansible.builtin.command:
         argv:
           - tailscale
           - serve
           - --bg
           - "--https={{ anythingllm_site_port }}"
-          - "{{ anythingllm_site_dir }}"
-      when: anythingllm_site_listener | length == 0
+          - "{{ anythingllm_site_backend }}"
+      when: anythingllm_site_backend not in (anythingllm_site_roots | selectattr('Proxy', 'defined') | map(attribute='Proxy') | list)
+
+  handlers:
+    - name: Restart the site's nginx
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+      ansible.builtin.systemd_service:
+        name: anythingllm-site.service
+        state: restarted
+        scope: user
+        daemon_reload: true
