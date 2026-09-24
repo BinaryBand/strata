@@ -289,3 +289,17 @@ def test_without_story_pages_headlines_keep_their_source_links(modules) -> None:
     write_edition(source, {"01-a.toml": STORY.format(lead="true", rank=1)})
     meta = front(validate.collect(source).files[f"news/{DAY}/_index.md"])
     assert "page" not in meta["extra"]["stories"][0]
+
+
+def test_an_outlet_is_listed_once_per_story(modules) -> None:
+    validate, _, source = modules
+    story = STORY.format(lead="true", rank=1).replace(
+        'sources = [{ name = "NPR", url = "https://www.npr.org/a" }]',
+        'sources = [{ name = "CBS News", url = "https://cbs.com/a" }, '
+        '{ name = "cbs news", url = "https://cbs.com/b" }, '
+        '{ name = "NPR", url = "https://cbs.com/a" }, '
+        '{ name = "BBC", url = "https://bbc.com/x" }]',
+    )
+    write_edition(source, {"01-a.toml": story})
+    meta = front(validate.collect(source).files[f"news/{DAY}/_index.md"])
+    assert [s["name"] for s in meta["extra"]["stories"][0]["sources"]] == ["CBS News", "BBC"]
