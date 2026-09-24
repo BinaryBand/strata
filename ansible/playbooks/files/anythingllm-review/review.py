@@ -7,12 +7,15 @@ serve` (root) mounts it at /review on the site's port. Tailscale stamps every
 request with the viewer's tailnet login, overwriting any login a client sends,
 and only REVIEW_LOGIN is served; everyone else gets 403.
 
-It shows the folder tree (names, sizes, owners, modes, times), the contents of
-an allowlist of non-secret files, and status read from the database -- never
-the database file, the settings file with its keys, signing keys, the MCP
-config, chat text, job prompts, job error text or fetched research pages. The
-overview is rebuilt on a request once the cached copy is a minute old.
-Standard library only.
+Five screens, laid out after a Claude Design mock-up (review_layout): an
+Overview, Skills, Scheduled tasks, Artifacts (the site's publications and
+build), and Files (one folder at a time, plus a viewer for an allowlist of
+non-secret files). Job runs are shown as safe summaries -- result, time,
+counts of files written and tools called -- never their output. Nothing
+shows the database file, the settings file with its keys, signing keys, the
+MCP config, chat text, job prompts, job error text or fetched research pages.
+Each fixed screen is rebuilt on a request once its cached copy is a minute
+old. Standard library only.
 """
 
 from __future__ import annotations
@@ -25,29 +28,54 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import review_artifacts
 import review_content as content
+import review_files
+import review_layout as ui
+import review_overview
+import review_skills
+import review_tasks
 
 LOGIN = os.environ.get("REVIEW_LOGIN", "")
 SOCKET = os.environ.get("REVIEW_SOCKET", "/run/anythingllm-review/review.sock")
 TTL_SECONDS = 60
+# The socket sees paths without /review: tailscale serve strips the prefix.
+ROUTES = {"": "overview", "/skills": "skills", "/tasks": "tasks", "/artifacts": "artifacts"}
+SCREENS = {"skills": review_skills, "tasks": review_tasks, "artifacts": review_artifacts}
+TITLES = {
+    "overview": "Overview",
+    "skills": "Skills",
+    "tasks": "Scheduled tasks",
+    "artifacts": "Artifacts",
+}
 
 
 class Cache:
-    """The overview page, rebuilt at most once per TTL however many requests arrive."""
+    """Each fixed screen, rebuilt at most once per TTL however many requests arrive."""
 
     def __init__(self) -> None:
-        """Start empty: the first request builds the page."""
+        """Start empty: the first request for a screen builds it."""
         self.lock = threading.Lock()
-        self.built = 0.0
-        self.body = ""
+        self.pages: dict[str, tuple[float, str]] = {}
 
-    def get(self) -> str:
-        """The cached page, rebuilt first when it is TTL_SECONDS old."""
+    def get(self, screen: str) -> str:
+        """The cached page for `screen`, rebuilt first when it is TTL_SECONDS old."""
         with self.lock:
-            if not self.body or time.monotonic() - self.built >= TTL_SECONDS:
-                self.body = content.overview(TTL_SECONDS)
-                self.built = time.monotonic()
-            return self.body
+            built, body = self.pages.get(screen, (0.0, ""))
+            if not body or time.monotonic() - built >= TTL_SECONDS:
+                body = render(screen)
+                self.pages[screen] = (time.monotonic(), body)
+            return body
+
+
+def render(screen: str) -> str:
+    """A fixed screen, as a whole page."""
+    prefix = content.PREFIX
+    if screen == "overview":
+        main = review_overview.screen(prefix, LOGIN)
+    else:
+        main = SCREENS[screen].screen(prefix)
+    return ui.shell(prefix, screen, TITLES[screen], LOGIN, main)
 
 
 CACHE = Cache()
@@ -85,11 +113,17 @@ class Handler(BaseHTTPRequestHandler):
         if not LOGIN or logins != [LOGIN]:
             return 403, "Forbidden."
         url = urlparse(self.path)
-        if url.path in ("", "/"):
-            return 200, CACHE.get()
+        screen = ROUTES.get(url.path.rstrip("/"))
+        if screen:
+            return 200, CACHE.get(screen)
+        path = (parse_qs(url.query).get("path") or [""])[0]
+        if url.path == "/files":
+            status, main = review_files.screen(content.PREFIX, path)
+            return status, ui.shell(content.PREFIX, "files", "Files", LOGIN, main)
         if url.path == "/file":
-            return content.file_view((parse_qs(url.query).get("path") or [""])[0])
-        return 404, "Not found."
+            status, main = review_files.file_view(content.PREFIX, path)
+            return status, ui.shell(content.PREFIX, "files", path or "File", LOGIN, main)
+        return 404, ui.shell(content.PREFIX, "", "Not found", LOGIN, "<h1>Not found</h1>")
 
     def do_GET(self) -> None:
         """Serve a page."""

@@ -76,8 +76,14 @@
         mode: "0644"
       loop:
         - review.py
+        - review_artifacts.py
         - review_content.py
+        - review_files.py
+        - review_layout.py
+        - review_overview.py
+        - review_skills.py
         - review_story.py
+        - review_tasks.py
       notify: Restart the review monitor
 
     - name: Install the monitor's service
