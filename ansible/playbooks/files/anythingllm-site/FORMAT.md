@@ -41,6 +41,10 @@ One invalid story skips its whole file, and `BUILD.md` names the story by its po
 | `rank` | 1 for the most significant; the order within each region follows it |
 | `summary` | Plain text, up to 1000 characters |
 | `sources` | 1 to 10 sources, each an outlet `name` and an `http(s)` `url`; the headline links to the first |
+| `image` | Optional. The id of a picture in `news/images/`, as the picture desk tool lists it. A story without one shows its region's illustration |
+| `image_want` | Optional. Plain text, up to 200 characters: the picture this story needed when no listed one fit well. Never shown on the page |
+
+A story whose `image` names a picture that is not in `news/images/` still runs, without the picture, and `BUILD.md` names it.
 
 ### The edition: `news/editions/YYYY-MM-DD/edition.toml`
 
@@ -55,9 +59,13 @@ briefs = ["One short line per item considered but not chosen."]
 
 Text is plain text everywhere: write `<` and `&` as they are, never as HTML. The builder escapes everything, and there is no way to add markup.
 
+### Pictures: `news/images/`
+
+The picture desk tool owns this folder: it downloads public-domain photos and writes each as `<id>.jpg`, `.png` or `.webp` with a record `<id>.toml`. Never write, move or delete files here yourself. The builder checks every photo and record again and credits each photo under it.
+
 ### Look
 
-`news/style.css` is the paper's colours and type; the page layout (grid, columns, ticker, image placeholders) is fixed by the site and loads before it. Change the look through the custom properties at the top of `style.css` (`--paper`, `--ink`, `--accent`, `--rule`, `--serif`, `--sans`, `--masthead` and the rest) and through type rules on the site's classes. Before changing it, copy the current version into `news/previous/`. Every page uses the same classes, so a change applies site-wide.
+`news/style.css` is the paper's colours and type; the page layout (grid, columns, ticker, pictures) is fixed by the site and loads before it. Change the look through the custom properties at the top of `style.css` (`--paper`, `--ink`, `--accent`, `--rule`, `--serif`, `--sans`, `--masthead` and the rest) and through type rules on the site's classes. Before changing it, copy the current version into `news/previous/`. Every page uses the same classes, so a change applies site-wide.
 
 ## Other publications
 

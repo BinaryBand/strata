@@ -10,6 +10,7 @@ set a redirect or smuggle raw HTML into a page. Standard library only.
     news/editions/YYYY-MM-DD/edition.toml   date, feeds_total, feed_errors, briefs; written
                                             last, so no half-written edition is built
     news/style.css                          the paper's colours and type
+    news/images/<id>.toml + <id>.<ext>      photos stories may name (pictures.py)
     <publication>/publication.toml          title, description
     <publication>/<slug>.md                 +++ title, description +++ Markdown body
 """
@@ -20,6 +21,7 @@ import datetime as dt
 import re
 from pathlib import Path
 
+import pictures
 from common import (
     Invalid,
     Result,
@@ -71,7 +73,11 @@ def table(value: object) -> dict:
 
 def story(data: dict) -> dict:
     """A validated story, keyed the way the templates read it."""
-    keys(data, {"headline", "region", "lead", "rank", "summary", "sources"})
+    keys(
+        data,
+        {"headline", "region", "lead", "rank", "summary", "sources"},
+        {"image", "image_want"},
+    )
     if data["region"] not in REGIONS:
         msg = f"region must be one of: {', '.join(REGIONS)}"
         raise Invalid(msg)
@@ -96,7 +102,7 @@ def story(data: dict) -> dict:
         if name.casefold() not in seen and url not in seen:  # one link per outlet
             clean_sources.append({"name": name, "url": url})
         seen |= {name.casefold(), url}
-    return {
+    found = {
         "title": text(data["headline"], "headline", 300),
         "region": data["region"],
         "lead": data["lead"],
@@ -104,6 +110,19 @@ def story(data: dict) -> dict:
         "summary": text(data["summary"], "summary", 1000),
         "sources": clean_sources,
     }
+    return found | picture_fields(data)
+
+
+def picture_fields(data: dict) -> dict:
+    """The story's picture id, unresolved; image_want is the picture desk's note, never shown."""
+    if "image_want" in data:
+        text(data["image_want"], "image_want", 200)
+    if "image" not in data:
+        return {}
+    if not isinstance(data["image"], str) or not pictures.IMAGE_ID.fullmatch(data["image"]):
+        msg = "image must be the id of a picture in news/images"
+        raise Invalid(msg)
+    return {"image": data["image"]}
 
 
 def edition_meta(data: dict, day: str) -> dict:
@@ -213,11 +232,44 @@ def edition(root: Path, day: str, result: Result, story_base: str) -> None:
     if story_base:  # the headline opens the story service's page instead of the source
         ordered = [{**s, "page": f"{story_base}/{day}/{n}"} for n, s in enumerate(ordered, 1)]
     result.stories[day] = ordered
-    result.files[f"news/{day}/_index.md"] = front_matter(
-        {"title": title, "template": "news/edition.html", "sort_by": "none"},
-        {**meta, "stories": ordered},
-    )
+    result.meta[day] = (title, meta)
     result.editions += 1
+
+
+def pictured(root: Path, result: Result) -> None:
+    """Resolve every story's image, then write each edition's page.
+
+    An image that is missing or invalid drops only the picture: the story
+    still runs, with its region's illustration, so an edition never
+    disappears because a photo did.
+    """
+    used = {s["image"] for stories in result.stories.values() for s in stories if "image" in s}
+    found = pictures.collect(root, used, result)
+    result.images = {p.file: p.data for p in found.values() if p.data}
+    for day, stories in result.stories.items():
+        for story in stories:
+            if "image" not in story:
+                continue
+            image_id = story.pop("image")
+            picture = found.get(image_id)
+            if picture is None:
+                why = (
+                    f"story {story['rank']}: image {image_id!r} is not a finished picture in "
+                    f"{pictures.FOLDER}; the story runs without it"
+                )
+                result.rejected.append((f"news/editions/{day}", why))
+                continue
+            story["image"] = {
+                "file": picture.file,
+                "credit": picture.creator,
+                "source": picture.source,
+                "license": picture.license,
+            }
+        title, meta = result.meta[day]
+        result.files[f"news/{day}/_index.md"] = front_matter(
+            {"title": title, "template": "news/edition.html", "sort_by": "none"},
+            {**meta, "stories": stories},
+        )
 
 
 def publication(root: Path, name: str, result: Result) -> None:
@@ -270,6 +322,7 @@ def collect(root: Path, story_base: str = "") -> Result:
                 result.rejected.append(
                     (f"news/editions/{day}", "edition folders are named YYYY-MM-DD")
                 )
+    pictured(root, result)
     try:
         result.css = read_no_follow(root, "news/style.css", MAX_CSS_BYTES)
     except Invalid as exc:

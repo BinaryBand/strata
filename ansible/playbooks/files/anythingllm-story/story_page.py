@@ -23,6 +23,8 @@ NAV = (
     ("World", "/news/#world"),
     ("Archive", "/news/archive/"),
 )
+# The site's region illustrations, named as Zola's slugify names them.
+REGION_SLUGS = {"America": "america", "Europe & Sweden": "europe-sweden", "World": "world"}
 FONTS = (
     "https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500;600"
     "&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400"
@@ -79,6 +81,21 @@ def sources(story: dict) -> str:
     return f'<p class="sources">Sources: {links}</p>'
 
 
+def photo(story: dict) -> str:
+    """The story's picture with its credit, or its region's illustration."""
+    image = story.get("image")
+    if image:
+        return (
+            f'<figure class="photo"><img src="/news/images/{escape(image["file"])}" alt="">'
+            f'<figcaption>Photo: <a href="{escape(image["source"])}">{escape(image["credit"])}'
+            f"</a>, {escape(image['license'])}</figcaption></figure>"
+        )
+    slug = REGION_SLUGS.get(story["region"], "world")
+    return (
+        f'<div class="photo" aria-hidden="true"><img src="/news/regions/{slug}.svg" alt=""></div>'
+    )
+
+
 def dateline(day: str) -> str:
     """The edition's date, written out."""
     return dt.date.fromisoformat(day).strftime("%A, %-d %B %Y")
@@ -93,7 +110,7 @@ def story_page(day: str, story: dict, paragraphs: list[str], notes: list[str]) -
         else ""
     )
     body = f"""<article class="story">
-<div class="photo" aria-hidden="true"><span>{escape(story["region"])}</span></div>
+{photo(story)}
 <p class="kicker">{escape(story["region"])}</p>
 <h1 class="headline">{escape(story["title"])}</h1>
 {sources(story)}

@@ -42,7 +42,7 @@ open(os.path.join(out, "index.html"), "w").write("built")
 def modules(monkeypatch, tmp_path: Path):
     """validate and build, fresh, pointed at a temporary source, skeleton and public folder."""
     monkeypatch.syspath_prepend(str(BUILDER))
-    for name in ("validate", "build"):
+    for name in ("pictures", "validate", "build"):
         sys.modules.pop(name, None)
     validate = importlib.import_module("validate")
     build = importlib.import_module("build")
