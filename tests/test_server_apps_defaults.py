@@ -34,7 +34,6 @@ from tests._ansible import PLAYBOOKS_DIR
 
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
-    "enable_anythingllm_prompt.yml": ("anythingllm_http_port", "anythingllm_site_port"),
     "enable_anythingllm_site.yml": (
         "anythingllm_site_port",
         "anythingllm_site_local_port",
@@ -42,6 +41,7 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
         "anythingllm_zola_series",
     ),
     "enable_anythingllm_story.yml": ("anythingllm_http_port", "anythingllm_site_port"),
+    "enable_anythingllm_review.yml": ("anythingllm_site_port", "anythingllm_review_port"),
     "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),
     "install_jellyfin.yml": ("jellyfin_http_port", "jellyfin_image"),
@@ -51,9 +51,7 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
 # playbook file -> vars that must arrive as extravars from the runbook, and so
 # must NOT appear in the play's own `vars:` block.
 EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
-    "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_plugins_access.yml": ("anythingllm_storage_dir",),
-    "enable_anythingllm_research.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_review.yml": ("anythingllm_root",),
     "enable_anythingllm_site.yml": (
         "anythingllm_site_dir",

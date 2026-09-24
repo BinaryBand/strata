@@ -1,29 +1,32 @@
-"""Read-only admin monitor for AnythingLLM's data folder, served at /review.
+"""Read-only admin monitor for everything the AnythingLLM agent can see, on its own origin.
 
 Deployed by strata's services.enable_anythingllm_review runbook. It listens on
 a Unix socket that only its own account and root can open -- no network port,
 so no other local process can reach it and forge a login -- and `tailscale
-serve` (root) mounts it at /review on the site's port. Tailscale stamps every
-request with the viewer's tailnet login, overwriting any login a client sends,
-and only REVIEW_LOGIN is served; everyone else gets 403.
+serve` (root) mounts it at the root of its own tailnet port, apart from the
+agent-built site. Tailscale stamps every request with the viewer's tailnet
+login, overwriting any login a client sends, and only REVIEW_LOGIN is served;
+everyone else gets 403.
 
-Five screens, laid out after a Claude Design mock-up (review_layout): an
-Overview, Skills, Scheduled tasks, Artifacts (the site's publications and
-build), and Files (one folder at a time, plus a viewer for an allowlist of
-non-secret files). Job runs are shown as safe summaries -- result, time,
-counts of files written and tools called -- never their output. Nothing
-shows the database file, the settings file with its keys, signing keys, the
-MCP config, chat text, job prompts, job error text or fetched research pages.
-Each fixed screen is rebuilt on a request once its cached copy is a minute
-old. Standard library only.
+Screens follow a Claude Design mock-up (review_layout). Each shows what the
+agent can see in full -- prompts, chats, job prompts, run output, tool
+schemas, every file in its folder -- and keeps what only the server sees in a
+part marked Admin only. Credentials never leave the monitor: settings show as
+"set", secret files as a fingerprint, and the key check (review_secrets) names
+where a stored key turns up in the agent's reach without showing it. Fixed
+screens are rebuilt on a request once their cached copy is a minute old.
+Standard library only.
 """
 
 from __future__ import annotations
 
 import os
 import socketserver
+import sys
 import threading
 import time
+import traceback
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -31,22 +34,37 @@ from urllib.parse import parse_qs, urlparse
 import review_artifacts
 import review_content as content
 import review_files
+import review_knowledge
 import review_layout as ui
 import review_overview
-import review_skills
+import review_run
 import review_tasks
+import review_thread
+import review_tools
+import review_viewer
+import review_workspace
 
 LOGIN = os.environ.get("REVIEW_LOGIN", "")
 SOCKET = os.environ.get("REVIEW_SOCKET", "/run/anythingllm-review/review.sock")
 TTL_SECONDS = 60
-# The socket sees paths without /review: tailscale serve strips the prefix.
-ROUTES = {"": "overview", "/skills": "skills", "/tasks": "tasks", "/artifacts": "artifacts"}
-SCREENS = {"skills": review_skills, "tasks": review_tasks, "artifacts": review_artifacts}
 TITLES = {
     "overview": "Overview",
-    "skills": "Skills",
+    "tools": "Tools",
     "tasks": "Scheduled tasks",
     "artifacts": "Artifacts",
+    "workspace": "Workspace",
+    "knowledge": "Knowledge",
+    "more": "More",
+}
+# The fixed screens: cached, rebuilt at most once per TTL for each workspace.
+FIXED = {
+    "": "overview",
+    "/tools": "tools",
+    "/tasks": "tasks",
+    "/artifacts": "artifacts",
+    "/workspace": "workspace",
+    "/knowledge": "knowledge",
+    "/more": "more",
 }
 
 
@@ -56,29 +74,80 @@ class Cache:
     def __init__(self) -> None:
         """Start empty: the first request for a screen builds it."""
         self.lock = threading.Lock()
-        self.pages: dict[str, tuple[float, str]] = {}
+        self.pages: dict[tuple[str, str], tuple[float, int, str]] = {}
 
-    def get(self, screen: str) -> str:
-        """The cached page for `screen`, rebuilt first when it is TTL_SECONDS old."""
+    def get(self, screen: str, slug: str = "") -> tuple[int, str]:
+        """(status, page) for `screen` in workspace `slug`, rebuilt when TTL_SECONDS old."""
         with self.lock:
-            built, body = self.pages.get(screen, (0.0, ""))
+            built, status, body = self.pages.get((screen, slug), (0.0, 0, ""))
             if not body or time.monotonic() - built >= TTL_SECONDS:
-                body = render(screen)
-                self.pages[screen] = (time.monotonic(), body)
-            return body
+                status, body = render(screen, slug)
+                self.pages[(screen, slug)] = (time.monotonic(), status, body)
+            return status, body
 
 
-def render(screen: str) -> str:
-    """A fixed screen, as a whole page."""
-    prefix = content.PREFIX
+def page_for(active: str, slug: str = "") -> ui.Page:
+    """The shell's context: the login and the selected workspace (the first when none is named)."""
+    spaces = tuple(content.workspaces())
+    ws = next((w for w in spaces if w[0] == slug), spaces[0] if spaces else None)
+    return ui.Page(content.PREFIX, LOGIN, active, ws, spaces)
+
+
+def render(screen: str, slug: str = "") -> tuple[int, str]:
+    """(status, whole page) for a fixed screen."""
+    page = page_for(screen, slug)
+    prefix, ws = content.PREFIX, page.ws[0] if page.ws else ""
+    status, main = 200, ""
     if screen == "overview":
-        main = review_overview.screen(prefix, LOGIN)
+        main = review_overview.screen(prefix, LOGIN, page.ws)
+    elif screen == "more":
+        main = review_overview.more_screen(prefix, page.ws)
+    elif screen == "tools":
+        main = review_tools.screen(prefix)
+    elif screen == "tasks":
+        main = review_tasks.screen(prefix)
+    elif screen == "artifacts":
+        main = review_artifacts.screen(prefix)
+    elif screen == "workspace":
+        status, main = review_workspace.screen(prefix, ws)
     else:
-        main = SCREENS[screen].screen(prefix)
-    return ui.shell(prefix, screen, TITLES[screen], LOGIN, main)
+        status, main = review_knowledge.screen(prefix, ws)
+    return status, ui.shell(page, TITLES[screen], main)
+
+
+def dynamic(path: str, q: Callable[[str], str]) -> tuple[int, str] | None:
+    """(status, whole page) for a page built on each request, or None for an unknown path."""
+    prefix = content.PREFIX
+    views: dict[str, tuple[str, Callable[[], tuple[int, str]]]] = {
+        "/files": (
+            "files",
+            lambda: review_files.screen(prefix, q("path"), show_all=bool(q("all"))),
+        ),
+        "/file": ("files", lambda: review_viewer.file_view(prefix, q("path"))),
+        "/run": ("tasks", lambda: review_run.run_view(prefix, q("id"), q("start"))),
+        "/thread": ("workspace", lambda: review_thread.view(prefix, q("ws"), q("id"), q("before"))),
+        "/doc": ("knowledge", lambda: review_knowledge.doc_view(prefix, q("id"))),
+        "/tasks": ("tasks", lambda: (200, review_tasks.screen(prefix, q("job")))),
+    }
+    if path not in views:
+        return None
+    active, build = views[path]
+    status, main = build()
+    title = q("path").rsplit("/", 1)[-1] or TITLES.get(active, "Files")
+    return status, ui.shell(page_for(active, q("ws")), title, main)
 
 
 CACHE = Cache()
+
+
+def answer(path: str, q: Callable[[str], str]) -> tuple[int, str]:
+    """(status, whole page) for a request that passed the login check."""
+    if q("ws") and q("ws") not in {slug for slug, _ in content.workspaces()}:
+        return 404, ui.shell(page_for(""), "Not found", ui.header("No such workspace"))
+    if path in FIXED and not (path == "/tasks" and q("job")):
+        return CACHE.get(FIXED[path], q("ws"))
+    found = dynamic(path, q)
+    return found or (404, ui.shell(page_for(""), "Not found", ui.header("Not found")))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -113,17 +182,20 @@ class Handler(BaseHTTPRequestHandler):
         if not LOGIN or logins != [LOGIN]:
             return 403, "Forbidden."
         url = urlparse(self.path)
-        screen = ROUTES.get(url.path.rstrip("/"))
-        if screen:
-            return 200, CACHE.get(screen)
-        path = (parse_qs(url.query).get("path") or [""])[0]
-        if url.path == "/files":
-            status, main = review_files.screen(content.PREFIX, path)
-            return status, ui.shell(content.PREFIX, "files", "Files", LOGIN, main)
-        if url.path == "/file":
-            status, main = review_files.file_view(content.PREFIX, path)
-            return status, ui.shell(content.PREFIX, "files", path or "File", LOGIN, main)
-        return 404, ui.shell(content.PREFIX, "", "Not found", LOGIN, "<h1>Not found</h1>")
+        query = parse_qs(url.query)
+
+        def q(name: str) -> str:
+            return (query.get(name) or [""])[0]
+
+        try:
+            return answer(url.path.rstrip("/"), q)
+        except Exception:  # noqa: BLE001 -- one broken page must not take the monitor down
+            traceback.print_exc(file=sys.stderr)
+            return 500, ui.shell(
+                page_for(""),
+                "Error",
+                ui.header("This page could not be built", "The error is in the service's journal."),
+            )
 
     def do_GET(self) -> None:
         """Serve a page."""

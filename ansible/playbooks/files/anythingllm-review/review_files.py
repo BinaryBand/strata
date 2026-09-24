@@ -1,24 +1,27 @@
-"""The Files screen: one folder at a time, and the viewer for allowlisted files.
+"""The Files screen: the agent's file folder, one folder at a time.
 
-A folder is opened one component at a time with O_NOFOLLOW, so no symlink is
-ever followed; links are listed as links. Every entry shows its name, size,
-owner, mode and time. Only files on review_content's allowlist link to the
-viewer; secret files stay name-and-size only. Standard library only.
+Everything in the agent's folder opens in the viewer, since the agent can read
+all of it. The rest of the data folder can be browsed from the Admin only
+part: there, entries show name, size, owner and mode, and only an allowlist of
+non-secret files opens. A folder is opened one component at a time with
+O_NOFOLLOW, so no symlink is ever followed; links are listed as links.
+Standard library only.
 """
 
 from __future__ import annotations
 
-import html
+import hashlib
 import os
-import pwd
 import stat
-import time
-from urllib.parse import urlencode
+from pathlib import Path
 
 import review_content as content
 import review_layout as ui
 
 MAX_LISTED = 2000
+SHOWN = 200
+SECRET_FILES = ("storage/.env",)
+SECRET_DIRS = ("storage/comkey",)
 
 
 class FolderError(Exception):
@@ -47,19 +50,6 @@ def open_folder(parts: list[str]) -> int:
     return fd
 
 
-def owner(uid: int) -> str:
-    """An account name, or the uid when unknown."""
-    try:
-        return pwd.getpwuid(uid).pw_name
-    except KeyError:
-        return str(uid)
-
-
-def link(prefix: str, route: str, rel: str, label_html: str) -> str:
-    """A link to one of the monitor's routes for the path rel."""
-    return f'<a href="{prefix}/{route}?{ui.esc(urlencode({"path": rel}))}">{label_html}</a>'
-
-
 def listing(parts: list[str]) -> list[tuple[str, os.stat_result]]:
     """(name, lstat) for each entry of the folder, folders first, bounded."""
     fd = open_folder(parts)
@@ -80,109 +70,151 @@ def listing(parts: list[str]) -> list[tuple[str, os.stat_result]]:
     return sorted(found, key=lambda e: (not stat.S_ISDIR(e[1].st_mode), e[0]))
 
 
-def row(prefix: str, rel: str, name: str, st: os.stat_result) -> list[str]:
-    """One entry's cells: linked name, size, owner and mode, changed."""
-    path = f"{rel}/{name}" if rel else name
-    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
-    meta = ui.esc(f"{owner(st.st_uid)} · {stat.filemode(st.st_mode)}")
+def count(parts: list[str]) -> int:
+    """How many entries a folder holds, or 0 when it cannot be read."""
+    try:
+        fd = open_folder(parts)
+    except FolderError:
+        return 0
+    try:
+        return len(os.listdir(fd))  # noqa: PTH208
+    except OSError:
+        return 0
+    finally:
+        os.close(fd)
+
+
+def entry_row(prefix: str, parts: list[str], name: str, st: os.stat_result) -> str:
+    """One entry as a row: folders and viewable files link, links are never followed."""
+    rel = "/".join([*parts, name])
+    changed = content.day_time(st.st_mtime * 1000)
+    agent = content.in_agent_dir(rel)
+    extra = "" if agent else f" · {content.owner(st)} · {stat.filemode(st.st_mode)}"
     if stat.S_ISLNK(st.st_mode):
-        note = "<span class=small>(link, not followed)</span>"
-        label = f"{ui.icon('file', '#5E5D59')} {ui.esc(name)} {note}"
-        return [label, "", meta, ui.esc(when)]
+        return ui.row(name, f"link, not followed{extra}")
     if stat.S_ISDIR(st.st_mode):
-        label = link(
-            prefix, "files", path, f"{ui.icon('files', '#B8532F')} <strong>{ui.esc(name)}</strong>"
+        items = count([*parts, name])
+        return ui.row(
+            f"{name}/",
+            f"{items} item{'s' * (items != 1)} · {changed}{extra}",
+            "",
+            ui.href(prefix, "files", path=rel),
         )
-        return [label, "folder", meta, ui.esc(when)]
-    label = f"{ui.icon('file', '#5E5D59')} {ui.esc(name)}"
-    if content.viewable(path):
-        label = link(prefix, "file", path, label)
-    return [label, ui.esc(f"{st.st_size:,} B"), meta, ui.esc(when)]
-
-
-def folder_nav(prefix: str, parts: list[str], children: list[str]) -> str:
-    """The folder column: every folder on the way down, then this folder's subfolders."""
-    items = [link(prefix, "files", "", "srv/anythingllm")]
-    for depth, name in enumerate(parts, 1):
-        on = ' class="on"' if depth == len(parts) else ""
-        target = "/".join(parts[:depth])
-        items.append(
-            link(prefix, "files", target, ui.esc(name)).replace(
-                "<a ", f'<a{on} style="padding-left:{10 + 18 * depth}px" ', 1
-            )
-        )
-    base = "/".join(parts)
-    for name in children:
-        target = f"{base}/{name}" if base else name
-        items.append(
-            link(prefix, "files", target, ui.esc(name)).replace(
-                "<a ", f'<a style="padding-left:{10 + 18 * (len(parts) + 1)}px" ', 1
-            )
-        )
-    return f'<section class="card folders" aria-label="Folders">{"".join(items)}</section>'
+    kind = rel[rel.rfind(".") + 1 :].upper() if "." in name else "File"
+    sub = f"{kind} · {content.size_text(st.st_size)} · {changed}{extra}"
+    pill = ui.pill("Agent-written", "accent") if content.AGENT_WRITTEN.fullmatch(rel) else ""
+    if content.viewable(rel):
+        return ui.row(name, sub, pill, ui.href(prefix, "file", path=rel))
+    return ui.row(name, sub, ui.pill("Name and size only"))
 
 
 def crumbs(prefix: str, parts: list[str]) -> str:
-    """The breadcrumb from the root to this folder."""
-    trail = [link(prefix, "files", "", "srv/anythingllm")]
+    """The trail from the agent folder, or from the data folder when outside it."""
+    agent = content.AGENT_DIR.split("/")
+    start = len(agent) if parts[: len(agent)] == agent else 0
+    first = ("agent folder", content.AGENT_DIR) if start else ("data folder", "")
+    trail = [f'<a href="{ui.href(prefix, "files", path=first[1])}">{ui.esc(first[0])}</a>']
     trail += [
-        link(prefix, "files", "/".join(parts[: i + 1]), ui.esc(p)) for i, p in enumerate(parts)
+        f'<a href="{ui.href(prefix, "files", path="/".join(parts[: i + 1]))}">{ui.esc(p)}</a>'
+        for i, p in enumerate(parts[start:], start)
     ]
-    return ' <span aria-hidden="true">&rsaquo;</span> '.join(trail)
+    return '<div class="crumb">' + " &rsaquo; ".join(trail) + "</div>"
 
 
-def screen(prefix: str, rel: str) -> tuple[int, str]:
-    """(status, main markup) for the folder rel under ROOT."""
+def fingerprint(rel: str) -> str:
+    """'sha256:3f9a…c21e' for a file, read without following links."""
+    try:
+        data, _ = content.read_bytes(rel, 1024 * 1024)
+    except content.ViewError:
+        return "unreadable"
+    digest = hashlib.sha256(data).hexdigest()
+    return f"sha256:{digest[:4]}…{digest[-4:]}"
+
+
+def folder_size(top: str) -> int:
+    """Bytes in regular files under ROOT/top, links never followed, bounded."""
+    total, seen = 0, 0
+    for dirpath, _, filenames in os.walk(content.ROOT / top, followlinks=False):
+        for name in filenames:
+            seen += 1
+            if seen > 50_000:  # noqa: PLR2004
+                return total
+            try:
+                st = (Path(dirpath) / name).lstat()
+            except OSError:
+                continue
+            total += st.st_size if stat.S_ISREG(st.st_mode) else 0
+    return total
+
+
+def admin_part(prefix: str) -> str:
+    """Secret files by fingerprint, the agent folder's size, and the whole data folder."""
+    secret = list(SECRET_FILES)
+    for top in SECRET_DIRS:
+        try:
+            secret += [f"{top}/{n}" for n in sorted(os.listdir(content.ROOT / top))]  # noqa: PTH208
+        except OSError:
+            continue
+    items = []
+    for rel in secret:
+        try:
+            st = (content.ROOT / rel).lstat()
+        except OSError:
+            continue
+        items.append(
+            ui.row(
+                rel.removeprefix("storage/"),
+                f"{content.size_text(st.st_size)} · fingerprint {fingerprint(rel)}",
+            )
+        )
+    items.append(ui.row("Agent folder size", content.size_text(folder_size(content.AGENT_DIR))))
+    items.append(
+        ui.row(
+            "The whole data folder",
+            "Names, sizes, owners and modes; only non-secret files open",
+            ui.icon("chevron"),
+            ui.href(prefix, "files", path="-"),
+        )
+    )
+    return ui.admin(ui.rows(items))
+
+
+def screen(prefix: str, rel: str, *, show_all: bool = False) -> tuple[int, str]:
+    """(status, main markup) for a folder: the agent's by default, '-' for the data folder."""
+    rel = "" if rel == "-" else rel or content.AGENT_DIR
     try:
         parts = parts_of(rel)
         entries = listing(parts)
     except FolderError:
-        return 404, ui.header(prefix, "Files", "That folder cannot be shown.")
-    base = "/".join(parts)
-    children = [n for n, st in entries if stat.S_ISDIR(st.st_mode)]
-    table = ui.grid_table(
-        "1fr 110px 170px 150px",
-        ["Name", "Size", "Owner · mode", "Changed"],
-        [row(prefix, base, name, st) for name, st in entries] or [["Empty folder", "", "", ""]],
-        framed=False,
-    )
-    return 200, (
-        ui.header(
-            prefix,
-            "Files",
-            "Browse the AnythingLLM folders. Allowlisted files open in the viewer; "
-            "secret files show their name and size only.",
-            f'<span class="muted">{len(entries)} items here</span>',
+        return 404, ui.header("Files", "That folder cannot be shown.")
+    agent = content.in_agent_dir(rel + "/")
+    shown = entries if show_all else entries[:SHOWN]
+    more = (
+        ui.more(
+            ui.href(prefix, "files", path=rel or "-", all=1),
+            f"Show {len(entries) - len(shown)} more",
         )
-        + f'<div class="files">{folder_nav(prefix, parts, children)}'
-        + '<div class="stack" style="gap:20px;min-width:0"><section class="card">'
-        + '<div class="crumb" style="padding:14px 20px;border-bottom:1px solid var(--soft)">'
-        + f"{crumbs(prefix, parts)}</div>"
-        + table
-        + "</section></div></div>"
-    )
-
-
-def file_view(prefix: str, rel: str) -> tuple[int, str]:
-    """(status, main markup) for the viewer: an allowlisted file's text, escaped."""
-    try:
-        text = content.read_allowed(rel)
-    except content.ViewError as exc:
-        return exc.status, ui.header(prefix, "Files", str(exc))
-    if rel.endswith("/plugin.json"):
-        text = content.redact_manifest(text)
-    note = (
-        '<p class="agent">Written by the AI agent: this is its text, not the monitor\'s.</p>'
-        if content.AGENT_WRITTEN.fullmatch(rel)
+        if len(shown) < len(entries)
         else ""
     )
-    parts = [p for p in rel.split("/") if p]
+    lede = (
+        "The agent&rsquo;s file folder. Open any file to read it."
+        if agent
+        else f"The data folder outside the agent&rsquo;s reach. {ui.pill('Admin only', 'admin')}"
+    )
+    how = ui.card(
+        "How files open",
+        "<div>"
+        + ui.kv("Text and Markdown", "Shown as written")
+        + ui.kv("TOML and JSON", "Formatted")
+        + ui.kv("Anything else", "Size, type and the first bytes in hex")
+        + "</div>",
+    )
     return 200, (
-        ui.header(prefix, parts[-1] if parts else "File", "View only.")
-        + f'<div class="crumb">{crumbs(prefix, parts[:-1])}</div>{note}'
-        + '<section class="card"><div class="sechead" style="padding:14px 20px;'
-        f'border-bottom:1px solid var(--soft)"><span style="font-weight:500">{ui.esc(rel)}</span>'
-        f'<span class="small">{len(text):,} characters</span></div>'
-        '<pre class="log" style="margin:0;border-radius:0 0 16px 16px">'
-        f"{html.escape(text)}</pre></section>"
+        ui.header("Files", lede)
+        + crumbs(prefix, parts)
+        + ui.rows([entry_row(prefix, parts, n, st) for n, st in shown], "Empty folder.")
+        + more
+        + (how if agent else "")
+        + admin_part(prefix)
     )

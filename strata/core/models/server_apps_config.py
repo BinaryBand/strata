@@ -55,6 +55,7 @@ class AnythingLlmDefaults(BaseModel):
     image: str = "docker.io/mintplexlabs/anythingllm:1.16"
     port: int = 3001
     site_port: int = 8443
+    review_port: int = 8444
     site_local_port: int = 8088
     site_image: str = "docker.io/nginxinc/nginx-unprivileged:1.30-alpine"
     zola_series: str = "0.23"

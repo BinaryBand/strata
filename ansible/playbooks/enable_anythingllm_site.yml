@@ -45,17 +45,6 @@
           The site's directory extravars must be set; run this through the
           services.enable_anythingllm_site runbook.
 
-    # The rules are placed once and then belong to the agent and the user. The
-    # format spec is strata's: it must match the builder, so it is rewritten.
-    - name: Place the site rules
-      ansible.builtin.copy:
-        src: anythingllm-site/README.md
-        dest: "{{ anythingllm_site_dir }}/README.md"
-        force: false
-        owner: "{{ diot_user }}"
-        group: "{{ anythingllm_group }}"
-        mode: "0660"
-
     # The paper's colours and type: a default for a fresh install, then the
     # agent's to edit. Layout is strata's layout.css in the skeleton.
     - name: Ensure the news folder exists
@@ -75,6 +64,9 @@
         group: "{{ anythingllm_group }}"
         mode: "0660"
 
+    # The format spec describes what the validator accepts, so it is strata's
+    # and rewritten on every run; the rest of the agent's folder is seeded
+    # elsewhere and then belongs to the agent and the user.
     - name: Write the content format spec
       ansible.builtin.copy:
         src: anythingllm-site/FORMAT.md

@@ -8,7 +8,7 @@
 #
 # The account is whoever strata logs in as, read at run time, so no account
 # name is written into this repository. Skills written this way skip the
-# strata-workshop review: they run as soon as they are switched on.
+# workshop review: they run as soon as they are switched on.
 - name: Grant the operator account access to AnythingLLM's plugins folder
   hosts: all
   become: true

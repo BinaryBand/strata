@@ -1,31 +1,30 @@
-"""The Overview screen: health at a glance, then a section per screen.
+"""The Overview screen: what the agent can see, at a glance.
 
-The greeting names the one tailnet login the monitor serves. "More details"
-keeps what the plain monitor showed -- services, workspaces, settings with
-their values hidden, recent events, MCP server names -- none of it chat text,
-prompts or keys. Standard library only.
+The greeting names the one tailnet login the monitor serves. Below it: the key
+check (review_secrets), the model, each scheduled task's latest run, the last
+site build, and counts of skills, documents and memories. Service states and
+disk use are the server's, so they are Admin only. Standard library only.
 """
 
 from __future__ import annotations
 
-import json
-import stat
+import shutil
 import time
-from urllib.parse import urlencode
 
 import review_artifacts
 import review_content as content
 import review_layout as ui
-import review_skills
+import review_secrets
 import review_tasks
+import review_tools
 
-UNITS = ("anythingllm.service", "anythingllm-site.service")  # the diot user's units
-WORKSPACES_SQL = (
-    "select w.name, w.slug, count(c.id), max(c.createdAt) from workspaces w "
-    "left join workspace_chats c on c.workspaceId = w.id group by w.id order by w.name"
+# (label, unit, is a user unit of diot's)
+SERVICES = (
+    ("AnythingLLM server", "anythingllm.service", True),
+    ("Site web server", "anythingllm-site.service", True),
+    ("Site builder", "anythingllm-site-build.service", False),
+    ("Story service", "anythingllm-story.service", False),
 )
-SETTINGS_SQL = "select label, value from system_settings order by label"
-EVENTS_SQL = "select event, occurredAt from event_logs order by id desc limit 30"
 
 
 def greeting(login: str) -> str:
@@ -35,131 +34,183 @@ def greeting(login: str) -> str:
     return f"Good {part}, {login.split('@', maxsplit=1)[0] or 'there'}"
 
 
-def hello(prefix: str, login: str, jobs: list[review_tasks.Job]) -> str:
-    """The centred header: instance state, task state, refresh link."""
+def key_check(prefix: str) -> tuple[str, str]:
+    """(status-line markup, alert markup) for the key check."""
+    findings = review_secrets.check()
+    if not findings:
+        return (
+            f'<span class="okline">{ui.icon("check", 16)}'
+            "No keys found in the agent&rsquo;s reach</span>",
+            "",
+        )
+    items = []
+    for f in findings[:10]:
+        at = f", line {f.line}" if f.line else ""
+        link = (
+            f' <a class="more" href="{ui.href(prefix, "file", path=f.path)}">Open the file</a>'
+            if f.path and content.viewable(f.path)
+            else ""
+        )
+        items.append(
+            f"<span>Found in {ui.mono(f.where)}{ui.esc(at)}. It matches the stored value of "
+            f"{ui.mono(f.setting)}.{link}</span>"
+        )
+    more = f"<span>And {len(findings) - 10} more places.</span>" if len(findings) > 10 else ""  # noqa: PLR2004
+    alert = ui.alert(
+        "bad",
+        "<strong>A key from settings appears where the agent can read it. Rotate it.</strong>"
+        + "".join(items)
+        + more
+        + "<span>The value itself is never shown here.</span>",
+    )
+    return (
+        f'<span style="color:var(--badfg)">{ui.icon("alert", 16)}'
+        "Key found in the agent&rsquo;s reach</span>",
+        alert,
+    )
+
+
+def model_card(prefix: str, ws: tuple[str, str] | None) -> str:
+    """The system model: what every job and, unless overridden, every chat uses."""
+    provider, model, thinking = content.model()
+    link = (
+        f'<a href="{ui.href(prefix, "workspace", ws=ws[0])}" style="color:inherit">Workspace</a>'
+        if ws
+        else ""
+    )
+    return ui.card(
+        "Model",
+        "<div>"
+        + ui.kv("Provider", ui.esc(provider))
+        + ui.kv("Model", ui.mono(model))
+        + ui.kv("Type", "Thinking model" if thinking else "Model")
+        + ui.kv("Used for", "Every scheduled task, and chat unless a workspace sets its own")
+        + "</div>",
+        link,
+    )
+
+
+def build_card(prefix: str) -> str:
+    """The site builder's last outcome."""
+    status = review_artifacts.build_status()
+    if not status:
+        return ui.card("Site build", '<span class="muted">No build yet.</span>')
+    rejected = content.as_list(status.get("rejected"))
+    waiting = content.as_list(status.get("waiting"))
+    stamp = str(status.get("time") or "")
+    tiles = [
+        ui.stat("Last build", stamp[11:16] or "--", stamp[:10]),
+        ui.stat("Editions built", status.get("editions") or 0),
+        ui.stat("Files skipped", len(rejected), f"{len(waiting)} waiting" if waiting else ""),
+    ]
+    report = ui.more(
+        ui.href(prefix, "file", path=f"{content.AGENT_DIR}/site/BUILD.md"), "See the build report"
+    )
+    ok = status.get("ok") is True
+    return ui.card(
+        "Site build · The Daily Seek",
+        ui.stats(tiles) + report,
+        ui.pill("Built", "ok") if ok else ui.pill("Failed", "bad"),
+    )
+
+
+def counts() -> str:
+    """Skills on, documents embedded and memories saved."""
+    skills = [s for s in review_tools.skills() if s.on]
+    custom = sum(1 for s in skills if s.source != "Built-in")
+    docs = content.rows("select count(*) from workspace_documents")
+    mems = content.rows("select count(*) from memories")
+    n_docs = docs[0][0] if docs else 0
+    n_mems = mems[0][0] if mems else 0
+    return ui.stats(
+        [
+            ui.stat("Skills", len(skills), f"{custom} custom, {len(skills) - custom} built-in"),
+            ui.stat("Documents", n_docs, "none embedded yet" if not n_docs else "embedded"),
+            ui.stat("Memories", n_mems, "none saved yet" if not n_mems else "saved"),
+        ]
+    )
+
+
+def admin_part() -> str:
+    """Service states and disk use."""
+    items = []
+    for label, unit, user in SERVICES:
+        state = content.service_state(unit, user=user)
+        kind = "ok" if state == "active" else "" if state == "inactive" else "warn"
+        items.append(
+            ui.row(
+                label,
+                unit,
+                ui.pill({"active": "Running", "inactive": "Idle"}.get(state, state), kind),
+            )
+        )
+    try:
+        disk = shutil.disk_usage(content.ROOT)
+        items.append(
+            ui.row("Storage", f"{content.size_text(disk.used)} of {content.size_text(disk.total)}")
+        )
+    except OSError:
+        pass
+    return ui.admin(ui.rows(items))
+
+
+def screen(prefix: str, login: str, ws: tuple[str, str] | None) -> str:
+    """The Overview screen."""
     state = content.service_state("anythingllm.service")
     online = state == "active"
-    look = sum(1 for j in jobs if j.runs and not j.runs[0].ok)
-    tasks = (
-        "All tasks ran as expected"
-        if not look
-        else f"{look} task{' needs' if look == 1 else 's need'} a look"
-    )
-    chip = (
-        f'<span class="chip"><span class="dot{"" if online else " bad"}"></span>'
-        f"Instance {'online' if online else ui.esc(state)}</span>"
-    )
-    return (
-        f'<header class="hello"><h1>{ui.esc(greeting(login))}</h1><div class="status">{chip}'
-        f"<span>{ui.esc(tasks)} · checked {time.strftime('%H:%M')}</span>"
-        f'<a class="icon-btn" href="{prefix}/" aria-label="Refresh">{ui.icon("refresh")}</a>'
-        "</div></header>"
-    )
-
-
-def section(prefix: str, path: str, title: str, aside: str, body: str) -> str:
-    """One Overview section: linked heading, a note on the right, the body."""
-    return (
-        f'<section class="sec"><div class="sechead"><h2><a href="{prefix}/{path}">'
-        f'{ui.esc(title)}</a></h2><span class="muted">{aside}</span></div>{body}</section>'
-    )
-
-
-def root_rows(prefix: str) -> str:
-    """The top-level folders of the AnythingLLM root, each a link into Files."""
-    try:
-        names = sorted(p.name for p in content.ROOT.iterdir())
-    except OSError:
-        return '<div class="row small">The folder cannot be read.</div>'
-    rows = []
-    for name in names:
-        try:
-            st = (content.ROOT / name).lstat()
-        except OSError:
-            continue
-        if stat.S_ISDIR(st.st_mode):
-            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
-            rows.append(
-                f'<a class="row" href="{prefix}/files?{ui.esc(urlencode({"path": name}))}" '
-                'style="text-decoration:none">'
-                f'{ui.icon("files", "#B8532F")}<span class="grow" style="font-weight:500">'
-                f'{ui.esc(name)}</span><span class="small">{ui.esc(when)}</span></a>'
-            )
-    return "".join(rows)
-
-
-def shown_setting(row: tuple) -> tuple:
-    """A settings row with its value hidden unless it is on the allowlist."""
-    if len(row) > 1 and row[0] not in content.SETTING_VALUES:
-        return (row[0], "(not shown)")
-    return row
-
-
-def mcp_rows() -> list[tuple]:
-    """MCP server names and autoStart only: the config itself can hold keys."""
-    try:
-        path = content.ROOT / "storage" / "plugins" / "anythingllm_mcp_servers.json"
-        servers = json.loads(path.read_text()).get("mcpServers") or {}
-    except (OSError, ValueError, AttributeError):
-        return [("no MCP config", "")]
-    rows = [(n, (s.get("anythingllm") or {}).get("autoStart", True)) for n, s in servers.items()]
-    return rows or [("none", "")]
-
-
-def details() -> str:
-    """The plain monitor's remaining tables, folded away."""
-    tables = (
-        (
-            "Services",
-            ["service (diot user)", "state"],
-            [(u, content.service_state(u)) for u in UNITS],
-        ),
-        ("Workspaces", ["name", "slug", "chats", "last chat"], content.rows(WORKSPACES_SQL)),
-        ("Settings", ["label", "value"], [shown_setting(r) for r in content.rows(SETTINGS_SQL)]),
-        ("Recent events", ["event", "at"], content.rows(EVENTS_SQL)),
-        ("MCP servers (config not shown: it can hold keys)", ["name", "autoStart"], mcp_rows()),
-    )
-    body = "".join(
-        f'<h3 style="font-size:15px;margin:16px 0 6px">{ui.esc(title)}</h3>'
-        + ui.plain_table(heads, rows or [("none",)])
-        for title, heads, rows in tables
-    )
-    return f'<details class="card pad"><summary>More details</summary>{body}</details>'
-
-
-def screen(prefix: str, login: str) -> str:
-    """The Overview screen."""
-    jobs = review_tasks.jobs()
-    skills = review_skills.skills()
-    pubs = review_artifacts.publications()
-    on = sum(1 for s in skills if s.on)
-    skill_rows = "".join(review_skills.row(s, prefix) for s in skills[:6])
-    task_cards = "".join(review_tasks.card(j) for j in jobs) or (
-        '<div class="card pad small">No scheduled tasks.</div>'
-    )
-    art_cards = "".join(review_artifacts.card(p) for p in pubs[:3]) or (
-        '<div class="card pad small">Nothing is published yet.</div>'
+    keys, alert = key_check(prefix)
+    where = f" in <strong>{ui.esc(ws[1])}</strong>" if ws else ""
+    status = (
+        '<div class="status">'
+        f'<span style="color:var({"--okdot" if online else "--badfg"})">{ui.icon("dot", 12)}'
+        '<span style="color:var(--ink2)">'
+        f"Instance {'online' if online else ui.esc(state)}</span></span>"
+        f"<span>Checked {time.strftime('%H:%M')}</span>{keys}</div>"
     )
     return (
-        hello(prefix, login, jobs)
-        + section(
-            prefix,
-            "skills",
-            "Skills",
-            f"{on} of {len(skills)} on",
-            f'<div class="card">{skill_rows}</div>',
+        ui.header(greeting(login), f"What the agent{where} can see.")
+        + status
+        + alert
+        + model_card(prefix, ws)
+        + "".join(review_tasks.overview_card(prefix, j) for j in review_tasks.jobs(runs=14))
+        + build_card(prefix)
+        + counts()
+        + admin_part()
+    )
+
+
+def more_screen(prefix: str, ws: tuple[str, str] | None) -> str:
+    """The phone's More tab: the screens without a tab of their own."""
+    instance = ui.rows(
+        [
+            ui.row(
+                "Artifacts",
+                "The Daily Seek, research runs, /story",
+                ui.icon("chevron"),
+                ui.href(prefix, "artifacts"),
+            ),
+            ui.row(
+                "Files", "The agent's file folder", ui.icon("chevron"), ui.href(prefix, "files")
+            ),
+        ]
+    )
+    own = (
+        ui.rows(
+            [
+                ui.row(
+                    "Knowledge",
+                    "Documents and memories",
+                    ui.icon("chevron"),
+                    ui.href(prefix, "knowledge", ws=ws[0]),
+                )
+            ]
         )
-        + section(prefix, "tasks", "Scheduled tasks", "", f'<div class="grid2">{task_cards}</div>')
-        + section(
-            prefix,
-            "artifacts",
-            "Artifacts",
-            f"{len(pubs)} published",
-            f'<div class="grid3">{art_cards}</div>'
-            '<div class="small">Each card opens the live page in a new tab.</div>',
-        )
-        + section(prefix, "files", "Files", "", f'<div class="card">{root_rows(prefix)}</div>')
-        + details()
-        + '<div class="small" style="text-align:center">This page is view only. '
-        "Changes happen in AnythingLLM itself.</div>"
+        if ws
+        else ""
+    )
+    return (
+        ui.header("More", f"Everything else{' in ' + ui.esc(ws[1]) if ws else ''}.")
+        + '<div class="muted">Whole instance</div>'
+        + instance
+        + (f'<div class="muted">{ui.esc(ws[1])}</div>' + own if ws else "")
     )

@@ -4,7 +4,7 @@ Custom skills, agent flows and the MCP config live in storage/plugins. This
 grants the account strata connects as read-write ACLs there, and only
 traverse on the folders above it, with "other" access stripped from the rest
 of storage so traversal cannot reach the chat database or the .env holding the
-provider API keys. Skills written this way skip the strata-workshop review.
+provider API keys. Skills written this way skip the workshop review.
 """
 
 from strata.core import guard

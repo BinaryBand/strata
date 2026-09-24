@@ -1,10 +1,12 @@
-"""The Artifacts screen: what the site publishes, the last build, and /story's sources.
+"""The Artifacts screen: what the agent publishes, its research runs, and /story's sources.
 
-Publications are the top-level folders of the live site release that nginx
-serves (site-public/current), which /review shares a port with, so each card
-links straight to the page. Titles come from the agent's publication.toml,
-parsed as data; nothing is followed through a symlink except `current`
-itself, which must point at a release folder. Standard library only.
+Publications are the top-level folders of the live site release
+(site-public/current), served on the site's own origin, so each card links
+there in a new tab. Titles come from the agent's publication.toml, parsed as
+data; nothing is followed through a symlink except `current` itself, which
+must point at a release folder. A research run passed when the research skill
+published its report into the agent's folder. The event log is the server's,
+so it is Admin only. Standard library only.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ import review_story
 
 MAX_FILES = 5000
 RELEASE = re.compile(r"releases/[0-9A-Za-z]{1,40}")
-DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+RUNS = "storage/research-runs"
+TITLE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 
 
 @dataclass
@@ -31,8 +34,7 @@ class Publication:
 
     slug: str
     title: str
-    files: int
-    size: int
+    pages: int
     updated: float
 
 
@@ -46,21 +48,23 @@ def release() -> Path | None:
     return content.ROOT / "site-public" / target if RELEASE.fullmatch(target) else None
 
 
-def measure(folder: Path) -> tuple[int, int, float]:
-    """(files, bytes, newest mtime) under folder, without following links, bounded."""
-    files, size, newest = 0, 0, 0.0
+def measure(folder: Path) -> tuple[int, float]:
+    """(HTML pages, newest mtime) under folder, without following links, bounded."""
+    pages, newest, seen = 0, 0.0, 0
     for dirpath, dirnames, filenames in os.walk(folder, followlinks=False):
         dirnames.sort()
         for name in filenames:
-            if files >= MAX_FILES:
-                return files, size, newest
+            seen += 1
+            if seen > MAX_FILES:
+                return pages, newest
             try:
                 st = (Path(dirpath) / name).lstat()
             except OSError:
                 continue
             if stat.S_ISREG(st.st_mode):
-                files, size, newest = files + 1, size + st.st_size, max(newest, st.st_mtime)
-    return files, size, newest
+                pages += name.endswith(".html")
+                newest = max(newest, st.st_mtime)
+    return pages, newest
 
 
 def title_of(slug: str) -> str:
@@ -68,15 +72,11 @@ def title_of(slug: str) -> str:
     if slug == "news":
         return "The Daily Seek"
     try:
-        fd = content.open_no_follow(f"storage/anythingllm-fs/site/{slug}/publication.toml")
-    except OSError:
+        data, _ = content.read_bytes(f"{content.AGENT_DIR}/site/{slug}/publication.toml", 16 * 1024)
+        parsed = tomllib.loads(data.decode("utf-8", errors="replace"))
+    except (content.ViewError, tomllib.TOMLDecodeError):
         return slug
-    with os.fdopen(fd, "rb") as handle:
-        try:
-            data = tomllib.loads(handle.read(16 * 1024).decode("utf-8", errors="replace"))
-        except tomllib.TOMLDecodeError:
-            return slug
-    title = data.get("title")
+    title = parsed.get("title")
     return str(title)[:200] if isinstance(title, str) and title.strip() else slug
 
 
@@ -92,111 +92,100 @@ def publications() -> list[Publication]:
     found = []
     for entry in entries:
         if entry.is_dir(follow_symlinks=False) and entry.name != "archive":
-            files, size, updated = measure(Path(entry.path))
-            found.append(Publication(entry.name, title_of(entry.name), files, size, updated))
+            pages, updated = measure(Path(entry.path))
+            found.append(Publication(entry.name, title_of(entry.name), pages, updated))
     return found
 
 
-def editions() -> list[str]:
-    """Built news editions, newest first, from the builder's story lists."""
+def build_status() -> dict:
+    """The site builder's last outcome, or {} before its first build."""
+    status = content.read_json("site-public/status.json")
+    return status if isinstance(status, dict) else {}
+
+
+def site_link(path: str) -> str:
+    """An absolute link to a page on the site's own origin."""
+    return ui.esc(f"{content.SITE_URL}{path}")
+
+
+def pub_card(pub: Publication, ok: bool) -> str:  # noqa: FBT001 -- the build's outcome
+    """A publication: where it is, how big, when it changed."""
+    return ui.card(
+        pub.title,
+        "<div>"
+        + ui.kv("Path", ui.mono(f"/{pub.slug}/"))
+        + ui.kv("Pages", ui.esc(pub.pages))
+        + ui.kv("Last updated", ui.esc(content.day_time(pub.updated * 1000)))
+        + "</div>"
+        + f'<a class="more" href="{site_link(f"/{pub.slug}/")}" target="_blank" '
+        f'rel="noopener noreferrer">Open {ui.esc(pub.title)}</a>',
+        ui.pill("Published", "ok") if ok else ui.pill("Last build failed", "bad"),
+    )
+
+
+def research_runs(prefix: str) -> list[str]:
+    """One row per research run, newest first: its question, date and outcome."""
     try:
-        names = [p.name for p in (content.ROOT / "site-public" / "stories").iterdir()]
+        runs = sorted(
+            (e for e in os.scandir(content.ROOT / RUNS) if e.is_dir(follow_symlinks=False)),
+            key=lambda e: e.stat(follow_symlinks=False).st_mtime,
+            reverse=True,
+        )
     except OSError:
         return []
-    days = [n.removesuffix(".json") for n in names if n.endswith(".json")]
-    return sorted((d for d in days if DAY.fullmatch(d)), reverse=True)
-
-
-def size_text(size: int) -> str:
-    """Bytes as KB or MB."""
-    return f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} MB"
-
-
-def updated_text(mtime: float) -> str:
-    """A file time as local 'YYYY-MM-DD HH:MM'."""
-    return content.when(mtime * 1000) if mtime else "--"
-
-
-def card(pub: Publication) -> str:
-    """A publication's card for the Overview grid."""
-    return (
-        f'<a class="card" href="/{ui.esc(pub.slug)}/" target="_blank" rel="noopener noreferrer" '
-        'style="overflow:hidden;display:flex;flex-direction:column;text-decoration:none">'
-        '<div class="preview" style="height:130px;border-radius:0">page preview</div>'
-        '<div class="stack" style="padding:14px 16px;gap:4px">'
-        f'<span style="font-weight:500">{ui.esc(pub.title)}</span>'
-        f'<span class="mono small">/{ui.esc(pub.slug)}/</span>'
-        f'<span class="small">Updated {ui.esc(updated_text(pub.updated))}</span></div></a>'
-    )
-
-
-def build_status() -> str:
-    """The site builder's last outcome, from the status file it writes."""
-    status = content.read_json("site-public/status.json")
-    if not isinstance(status, dict):
-        return '<div class="small">No build status yet.</div>'
-    ok = status.get("ok") is True
-    rejected = status.get("rejected")
-    rejected = rejected if isinstance(rejected, list) else []
-    waiting_list = status.get("waiting")
-    waiting_list = waiting_list if isinstance(waiting_list, list) else []
-    skipped = [(r.get("file"), r.get("reason")) for r in rejected if isinstance(r, dict)]
-    waiting = [(w, "no edition.toml yet") for w in waiting_list]
-    return (
-        '<div class="card pad stack">'
-        f'<div class="sechead" style="align-items:center"><span style="font-weight:500">Last build'
-        f"</span>{ui.pill('Published', 'ok') if ok else ui.pill('FAILED', 'warn')}</div>"
-        f'<div class="muted">{ui.esc(status.get("time"))} · {ui.esc(status.get("editions"))} '
-        f"editions built · release {ui.esc(status.get('release') or '--')}</div>"
-        + ui.plain_table(["Skipped or waiting", "Why"], skipped + waiting or [("none", "")])
-        + "</div>"
-    )
+    found = []
+    for run in runs[:50]:
+        final = f"{RUNS}/{run.name}/reports/final.md"
+        published = f"{content.AGENT_DIR}/research/{run.name}.md"
+        try:
+            text = content.read_bytes(final, 16 * 1024)[0].decode("utf-8", errors="replace")
+        except content.ViewError:
+            text = ""
+        heading = TITLE.search(text)
+        question = heading.group(1).strip() if heading else run.name
+        day = content.day_time(run.stat(follow_symlinks=False).st_mtime * 1000)
+        if (content.ROOT / published).is_file():
+            found.append(
+                ui.row(
+                    question,
+                    f"{day} · check passed",
+                    ui.pill("Passed", "ok"),
+                    ui.href(prefix, "file", path=published),
+                )
+            )
+        elif text:
+            found.append(
+                ui.row(
+                    question,
+                    f"{day} · report not passed yet",
+                    ui.pill("Not finished", "warn"),
+                    ui.href(prefix, "file", path=final),
+                )
+            )
+        else:
+            found.append(ui.row(question, f"{day} · no report yet", ui.pill("In progress")))
+    return found
 
 
 def screen(prefix: str) -> str:
     """The Artifacts screen."""
-    days = editions()
-    cards = []
-    for pub in publications():
-        made = (
-            "Built by the site builder from the daily news job's data"
-            if pub.slug == "news"
-            else "Built by the site builder from the agent's Markdown pages"
-        )
-        extra = ""
-        if pub.slug == "news" and days:
-            links = " · ".join(
-                f'<a href="/news/{ui.esc(d)}/" target="_blank" rel="noopener noreferrer">'
-                f"{ui.esc(d)}</a>"
-                for d in days[:7]
-            )
-            extra = f'<span class="small">Editions: {links}</span>'
-        cards.append(
-            '<div class="card art"><div class="preview">page preview</div>'
-            '<div class="stack" style="flex-grow:1;gap:6px;min-width:0">'
-            f'<span style="font-size:16px;font-weight:500">{ui.esc(pub.title)}</span>'
-            f'<span class="mono">/{ui.esc(pub.slug)}/</span>'
-            f'<span class="small">{pub.files} file{"" if pub.files == 1 else "s"} · '
-            f"{ui.esc(size_text(pub.size))} · "
-            f"updated {ui.esc(updated_text(pub.updated))}</span>"
-            f'<span class="small">{ui.esc(made)}</span>{extra}</div>'
-            f'<a class="btn" href="/{ui.esc(pub.slug)}/" target="_blank" '
-            'rel="noopener noreferrer">Open</a></div>'
-        )
+    status = build_status()
+    ok = status.get("ok") is not False
+    cards = "".join(pub_card(p, ok) for p in publications())
+    events = content.rows("select event, occurredAt from event_logs order by id desc limit 30")
     return (
-        ui.header(
-            prefix,
-            "Artifacts",
-            "Pages the site publishes from the agent's data. They open in a new tab.",
-            '<span class="muted">Served on this port at <span class="mono">/</span></span>',
+        ui.header("Artifacts", "What the agent publishes. Pages open in a new tab.")
+        + (cards or '<div class="muted">Nothing is published yet.</div>')
+        + ui.section("Research runs", ui.rows(research_runs(prefix), "No research runs yet."))
+        + ui.section(
+            "/story",
+            review_story.section(content.ROOT / "story-cache"),
+            "Source health, failing first",
         )
-        + '<section class="stack" style="gap:14px">'
-        + ("".join(cards) or '<div class="card pad small">Nothing is published yet.</div>')
-        + "</section>"
-        + '<section class="sec"><h2>Site build</h2>'
-        + build_status()
-        + "</section>"
-        + '<section class="sec"><h2>Story sources</h2><div class="card pad stack">'
-        + review_story.section(content.ROOT / "story-cache", ui.plain_table)
-        + "</div></section>"
+        + ui.admin(
+            ui.card(
+                "Event log",
+                ui.code("\n".join(f"{content.when(t)}  {e}" for e, t in events) or "No events."),
+            )
+        )
     )
