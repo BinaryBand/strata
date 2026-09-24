@@ -31,7 +31,7 @@ LOGIN = "admin@github"
 def load(monkeypatch, root: Path):
     """The server module, fresh, with its content module reachable as `.content`."""
     monkeypatch.syspath_prepend(str(MONITOR))
-    for name in ("review", "review_content"):
+    for name in ("review", "review_content", "review_story"):
         sys.modules.pop(name, None)
     content = importlib.import_module("review_content")
     review = importlib.import_module("review")
@@ -238,3 +238,37 @@ def test_the_login_gets_the_page_over_the_socket_and_writes_are_refused(server: 
     assert "storage/anythingllm.db" in body
     assert SECRET not in body
     assert request(server, "/", {"Tailscale-User-Login": [LOGIN]}, method="POST")[0] == 405
+
+
+def test_story_sources_show_failing_hosts_first_and_timings_but_no_story_text(
+    monkeypatch, root: Path
+) -> None:
+    review = load(monkeypatch, root)
+    cache = root / "story-cache"
+    cache.mkdir()
+    (cache / "health.json").write_text(
+        json.dumps(
+            {
+                "npr.org": {"ok": 4, "failed": 0, "streak": 0, "last_ok": "2026-09-24T09:00:00"},
+                "pbs.org": {"ok": 0, "failed": 3, "streak": 3, "last_error": "<i>403</i>"},
+            }
+        )
+    )
+    (cache / "abc.json").write_text(
+        json.dumps(
+            {
+                "day": "2026-09-24",
+                "paragraphs": ["SECRET STORY TEXT"],
+                "notes": [],
+                "fetch_seconds": 2.1,
+                "model_seconds": 18.4,
+                "input_chars": 9000,
+                "output_chars": 1500,
+            }
+        )
+    )
+    page = review.content.overview(60)
+    assert page.index("pbs.org") < page.index("npr.org")
+    assert "&lt;i&gt;403&lt;/i&gt;" in page
+    assert "18.4" in page
+    assert "SECRET STORY TEXT" not in page

@@ -5,10 +5,11 @@ Deployed by strata's services.enable_anythingllm_story runbook and mounted at
 owner-only Unix socket and serves only STORY_LOGIN, the one tailnet login
 Tailscale stamps on the request. `/story/<day>/<n>` is the n-th story of that
 day's edition in the list the site builder publishes. The first GET queues
-the story: one worker fetches up to three of its sources (story_fetch), sends
-their text to a dedicated AnythingLLM workspace through the developer API,
-and caches the result; until then the reader sees a page that refreshes
-itself. HEAD and prefetches never start a story, and at most DAILY_CAP stories
+the story: one of WORKERS workers reads two of its sources (story_sources
+picks and fetches them, skipping outlets that keep failing), sends their text
+to a dedicated AnythingLLM workspace through the developer API for a short
+story, and caches the result with its timings; until then the reader sees a
+page that refreshes itself. HEAD and prefetches never start a story, and at most DAILY_CAP stories
 are written per UTC day, counted when a story is queued. Cached stories are
 kept for KEEP_DAYS days. Standard library only.
 """
@@ -23,14 +24,15 @@ import queue
 import re
 import socketserver
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import story_fetch
 import story_page
+import story_sources
 
 LOGIN = os.environ.get("STORY_LOGIN", "")
 SOCKET = os.environ.get("STORY_SOCKET", "/run/anythingllm-story/story.sock")
@@ -44,12 +46,13 @@ KEY_FILE = Path(os.environ.get("CREDENTIALS_DIRECTORY", "/nonexistent")) / "stor
 DAILY_CAP = int(os.environ.get("STORY_DAILY_CAP", "30"))
 KEEP_DAYS = 30
 API_TIMEOUT = 300
-MAX_SOURCES = 3
+WORKERS = 2
 MAX_QUEUE = 5
 MAX_STORY_CHARS = 20_000
 PATH = re.compile(r"/([0-9]{4}-[0-9]{2}-[0-9]{2})/([0-9]{1,2})/?")
 THINKING = re.compile(r"<think>.*?</think>", re.DOTALL)
-INSTRUCTIONS = """Write a news story of four to eight paragraphs from the source articles below.
+INSTRUCTIONS = """Write a news story of three or four short paragraphs, about 250 words in all,
+from the source articles below.
 - Use only facts the sources state. Where they differ, say so and name each outlet.
 - Attribute claims to their outlet by name, for example "according to NPR".
 - Write in your own words; quote at most a short phrase.
@@ -110,8 +113,7 @@ class Desk:
         while True:
             key, day, story = self.work.get()
             try:
-                paragraphs, notes = write(story)
-                save(CACHE / f"{key}.json", {"day": day, "paragraphs": paragraphs, "notes": notes})
+                save(CACHE / f"{key}.json", {"day": day, **write(story)})
                 prune()
             except Exception as exc:  # noqa: BLE001 -- the worker must outlive any one story
                 reason = str(exc) if isinstance(exc, StoryError) else exc.__class__.__name__
@@ -123,6 +125,7 @@ class Desk:
 
 
 DESK = Desk()
+HEALTH = story_sources.Health(CACHE / "health.json")
 
 
 def save(path: Path, data: dict) -> None:
@@ -138,7 +141,7 @@ def prune() -> None:
     for path in CACHE.glob("*"):
         try:
             if path.name.endswith(".tmp") or (
-                path.name != "spend.json" and path.stat().st_mtime < cutoff
+                path.name not in ("spend.json", "health.json") and path.stat().st_mtime < cutoff
             ):
                 path.unlink()
         except OSError:
@@ -175,22 +178,27 @@ def story_key(story: dict) -> str:
     return hashlib.sha256(ident.encode()).hexdigest()[:32]
 
 
-def write(story: dict) -> tuple[list[str], list[str]]:
-    """(paragraphs, sources not read) for the story, or StoryError."""
-    texts, notes = [], []
-    for source in story["sources"][:MAX_SOURCES]:
-        try:
-            text = story_fetch.fetch_text(source["url"])
-            texts.append(f"--- {source['name']} ({source['url']})\n{text}")
-        except story_fetch.FetchError as exc:
-            notes.append(f"{source['name']} ({exc})")
-    if not texts:
+def write(story: dict) -> dict:
+    """The written story -- paragraphs, sources not read, timings -- or StoryError."""
+    started = time.monotonic()
+    read, notes = story_sources.gather(story["sources"], HEALTH)
+    fetched = time.monotonic()
+    if not read:
         msg = "no source could be read: " + "; ".join(notes)
         raise StoryError(msg)
+    texts = [f"--- {source['name']} ({source['url']})\n{text}" for source, text in read]
     message = "\n\n".join(
         [INSTRUCTIONS, f"Headline: {story['title']}", f"Feed summary: {story['summary']}", *texts]
     )
-    return paragraphs(ask(message)), notes
+    reply = ask(message)
+    return {
+        "paragraphs": paragraphs(reply),
+        "notes": notes,
+        "fetch_seconds": round(fetched - started, 1),
+        "model_seconds": round(time.monotonic() - fetched, 1),
+        "input_chars": len(message),
+        "output_chars": len(reply),
+    }
 
 
 def api_key() -> str:
@@ -318,7 +326,8 @@ def main() -> None:
         raise SystemExit(message)
     CACHE.mkdir(parents=True, exist_ok=True)
     prune()
-    threading.Thread(target=DESK.run, daemon=True).start()
+    for _ in range(WORKERS):
+        threading.Thread(target=DESK.run, daemon=True).start()
     Path(SOCKET).unlink(missing_ok=True)
     old = os.umask(0o177)  # the socket is created 0600: this account and root only
     try:

@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 
+import review_story
+
 ROOT = Path(os.environ.get("REVIEW_ROOT", "/srv/anythingllm"))
 PREFIX = os.environ.get("REVIEW_PREFIX", "/review")
 MAX_VIEW_BYTES = 256 * 1024
@@ -331,7 +333,7 @@ def service_state(unit: str) -> str:
 
 def services() -> str:
     """The AnythingLLM and site units' states."""
-    units = ("anythingllm.service", "anythingllm-site.service")
+    units = ("anythingllm.service", "anythingllm-site.service")  # the diot user's units
     return table(["service (diot user)", "state"], [(u, service_state(u)) for u in units])
 
 
@@ -361,6 +363,8 @@ def overview(ttl_seconds: int) -> str:
         + services()
         + "<h2>Site build</h2>"
         + build_status()
+        + "<h2>Story sources</h2>"
+        + review_story.section(ROOT / "story-cache", table)
         + database_sections()
         + "<h2>MCP servers</h2>"
         + mcp_servers()

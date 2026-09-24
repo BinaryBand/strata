@@ -36,7 +36,7 @@ STORY = {
 def mods(monkeypatch, tmp_path: Path):
     """story, story_fetch and story_page, fresh, with a temporary index and cache."""
     monkeypatch.syspath_prepend(str(SERVICE))
-    for name in ("story", "story_fetch", "story_page"):
+    for name in ("story", "story_fetch", "story_page", "story_sources"):
         sys.modules.pop(name, None)
     story = importlib.import_module("story")
     index, cache = tmp_path / "stories", tmp_path / "cache"
@@ -46,6 +46,7 @@ def mods(monkeypatch, tmp_path: Path):
     for attr, value in (("INDEX", index), ("CACHE", cache), ("LOGIN", LOGIN)):
         monkeypatch.setattr(story, attr, value)
     monkeypatch.setattr(story, "DESK", story.Desk())
+    monkeypatch.setattr(story, "HEALTH", sys.modules["story_sources"].Health(cache / "health.json"))
     return story, sys.modules["story_fetch"], sys.modules["story_page"]
 
 
@@ -217,3 +218,57 @@ def test_a_slow_body_is_abandoned_at_the_deadline(mods) -> None:
     _, fetch, _ = mods
     with pytest.raises(fetch.FetchError, match="timed out"):
         fetch.read(io.BytesIO(b"x" * 10), deadline=0)
+
+
+def test_sources_are_read_in_order_skipping_failing_outlets(mods, monkeypatch) -> None:
+    story, fetch, _ = mods
+    sources_mod = sys.modules["story_sources"]
+    blocked = "https://blocked.example/a"
+    for _ in range(sources_mod.FAILURES):
+        story.HEALTH.record(blocked, "answered 403")
+    sources = [
+        {"name": "Blocked", "url": blocked},
+        {"name": "Down", "url": "https://down.example/a"},
+        {"name": "One", "url": "https://one.example/a"},
+        {"name": "Two", "url": "https://two.example/a"},
+        {"name": "Three", "url": "https://three.example/a"},
+    ]
+
+    def fake_fetch(url: str) -> str:
+        if "down" in url:
+            msg = "timed out"
+            raise fetch.FetchError(msg)
+        return f"text of {url}"
+
+    monkeypatch.setattr(fetch, "fetch_text", fake_fetch)
+    read, notes = sources_mod.gather(sources, story.HEALTH)
+    assert [s["name"] for s, _ in read] == ["One", "Two"]
+    assert any("Blocked (skipped" in n for n in notes)
+    assert "Down (timed out)" in notes
+    health = story.HEALTH.load()
+    assert health["down.example"]["streak"] == 1
+    assert health["one.example"]["ok"] == 1
+
+
+def test_a_written_story_records_its_timings(mods, monkeypatch) -> None:
+    story, fetch, _ = mods
+    monkeypatch.setattr(fetch, "fetch_text", lambda url: f"text of {url}")
+    monkeypatch.setattr(story, "ask", lambda _message: "First.\n\nSecond.")
+    written = story.write(STORY)
+    assert written["paragraphs"] == ["First.", "Second."]
+    assert {"fetch_seconds", "model_seconds", "input_chars", "output_chars"} <= written.keys()
+
+
+def test_captions_and_calls_to_action_are_dropped(mods) -> None:
+    _, fetch, _ = mods
+    body = "word " * 20
+    html = (
+        f"<article><p>{body}news</p><p>Delegates arrive. Brendan Smialowski/AFP via Getty Images "
+        f"hide caption</p><p>Sign up for our newsletter to get {body}</p>"
+        f"<p>Voters were asked to sign up to vote early, {body}</p></article>"
+    )
+    kept = fetch.article_text(html.encode()).split("\n\n")
+    assert kept == [
+        f"{body.strip()} news",
+        f"Voters were asked to sign up to vote early, {body.strip()}",
+    ]

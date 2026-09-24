@@ -192,6 +192,7 @@
         - story.py
         - story_fetch.py
         - story_page.py
+        - story_sources.py
       notify: Restart the story service
 
     - name: Install the service's unit

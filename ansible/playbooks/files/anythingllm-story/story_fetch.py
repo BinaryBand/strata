@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
 import time
@@ -19,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 TIMEOUT = 15
 MAX_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
-MAX_TEXT = 12_000
+MAX_TEXT = 5_000  # news puts the facts first; the tail adds tokens, not substance
 MAX_URL = 2000
 DEADLINE = 45  # seconds for one source, all redirects and reads included
 PORTS = {"http": 80, "https": 443}
@@ -152,6 +153,15 @@ def page(url: str) -> bytes:
     raise FetchError(msg)
 
 
+# Captions, credits and calls to action that sit in <p> elements beside the story.
+JUNK = re.compile(
+    r"hide caption|toggle caption|getty images|image source|advertisement|all rights reserved"
+    r"|sign up (for|to) (our|the)|subscribe (to|now|today)|our newsletter|download (the|our) app"
+    r"|^read more|^click here|^related:",
+    re.IGNORECASE,
+)
+
+
 class Paragraphs(HTMLParser):
     """The text of every <p>, noting which ones sit inside an <article>."""
 
@@ -196,7 +206,7 @@ class Paragraphs(HTMLParser):
         """Finish the open paragraph, if any."""
         if self.current is not None:
             text = " ".join("".join(self.current).split())
-            if len(text) > 40:  # noqa: PLR2004 -- drop captions, bylines and buttons
+            if len(text) > 40 and not JUNK.search(text):  # noqa: PLR2004 -- drop short bits
                 self.all.append(text)
                 if self.article:
                     self.in_article.append(text)
