@@ -88,6 +88,8 @@ ignore = [
 # The site builder: standalone stdlib scripts deployed to the server; its one
 # subprocess call runs the pinned zola binary with a fixed argument list.
 "ansible/playbooks/files/anythingllm-site-build/*.py" = ["INP001", "S603"]
+# The /story service: standalone stdlib scripts deployed to the server.
+"ansible/playbooks/files/anythingllm-story/*.py" = ["INP001"]
 # print() and Typer's function-call defaults / boolean flags are idiomatic here.
 # PLR0913 joins them for the same reason: a Typer command's parameters ARE its
 # CLI flags, so "too many arguments" measures the size of the command's public

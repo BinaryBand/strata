@@ -3,8 +3,8 @@
 {% component news_story(story, kind: string) %}
 <article class="{{ kind }}">
 {% if kind == "lead" %}<p class="kicker">{{ story.region }}</p>
-<h2 class="lead__headline"><a class="headline-link" href="{{ story.sources[0].url }}">{{ story.title }}</a></h2>
-{% else %}<h3 class="story__headline"><a class="headline-link" href="{{ story.sources[0].url }}">{{ story.title }}</a></h3>{% endif %}
+<h2 class="lead__headline"><a class="headline-link" href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></h2>
+{% else %}<h3 class="story__headline"><a class="headline-link" href="{{ story.page | default(value=story.sources[0].url) }}">{{ story.title }}</a></h3>{% endif %}
 <p class="{{ kind }}__summary">{{ story.summary }}</p>
 {{<news_sources sources={story.sources} />}}
 </article>

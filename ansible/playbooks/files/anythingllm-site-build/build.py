@@ -7,7 +7,8 @@ validates the content (validate.py), assembles a fresh Zola project in a
 private temporary directory, runs `zola build`, and publishes the output as a
 new release by switching the `current` link nginx serves -- so readers never
 see a half-built site, and a failed build leaves the last good one live. The
-outcome goes to BUILD.md in the agent's folder and to status.json for /review.
+outcome goes to BUILD.md in the agent's folder and to status.json for /review;
+each edition's stories go to stories/<day>.json for the /story service.
 Standard library only.
 """
 
@@ -30,6 +31,8 @@ SKELETON = Path(os.environ.get("SITE_SKELETON", "/srv/anythingllm/site-zola"))
 PUBLIC = Path(os.environ.get("SITE_PUBLIC", "/srv/anythingllm/site-public"))
 ZOLA = os.environ.get("SITE_ZOLA", "/usr/local/bin/zola")
 BASE_URL = os.environ.get("SITE_BASE_URL", "http://localhost")
+# Set by enable_anythingllm_story: headlines then open that service's pages.
+STORY_BASE = os.environ.get("SITE_STORY_BASE", "")
 POLL_SECONDS = 2.0
 SETTLE_SECONDS = 2.0
 BUILD_TIMEOUT = 60
@@ -109,6 +112,19 @@ def publish(output: Path) -> str:
     return name
 
 
+def publish_stories(result: validate.Result) -> None:
+    """Each built edition's stories, in page order, for the story service; stale days removed."""
+    folder = PUBLIC / "stories"
+    folder.mkdir(exist_ok=True)
+    for day, stories in result.stories.items():
+        tmp = folder / f".{day}.json.tmp"
+        tmp.write_text(json.dumps(stories, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(folder / f"{day}.json")
+    for old in folder.glob("*.json"):
+        if old.stem not in result.stories:
+            old.unlink()
+
+
 def report(result: validate.Result, *, ok: bool, log: str, release: str | None) -> None:
     """BUILD.md for the agent and status.json for the /review monitor."""
     when = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -163,12 +179,14 @@ def report(result: validate.Result, *, ok: bool, log: str, release: str | None) 
 
 def build_once() -> bool:
     """Validate, assemble, build and publish once; True when a new release went live."""
-    result = validate.collect(SOURCE)
+    result = validate.collect(SOURCE, STORY_BASE)
     with tempfile.TemporaryDirectory(prefix="site-build-") as work:
         project, output = Path(work) / "project", Path(work) / "public"
         assemble(project, result)
         ok, log = zola(project, output)
         release = publish(output) if ok else None
+    if ok:
+        publish_stories(result)
     report(result, ok=ok, log=log, release=release)
     return ok
 

@@ -261,3 +261,31 @@ def test_deleting_a_file_changes_the_fingerprint(modules) -> None:
     before = build.fingerprint()
     (folder / "01-a.toml").unlink()
     assert build.fingerprint() != before
+
+
+def test_story_pages_link_headlines_and_publish_the_story_list(modules, monkeypatch) -> None:
+    _, build, source = modules
+    write_edition(
+        source,
+        {
+            "01-a.toml": STORY.format(lead="false", rank=2),
+            "02-b.toml": STORY.format(lead="true", rank=1),
+        },
+    )
+    monkeypatch.setattr(build, "STORY_BASE", "/story")
+    assert build.build_once()
+    listed = json.loads((build.PUBLIC / "stories" / f"{DAY}.json").read_text())
+    assert [(s["rank"], s["page"]) for s in listed] == [
+        (1, f"/story/{DAY}/1"),
+        (2, f"/story/{DAY}/2"),
+    ]
+    (source / "news" / "editions" / DAY / "edition.toml").unlink()
+    assert build.build_once()
+    assert not (build.PUBLIC / "stories" / f"{DAY}.json").exists()  # a day no longer built
+
+
+def test_without_story_pages_headlines_keep_their_source_links(modules) -> None:
+    validate, _, source = modules
+    write_edition(source, {"01-a.toml": STORY.format(lead="true", rank=1)})
+    meta = front(validate.collect(source).files[f"news/{DAY}/_index.md"])
+    assert "page" not in meta["extra"]["stories"][0]

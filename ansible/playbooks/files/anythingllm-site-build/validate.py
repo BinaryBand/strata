@@ -6,8 +6,7 @@ checked against a fixed schema, and rewritten here as Zola content whose front
 matter this module alone composes -- so the agent can never pick a template,
 set a redirect or smuggle raw HTML into a page. Standard library only.
 
-    news/editions/YYYY-MM-DD/NN-slug.toml   one story, or several as [[story]]
-                                            tables; written first
+    news/editions/YYYY-MM-DD/NN-slug.toml   stories, one or several [[story]] tables
     news/editions/YYYY-MM-DD/edition.toml   date, feeds_total, feed_errors, briefs;
                                             written last: an edition is built only
                                             once it exists, so readers never see a
@@ -69,6 +68,7 @@ class Result:
     rejected: list[tuple[str, str]] = field(default_factory=list)
     waiting: list[str] = field(default_factory=list)
     editions: int = 0
+    stories: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def read_no_follow(root: Path, rel: str, limit: int) -> bytes:
@@ -287,7 +287,7 @@ def unsafe_body(body: str) -> str | None:
     return None
 
 
-def edition(root: Path, day: str, result: Result) -> None:
+def edition(root: Path, day: str, result: Result, story_base: str) -> None:
     """Add the edition in news/editions/<day> to `result`, or record why it is skipped."""
     base = f"news/editions/{day}"
     if not (root / base / "edition.toml").exists():
@@ -316,10 +316,12 @@ def edition(root: Path, day: str, result: Result) -> None:
         result.rejected.append((base, f"edition skipped: {why} (has {len(leads)} leads)"))
         return
     title = dt.date.fromisoformat(day).strftime("%A, %-d %B %Y")
-    # Stories become data on the edition, not pages: a Zola page that is not
-    # rendered also drops out of its section, and a rendered one would be a
-    # stray page of its own.
+    # Stories are data on the edition, not pages: an unrendered Zola page drops
+    # out of its section, and a rendered one would be a stray page of its own.
     ordered = sorted(stories, key=lambda s: s["rank"])
+    if story_base:  # the headline opens the story service's page instead of the source
+        ordered = [{**s, "page": f"{story_base}/{day}/{n}"} for n, s in enumerate(ordered, 1)]
+    result.stories[day] = ordered
     result.files[f"news/{day}/_index.md"] = front_matter(
         {"title": title, "template": "news/edition.html", "sort_by": "none"},
         {**meta, "stories": ordered},
@@ -349,7 +351,7 @@ def publication(root: Path, name: str, result: Result) -> None:
             result.rejected.append((rel, str(exc)))
 
 
-def collect(root: Path) -> Result:
+def collect(root: Path, story_base: str = "") -> Result:
     """Everything valid under the agent's site folder, translated; the rest rejected."""
     result = Result()
     result.files["_index.md"] = front_matter({"title": "Publications", "template": "index.html"})
@@ -372,7 +374,7 @@ def collect(root: Path) -> Result:
                 and (editions / day).is_dir()
                 and not (editions / day).is_symlink()
             ):
-                edition(root, day, result)
+                edition(root, day, result, story_base)
             else:
                 result.rejected.append(
                     (f"news/editions/{day}", "edition folders are named YYYY-MM-DD")

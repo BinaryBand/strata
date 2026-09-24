@@ -1,0 +1,329 @@
+---
+# Install the /story service (files/anythingllm-story/): full stories for The
+# Daily Seek, written by an AnythingLLM workspace the first time a headline
+# is opened. Paths arrive as extravars; ports come from server_apps_defaults.
+#
+# Like /review, the service listens on a Unix socket in a 0700 runtime
+# directory and serves only the tailnet login read below from the
+# controller. It needs the internet (to read sources) and AnythingLLM on
+# loopback, so it has network access, but its unit denies the LAN and tailnet
+# ranges, and its code refuses any source address that is not public. Its API
+# key reaches it through systemd's LoadCredential=, never the environment.
+- name: Install the AnythingLLM /story service
+  hosts: all
+  become: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    diot_user: diot
+    anythingllm_group: anythingllm
+    anythingllm_http_port: "{{ server_apps_defaults.anythingllm.port }}"
+    anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
+    anythingllm_api: "http://127.0.0.1:{{ anythingllm_http_port }}/api"
+    anythingllm_story_socket: /run/anythingllm-story/story.sock
+    anythingllm_story_key_file: /etc/anythingllm-story/api-key
+    anythingllm_story_workspace_name: Story desk
+    # The instructions travel with each request (story.py); the workspace's
+    # own prompt only has to stay out of their way.
+    anythingllm_story_workspace_prompt: >-
+      You write news stories for a private newspaper. Follow the instructions
+      in each message exactly and use only the source texts it contains.
+
+  tasks:
+    - name: Require the path extravars
+      ansible.builtin.assert:
+        that:
+          - anythingllm_story_dir | default('') | length > 0
+          - anythingllm_story_cache_dir | default('') | length > 0
+          - anythingllm_site_public_dir | default('') | length > 0
+        fail_msg: >-
+          The story paths must be set; run this through the
+          services.enable_anythingllm_story runbook.
+
+    # The one login the service serves: whoever is logged in to Tailscale on
+    # the controller running this, read now so it never enters the repository.
+    - name: Read the controller's tailnet login
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command: tailscale status --json
+      register: anythingllm_story_controller
+      changed_when: false
+
+    - name: Select the login
+      vars:
+        anythingllm_story_status: "{{ anythingllm_story_controller.stdout | from_json }}"
+      ansible.builtin.set_fact:
+        anythingllm_story_login: >-
+          {{ (anythingllm_story_status.User | default({}))
+             .get(anythingllm_story_status.Self.UserID | string, {}).LoginName | default('') }}
+
+    - name: Require a tailnet login on the controller
+      ansible.builtin.assert:
+        that:
+          - anythingllm_story_login | length > 0
+        fail_msg: >-
+          The controller is not logged in to Tailscale as a user, so there is
+          no login to allow. Log in with `tailscale up`, then re-run.
+
+    - name: Log in to AnythingLLM
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/request-token"
+        method: POST
+        body_format: json
+        body: {password: "{{ anythingllm_password }}"}
+      register: anythingllm_story_login_token
+      no_log: true
+
+    - name: Read the workspaces
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/workspaces"
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      register: anythingllm_story_workspaces
+
+    - name: Create the story workspace
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/workspace/new"
+        method: POST
+        body_format: json
+        body: {name: "{{ anythingllm_story_workspace_name }}"}
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      register: anythingllm_story_created
+      changed_when: true
+      when: >-
+        anythingllm_story_workspaces.json.workspaces
+        | selectattr('name', 'eq', anythingllm_story_workspace_name) | list | length == 0
+
+    - name: Select the story workspace
+      vars:
+        anythingllm_story_found: >-
+          {{ anythingllm_story_workspaces.json.workspaces
+             | selectattr('name', 'eq', anythingllm_story_workspace_name) | list }}
+      ansible.builtin.set_fact:
+        anythingllm_story_workspace: >-
+          {{ anythingllm_story_created.json.workspace
+             if anythingllm_story_created is changed else anythingllm_story_found | first }}
+
+    # No chat history: every story is written from its own sources alone.
+    - name: Configure the story workspace
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/workspace/{{ anythingllm_story_workspace.slug }}/update"
+        method: POST
+        body_format: json
+        body:
+          openAiHistory: 0
+          chatMode: chat
+          openAiPrompt: "{{ anythingllm_story_workspace_prompt }}"
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      changed_when: true
+      when: >-
+        anythingllm_story_workspace.openAiHistory | default(20) | int != 0
+        or anythingllm_story_workspace.chatMode | default('') != 'chat'
+        or anythingllm_story_workspace.openAiPrompt | default('') != anythingllm_story_workspace_prompt
+
+    - name: Ensure the key's directory exists
+      ansible.builtin.file:
+        path: "{{ anythingllm_story_key_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Check for a saved API key
+      ansible.builtin.stat:
+        path: "{{ anythingllm_story_key_file }}"
+      register: anythingllm_story_key_stat
+
+    - name: Read the saved API key
+      ansible.builtin.slurp:
+        src: "{{ anythingllm_story_key_file }}"
+      register: anythingllm_story_key_saved
+      no_log: true
+      when: anythingllm_story_key_stat.stat.exists
+
+    - name: Check that the saved API key still works
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/v1/auth"
+        headers:
+          Authorization: "Bearer {{ anythingllm_story_key_saved.content | b64decode | trim }}"
+        status_code: [200, 403]
+      register: anythingllm_story_key_check
+      no_log: true
+      when: anythingllm_story_key_stat.stat.exists
+
+    - name: Create an API key for the service
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/system/generate-api-key"
+        method: POST
+        body_format: json
+        body: {name: story-service}
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      register: anythingllm_story_new_key
+      no_log: true
+      changed_when: true
+      when: not anythingllm_story_key_stat.stat.exists or anythingllm_story_key_check.status != 200
+
+    - name: Save the API key
+      ansible.builtin.copy:
+        dest: "{{ anythingllm_story_key_file }}"
+        content: "{{ anythingllm_story_new_key.json.apiKey.secret }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: anythingllm_story_new_key is changed
+      notify: Restart the story service
+
+    - name: Ensure the service's code directory exists
+      ansible.builtin.file:
+        path: "{{ anythingllm_story_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the service's code
+      ansible.builtin.copy:
+        src: "anythingllm-story/{{ item }}"
+        dest: "{{ anythingllm_story_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - story.py
+        - story_fetch.py
+        - story_page.py
+      notify: Restart the story service
+
+    - name: Install the service's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/anythingllm-story.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=The Daily Seek's full stories, written on first open, mounted at /story
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          User={{ diot_user }}
+          Group={{ anythingllm_group }}
+          ExecStart=/usr/bin/python3 {{ anythingllm_story_dir }}/story.py
+          Environment=STORY_LOGIN={{ anythingllm_story_login }}
+          Environment=STORY_SOCKET={{ anythingllm_story_socket }}
+          Environment=STORY_INDEX={{ anythingllm_site_public_dir }}/stories
+          Environment=STORY_CACHE={{ anythingllm_story_cache_dir }}
+          Environment=STORY_API=http://127.0.0.1:{{ anythingllm_http_port }}/api/v1
+          Environment=STORY_WORKSPACE={{ anythingllm_story_workspace.slug }}
+          Environment=PYTHONDONTWRITEBYTECODE=1
+          LoadCredential=story-api-key:{{ anythingllm_story_key_file }}
+          RuntimeDirectory=anythingllm-story
+          RuntimeDirectoryMode=0700
+          UMask=0077
+          Restart=on-failure
+          ReadOnlyPaths={{ anythingllm_site_public_dir }}
+          ReadWritePaths={{ anythingllm_story_cache_dir }}
+          ProtectSystem=strict
+          ProtectHome=yes
+          PrivateTmp=yes
+          # The internet and AnythingLLM on loopback only: no LAN, no tailnet.
+          RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+          IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10
+          NoNewPrivileges=yes
+          CapabilityBoundingSet=
+          RestrictNamespaces=yes
+          LockPersonality=yes
+          ProtectKernelTunables=yes
+          ProtectKernelModules=yes
+          ProtectControlGroups=yes
+          SystemCallArchitectures=native
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart the story service
+
+    - name: Enable and start the service
+      ansible.builtin.systemd_service:
+        name: anythingllm-story.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply a changed service, code or key before checking the service
+      ansible.builtin.meta: flush_handlers
+
+    # Any story path answers 404 until a story exists, which is enough to show
+    # the service is up and accepts the allowed login.
+    - name: Check that the service answers over its socket
+      ansible.builtin.uri:
+        url: http://localhost/0000-00-00/1
+        unix_socket: "{{ anythingllm_story_socket }}"
+        headers:
+          Tailscale-User-Login: "{{ anythingllm_story_login }}"
+        status_code: 404
+      register: anythingllm_story_health
+      retries: 10
+      delay: 2
+      until: anythingllm_story_health.status == 404
+
+    - name: Read the tailscale serve config
+      ansible.builtin.command: tailscale serve status --json
+      register: anythingllm_story_serve_status
+      changed_when: false
+
+    - name: Select the port's /story handler
+      vars:
+        anythingllm_story_serve: "{{ anythingllm_story_serve_status.stdout | default('{}', true) | from_json }}"
+      ansible.builtin.set_fact:
+        anythingllm_story_handlers: >-
+          {{ (anythingllm_story_serve.Web | default({}))
+             | dict2items
+             | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
+             | map(attribute='value.Handlers') | map('dict2items') | flatten
+             | selectattr('key', 'eq', '/story')
+             | map(attribute='value.Proxy') | select('defined') | list }}
+
+    - name: Mount the service at /story on the site's port
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - --bg
+          - "--https={{ anythingllm_site_port }}"
+          - --set-path=/story
+          - "unix:{{ anythingllm_story_socket }}"
+      when: ("unix:" ~ anythingllm_story_socket) not in anythingllm_story_handlers
+
+    - name: Ensure the site builder's drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/anythingllm-site-build.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Only now that /story answers do headlines start linking to it.
+    - name: Point the site's headlines at /story
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/anythingllm-site-build.service.d/story.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=SITE_STORY_BASE=/story
+      notify: Restart the site builder
+
+  handlers:
+    - name: Restart the story service
+      ansible.builtin.systemd_service:
+        name: anythingllm-story.service
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart the site builder
+      ansible.builtin.systemd_service:
+        name: anythingllm-site-build.service
+        state: restarted
+        daemon_reload: true
