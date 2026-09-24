@@ -1,4 +1,4 @@
-"""Full stories for The Daily Seek, written by AnythingLLM when a headline is first opened.
+"""Full stories for The Daily Seek, written by DeepSeek when a headline is first opened.
 
 Deployed by strata's services.enable_anythingllm_story runbook and mounted at
 /story on the site's port by `tailscale serve`. Like /review it listens on an
@@ -7,8 +7,8 @@ Tailscale stamps on the request. `/story/<day>/<n>` is the n-th story of that
 day's edition in the list the site builder publishes. The first GET queues
 the story: one of WORKERS workers reads two of its sources (story_sources
 picks and fetches them, skipping outlets that keep failing), sends their text
-to a dedicated AnythingLLM workspace through the developer API for a short
-story, and caches the result with its timings; until then the reader sees a
+to DeepSeek with thinking off (story_model) for a short story, and caches
+the result with its timings; until then the reader sees a
 page that refreshes itself. HEAD and prefetches never start a story, and at most DAILY_CAP stories
 are written per UTC day, counted when a story is queued. Cached stories are
 kept for KEEP_DAYS days. Standard library only.
@@ -25,12 +25,11 @@ import re
 import socketserver
 import threading
 import time
-import urllib.error
-import urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import story_model
 import story_page
 import story_sources
 
@@ -38,14 +37,8 @@ LOGIN = os.environ.get("STORY_LOGIN", "")
 SOCKET = os.environ.get("STORY_SOCKET", "/run/anythingllm-story/story.sock")
 INDEX = Path(os.environ.get("STORY_INDEX", "/srv/anythingllm/site-public/stories"))
 CACHE = Path(os.environ.get("STORY_CACHE", "/srv/anythingllm/story-cache"))
-API = os.environ.get("STORY_API", "http://127.0.0.1:3001/api/v1")
-WORKSPACE = os.environ.get("STORY_WORKSPACE", "story-desk")
-# systemd's LoadCredential= puts the key in a file only this service can read,
-# so it is never in the process environment.
-KEY_FILE = Path(os.environ.get("CREDENTIALS_DIRECTORY", "/nonexistent")) / "story-api-key"
 DAILY_CAP = int(os.environ.get("STORY_DAILY_CAP", "30"))
 KEEP_DAYS = 30
-API_TIMEOUT = 300
 WORKERS = 2
 MAX_QUEUE = 5
 MAX_STORY_CHARS = 20_000
@@ -190,8 +183,12 @@ def write(story: dict) -> dict:
     message = "\n\n".join(
         [INSTRUCTIONS, f"Headline: {story['title']}", f"Feed summary: {story['summary']}", *texts]
     )
-    reply = ask(message)
+    try:
+        reply, facts = story_model.complete(message)
+    except story_model.ModelError as exc:
+        raise StoryError(str(exc)) from exc
     return {
+        **facts,
         "paragraphs": paragraphs(reply),
         "notes": notes,
         "fetch_seconds": round(fetched - started, 1),
@@ -199,31 +196,6 @@ def write(story: dict) -> dict:
         "input_chars": len(message),
         "output_chars": len(reply),
     }
-
-
-def api_key() -> str:
-    """The AnythingLLM API key from the service's credential file."""
-    return KEY_FILE.read_text(encoding="utf-8").strip()
-
-
-def ask(message: str) -> str:
-    """The workspace's reply to one message, with no chat history."""
-    body = json.dumps({"message": message, "mode": "chat"}).encode()
-    request = urllib.request.Request(  # noqa: S310 -- a fixed http URL from the unit file
-        f"{API}/workspace/{WORKSPACE}/chat",
-        body,
-        {"Content-Type": "application/json", "Authorization": f"Bearer {api_key()}"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=API_TIMEOUT) as resp:  # noqa: S310
-            reply = json.load(resp)
-    except (OSError, ValueError, urllib.error.URLError) as exc:
-        msg = f"AnythingLLM did not answer ({exc.__class__.__name__})"
-        raise StoryError(msg) from exc
-    if reply.get("error") or not reply.get("textResponse"):
-        msg = f"AnythingLLM returned no story ({reply.get('error') or 'empty reply'})"
-        raise StoryError(msg)
-    return reply["textResponse"]
 
 
 def paragraphs(text: str) -> list[str]:
@@ -235,7 +207,7 @@ def paragraphs(text: str) -> list[str]:
         if line and not line.startswith("#"):
             out.append(line)
     if not out:
-        msg = "AnythingLLM returned an empty story"
+        msg = "DeepSeek returned an empty story"
         raise StoryError(msg)
     return out
 
@@ -321,8 +293,8 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer)
 
 def main() -> None:
     """Serve on SOCKET until stopped."""
-    if not LOGIN or not KEY_FILE.is_file():
-        message = "STORY_LOGIN and the story-api-key credential must be set; refusing to serve."
+    if not LOGIN or not story_model.key_file().is_file():
+        message = "STORY_LOGIN and the deepseek-api-key credential must be set; refusing to serve."
         raise SystemExit(message)
     CACHE.mkdir(parents=True, exist_ok=True)
     prune()

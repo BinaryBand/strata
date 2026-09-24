@@ -12,6 +12,7 @@ import importlib
 import io
 import json
 import sys
+import urllib.error
 from email.message import Message
 from pathlib import Path
 
@@ -36,7 +37,7 @@ STORY = {
 def mods(monkeypatch, tmp_path: Path):
     """story, story_fetch and story_page, fresh, with a temporary index and cache."""
     monkeypatch.syspath_prepend(str(SERVICE))
-    for name in ("story", "story_fetch", "story_page", "story_sources"):
+    for name in ("story", "story_fetch", "story_page", "story_sources", "story_model"):
         sys.modules.pop(name, None)
     story = importlib.import_module("story")
     index, cache = tmp_path / "stories", tmp_path / "cache"
@@ -253,7 +254,8 @@ def test_sources_are_read_in_order_skipping_failing_outlets(mods, monkeypatch) -
 def test_a_written_story_records_its_timings(mods, monkeypatch) -> None:
     story, fetch, _ = mods
     monkeypatch.setattr(fetch, "fetch_text", lambda url: f"text of {url}")
-    monkeypatch.setattr(story, "ask", lambda _message: "First.\n\nSecond.")
+    model = sys.modules["story_model"]
+    monkeypatch.setattr(model, "complete", lambda _m: ("First.\n\nSecond.", {"model": "m"}))
     written = story.write(STORY)
     assert written["paragraphs"] == ["First.", "Second."]
     assert {"fetch_seconds", "model_seconds", "input_chars", "output_chars"} <= written.keys()
@@ -272,3 +274,99 @@ def test_captions_and_calls_to_action_are_dropped(mods) -> None:
         f"{body.strip()} news",
         f"Voters were asked to sign up to vote early, {body.strip()}",
     ]
+
+
+KEY = "sk-test-secret-key"
+
+
+def reply(content: object = "A story.", finish: str = "stop", **message: object) -> bytes:
+    """A chat-completions reply body."""
+    body = {
+        "choices": [{"finish_reason": finish, "message": {"content": content, **message}}],
+        "usage": {"completion_tokens": 50, "completion_tokens_details": {"reasoning_tokens": 0}},
+    }
+    return json.dumps(body).encode()
+
+
+@pytest.fixture
+def model(mods, monkeypatch, tmp_path: Path):
+    """story_model with a credential file and a scripted opener; `.sent` records requests."""
+    del mods  # loaded for its side effect: fresh modules on sys.path
+    module = sys.modules["story_model"]
+    (tmp_path / "deepseek-api-key").write_text(KEY + "\n")
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(tmp_path))
+    monkeypatch.setattr(module, "RETRY_AFTER", 0)
+    monkeypatch.setattr(module, "sent", [], raising=False)
+    monkeypatch.setattr(module, "script", [], raising=False)
+
+    class Opener:
+        def open(self, request, timeout):
+            module.sent.append((request, timeout))
+            outcome = module.script.pop(0)
+            if isinstance(outcome, int):
+                raise urllib.error.HTTPError(request.full_url, outcome, "x", Message(), None)
+            return io.BytesIO(outcome)
+
+    monkeypatch.setattr(module, "OPENER", Opener())
+    return module
+
+
+def test_the_model_is_asked_with_thinking_off_and_the_key_from_the_credential(model) -> None:
+    model.script = [reply()]
+    text, facts = model.complete("Write it.")
+    request, timeout = model.sent[0]
+    body = json.loads(request.data)
+    assert text == "A story."
+    assert body["thinking"] == {"type": "disabled"}
+    assert request.full_url == "https://api.deepseek.com/chat/completions"
+    assert request.get_header("Authorization") == f"Bearer {KEY}"
+    assert timeout == model.TIMEOUT
+    assert facts["reasoning_tokens"] == 0
+    assert facts["reasoning_returned"] is False
+
+
+@pytest.mark.parametrize(
+    ("script", "reason"),
+    [
+        ([reply(finish="length")], "cut off"),
+        ([reply(content="  ")], "empty story"),
+        ([reply(content=None)], "empty story"),
+        ([b"not json"], "not JSON"),
+        ([b'{"choices": []}'], "no choices"),
+        ([401], "answered 401"),
+        ([503, 503], "answered 503"),
+    ],
+    ids=["truncated", "blank", "null", "not-json", "no-choices", "unauthorised", "down-twice"],
+)
+def test_an_unusable_reply_is_an_error_that_never_shows_the_key(model, script, reason) -> None:
+    model.script = list(script)
+    with pytest.raises(model.ModelError, match=reason) as caught:
+        model.complete("Write it.")
+    assert KEY not in str(caught.value)
+
+
+def test_a_transient_failure_is_retried_once_and_a_bad_request_is_not(model) -> None:
+    model.script = [429, reply()]
+    assert model.complete("Write it.")[0] == "A story."
+    assert len(model.sent) == 2
+    model.sent.clear()
+    model.script = [400, reply()]
+    with pytest.raises(model.ModelError):
+        model.complete("Write it.")
+    assert len(model.sent) == 1
+
+
+def test_returned_reasoning_is_reported_and_not_served(model) -> None:
+    model.script = [reply(content="The story.", reasoning_content="Let me think...")]
+    text, facts = model.complete("Write it.")
+    assert text == "The story."
+    assert facts["reasoning_returned"] is True
+
+
+@pytest.mark.usefixtures("mods")
+def test_redirects_are_refused() -> None:
+    module = sys.modules["story_model"]
+    handler = module.NoRedirects()
+    assert (
+        handler.redirect_request(None, None, 302, "Found", {}, "https://elsewhere.example/") is None
+    )

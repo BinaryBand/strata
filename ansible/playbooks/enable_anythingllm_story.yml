@@ -1,14 +1,15 @@
 ---
 # Install the /story service (files/anythingllm-story/): full stories for The
-# Daily Seek, written by an AnythingLLM workspace the first time a headline
-# is opened. Paths arrive as extravars; ports come from server_apps_defaults.
+# Daily Seek, written by DeepSeek the first time a headline is opened. Paths arrive as extravars; ports come from server_apps_defaults.
 #
 # Like /review, the service listens on a Unix socket in a 0700 runtime
 # directory and serves only the tailnet login read below from the
 # controller. It needs the internet (to read sources) and AnythingLLM on
 # loopback, so it has network access, but its unit denies the LAN and tailnet
-# ranges, and its code refuses any source address that is not public. Its API
-# key reaches it through systemd's LoadCredential=, never the environment.
+# ranges, and its code refuses any source address that is not public. It
+# calls DeepSeek directly with thinking off; the key is copied from
+# AnythingLLM's settings into a root-only file and reaches the service through
+# systemd's LoadCredential=, never the environment.
 - name: Install the AnythingLLM /story service
   hosts: all
   become: true
@@ -21,13 +22,8 @@
     anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
     anythingllm_api: "http://127.0.0.1:{{ anythingllm_http_port }}/api"
     anythingllm_story_socket: /run/anythingllm-story/story.sock
-    anythingllm_story_key_file: /etc/anythingllm-story/api-key
-    anythingllm_story_workspace_name: Story desk
-    # The instructions travel with each request (story.py); the workspace's
-    # own prompt only has to stay out of their way.
-    anythingllm_story_workspace_prompt: >-
-      You write news stories for a private newspaper. Follow the instructions
-      in each message exactly and use only the source texts it contains.
+    anythingllm_story_key_file: /etc/anythingllm-story/deepseek-api-key
+    anythingllm_story_retired_workspace: Story desk
 
   tasks:
     - name: Require the path extravars
@@ -36,6 +32,7 @@
           - anythingllm_story_dir | default('') | length > 0
           - anythingllm_story_cache_dir | default('') | length > 0
           - anythingllm_site_public_dir | default('') | length > 0
+          - anythingllm_storage_dir | default('') | length > 0
         fail_msg: >-
           The story paths must be set; run this through the
           services.enable_anythingllm_story runbook.
@@ -65,6 +62,10 @@
           The controller is not logged in to Tailscale as a user, so there is
           no login to allow. Log in with `tailscale up`, then re-run.
 
+    # --- Retire the AnythingLLM route --------------------------------------
+    # Stories used to be written by a "Story desk" workspace through
+    # AnythingLLM's developer API, with an all-access API key. The service now
+    # calls DeepSeek directly, so both are removed, and the key file with them.
     - name: Log in to AnythingLLM
       ansible.builtin.uri:
         url: "{{ anythingllm_api }}/request-token"
@@ -80,45 +81,75 @@
         headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
       register: anythingllm_story_workspaces
 
-    - name: Create the story workspace
+    - name: Delete the retired story workspace
       ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/workspace/new"
-        method: POST
-        body_format: json
-        body: {name: "{{ anythingllm_story_workspace_name }}"}
+        url: "{{ anythingllm_api }}/workspace/{{ item.slug }}"
+        method: DELETE
         headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      register: anythingllm_story_created
       changed_when: true
-      when: >-
-        anythingllm_story_workspaces.json.workspaces
-        | selectattr('name', 'eq', anythingllm_story_workspace_name) | list | length == 0
+      loop: >-
+        {{ anythingllm_story_workspaces.json.workspaces
+           | selectattr('name', 'eq', anythingllm_story_retired_workspace) | list }}
+      loop_control:
+        label: "{{ item.slug }}"
 
-    - name: Select the story workspace
+    # The listing carries every key's secret, so nothing of it is logged.
+    - name: Read AnythingLLM's API keys
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/system/api-keys"
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      register: anythingllm_story_api_keys
+      no_log: true
+
+    - name: Delete the retired story API key
+      ansible.builtin.uri:
+        url: "{{ anythingllm_api }}/system/api-key/{{ item.id }}"
+        method: DELETE
+        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
+      changed_when: true
+      loop: >-
+        {{ anythingllm_story_api_keys.json.apiKeys
+           | selectattr('name', 'eq', 'story-service') | list }}
+      loop_control:
+        label: "{{ item.id }}"
+      no_log: true
+
+    - name: Remove the retired API key file
+      ansible.builtin.file:
+        path: "{{ anythingllm_story_key_file | dirname }}/api-key"
+        state: absent
+
+    # --- The DeepSeek key, copied from AnythingLLM's settings ---------------
+    # AnythingLLM's settings file stays the one owner of the key and model; a
+    # key rotated in its UI reaches /story on the next run of this runbook.
+    - name: Read AnythingLLM's settings
+      ansible.builtin.slurp:
+        src: "{{ anythingllm_storage_dir }}/.env"
+      register: anythingllm_story_env
+      no_log: true
+
+    # Each value is the text after `NAME=` on its line, quotes stripped.
+    - name: Select the DeepSeek key and model
       vars:
-        anythingllm_story_found: >-
-          {{ anythingllm_story_workspaces.json.workspaces
-             | selectattr('name', 'eq', anythingllm_story_workspace_name) | list }}
+        anythingllm_story_env_lines: "{{ (anythingllm_story_env.content | b64decode).splitlines() }}"
       ansible.builtin.set_fact:
-        anythingllm_story_workspace: >-
-          {{ anythingllm_story_created.json.workspace
-             if anythingllm_story_created is changed else anythingllm_story_found | first }}
+        anythingllm_story_deepseek_key: >-
+          {{ ((anythingllm_story_env_lines | select('match', 'DEEPSEEK_API_KEY=') | list) + ['='])[0]
+             .split('=', 1)[1] | trim | trim("'\"") }}
+        anythingllm_story_model: >-
+          {{ (((anythingllm_story_env_lines | select('match', 'DEEPSEEK_MODEL_PREF=') | list)
+               + ['=deepseek-flash'])[0].split('=', 1)[1] | trim | trim("'\"")) or 'deepseek-flash' }}
+      no_log: true
 
-    # No chat history: every story is written from its own sources alone.
-    - name: Configure the story workspace
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/workspace/{{ anythingllm_story_workspace.slug }}/update"
-        method: POST
-        body_format: json
-        body:
-          openAiHistory: 0
-          chatMode: chat
-          openAiPrompt: "{{ anythingllm_story_workspace_prompt }}"
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      changed_when: true
-      when: >-
-        anythingllm_story_workspace.openAiHistory | default(20) | int != 0
-        or anythingllm_story_workspace.chatMode | default('') != 'chat'
-        or anythingllm_story_workspace.openAiPrompt | default('') != anythingllm_story_workspace_prompt
+    - name: Require a DeepSeek key in AnythingLLM's settings
+      ansible.builtin.assert:
+        that:
+          - anythingllm_story_deepseek_key | length > 0
+        fail_msg: >-
+          AnythingLLM has no DeepSeek API key set, so /story has nothing to
+          call. Set DeepSeek as the LLM provider in AnythingLLM, then re-run.
+        quiet: true
+      no_log: true
 
     - name: Ensure the key's directory exists
       ansible.builtin.file:
@@ -128,49 +159,14 @@
         group: root
         mode: "0700"
 
-    - name: Check for a saved API key
-      ansible.builtin.stat:
-        path: "{{ anythingllm_story_key_file }}"
-      register: anythingllm_story_key_stat
-
-    - name: Read the saved API key
-      ansible.builtin.slurp:
-        src: "{{ anythingllm_story_key_file }}"
-      register: anythingllm_story_key_saved
-      no_log: true
-      when: anythingllm_story_key_stat.stat.exists
-
-    - name: Check that the saved API key still works
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/v1/auth"
-        headers:
-          Authorization: "Bearer {{ anythingllm_story_key_saved.content | b64decode | trim }}"
-        status_code: [200, 403]
-      register: anythingllm_story_key_check
-      no_log: true
-      when: anythingllm_story_key_stat.stat.exists
-
-    - name: Create an API key for the service
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/system/generate-api-key"
-        method: POST
-        body_format: json
-        body: {name: story-service}
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      register: anythingllm_story_new_key
-      no_log: true
-      changed_when: true
-      when: not anythingllm_story_key_stat.stat.exists or anythingllm_story_key_check.status != 200
-
-    - name: Save the API key
+    - name: Save the DeepSeek key for the service
       ansible.builtin.copy:
         dest: "{{ anythingllm_story_key_file }}"
-        content: "{{ anythingllm_story_new_key.json.apiKey.secret }}\n"
+        content: "{{ anythingllm_story_deepseek_key }}\n"
         owner: root
         group: root
         mode: "0600"
       no_log: true
-      when: anythingllm_story_new_key is changed
       notify: Restart the story service
 
     - name: Ensure the service's code directory exists
@@ -191,6 +187,7 @@
       loop:
         - story.py
         - story_fetch.py
+        - story_model.py
         - story_page.py
         - story_sources.py
       notify: Restart the story service
@@ -215,10 +212,9 @@
           Environment=STORY_SOCKET={{ anythingllm_story_socket }}
           Environment=STORY_INDEX={{ anythingllm_site_public_dir }}/stories
           Environment=STORY_CACHE={{ anythingllm_story_cache_dir }}
-          Environment=STORY_API=http://127.0.0.1:{{ anythingllm_http_port }}/api/v1
-          Environment=STORY_WORKSPACE={{ anythingllm_story_workspace.slug }}
+          Environment=STORY_MODEL={{ anythingllm_story_model }}
           Environment=PYTHONDONTWRITEBYTECODE=1
-          LoadCredential=story-api-key:{{ anythingllm_story_key_file }}
+          LoadCredential=deepseek-api-key:{{ anythingllm_story_key_file }}
           RuntimeDirectory=anythingllm-story
           RuntimeDirectoryMode=0700
           UMask=0077
@@ -228,7 +224,13 @@
           ProtectSystem=strict
           ProtectHome=yes
           PrivateTmp=yes
-          # The internet and AnythingLLM on loopback only: no LAN, no tailnet.
+          # AnythingLLM's storage, with its settings and other keys, is hidden
+          # although diot owns it; so are other processes and core dumps.
+          InaccessiblePaths={{ anythingllm_storage_dir }}
+          ProtectProc=invisible
+          ProcSubset=pid
+          LimitCORE=0
+          # The internet, and loopback for the local DNS resolver: no LAN, no tailnet.
           RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
           IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10
           NoNewPrivileges=yes
