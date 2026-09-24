@@ -82,6 +82,9 @@ ignore = [
 # For both, terminal output and shelling out are the job, not a layering leak.
 "bootstrap.py" = ["T20", "S603", "S607", "INP001"]
 "ansible/vault_pass.py" = ["T20", "INP001"]
+# The /review monitor: a standalone stdlib script deployed to the server, not
+# part of the package; its one subprocess call runs a fixed absolute command.
+"ansible/playbooks/files/anythingllm-review/*.py" = ["INP001", "S603"]
 # print() and Typer's function-call defaults / boolean flags are idiomatic here.
 # PLR0913 joins them for the same reason: a Typer command's parameters ARE its
 # CLI flags, so "too many arguments" measures the size of the command's public

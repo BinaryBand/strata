@@ -52,6 +52,7 @@ EXTRAVAR_ONLY: dict[str, tuple[str, ...]] = {
     "enable_anythingllm_workshop.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_plugins_access.yml": ("anythingllm_storage_dir",),
     "enable_anythingllm_research.yml": ("anythingllm_storage_dir",),
+    "enable_anythingllm_review.yml": ("anythingllm_root",),
     "enable_anythingllm_site.yml": ("anythingllm_site_dir", "anythingllm_site_nginx_dir"),
     "install_anythingllm.yml": ("anythingllm_storage_dir", "anythingllm_container_storage_dir"),
     "install_baikal.yml": ("baikal_data_dir",),
