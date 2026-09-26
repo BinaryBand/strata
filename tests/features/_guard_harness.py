@@ -29,7 +29,6 @@ Runbook = Callable[..., int]
 
 ENSURE_PATH = "playbooks/ensure_path.yml"
 ENABLE_RCLONE = "playbooks/enable_rclone.yml"
-CREATE_DIOT = "playbooks/create_diot_user.yml"
 
 
 def isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:

@@ -30,7 +30,6 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from strata.core import guard
 from strata.core.models import Device
 from tests.features._guard_harness import (
-    CREATE_DIOT,
     ENABLE_RCLONE,
     ENSURE_PATH,
     install_upstream,
@@ -60,16 +59,6 @@ def target_is_remote(ctx: dict[str, Any]) -> None:
 # ── Given: ordering and short-circuit ─────────────────────────────────────
 
 
-@given("a runbook declares a sudo prerequisite then an upstream runbook then a path")
-def declares_three_kinds(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    install_upstream(ctx, monkeypatch, check=None)
-    ctx["decorators"] = [
-        guard.prerequisite("sudo_password"),
-        guard.requires("infrastructure.install_podman"),
-        guard.path("/srv/demo"),
-    ]
-
-
 @given("a runbook declares three path requirements")
 def declares_three_paths(ctx: dict[str, Any]) -> None:
     ctx["decorators"] = [guard.path(f"/srv/demo/{n}") for n in ("one", "two", "three")]
@@ -87,15 +76,6 @@ def second_path_fails(ctx: dict[str, Any], code: int) -> None:
         return code if calls["n"] == 2 else 0
 
     ctx["playbook_rc"] = rc_for
-
-
-# ── Given: controller-only ────────────────────────────────────────────────
-
-
-@given(parsers.parse('a runbook is controller-only because "{reason}"'))
-def declares_controller_only(ctx: dict[str, Any], reason: str) -> None:
-    ctx["reason"] = reason
-    ctx["decorators"] = [guard.controller_only(reason)]
 
 
 # ── Given: prerequisites ──────────────────────────────────────────────────
@@ -128,19 +108,9 @@ def secret_default(ctx: dict[str, Any], default: str) -> None:
     ctx["secret_default"] = default
 
 
-@given("it declares no default")
-def secret_no_default(ctx: dict[str, Any]) -> None:
-    ctx["secret_default"] = None
-
-
 @given("it is a password-kind secret")
 def secret_is_password(ctx: dict[str, Any]) -> None:
     ctx["secret_kind"] = "password"
-
-
-@given("it declares generate-on-blank")
-def secret_generates(ctx: dict[str, Any]) -> None:
-    ctx["secret_generate"] = True
 
 
 # ── Given: paths ──────────────────────────────────────────────────────────
@@ -161,20 +131,6 @@ def path_wrong_owner(ctx: dict[str, Any], path: str, tmp_path: Path) -> None:
     ctx["decorators"] = [guard.path(str(real), owner="root")]
 
 
-@given(parsers.parse('"{path}" cannot be stat\'d'))
-def path_unstattable(ctx: dict[str, Any], path: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Deny stat() for this one path, leaving every other path real."""
-    real_stat = Path.stat
-
-    def selective_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
-        if str(self) == path:
-            raise PermissionError(13, "Permission denied")
-        return real_stat(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "stat", selective_stat)
-    ctx["decorators"] = [guard.path(path, owner="diot", group="baikal", mode="2777")]
-
-
 # ── Given: mounts ─────────────────────────────────────────────────────────
 
 
@@ -187,13 +143,6 @@ def mount_required(ctx: dict[str, Any], remote_path: str) -> None:
 def rclone_unknown(ctx: dict[str, Any], name: str) -> None:
     ctx["rclone_known"].discard(name)
     ctx["rclone_listed"].discard(name)
-
-
-@given(parsers.parse('the remote "{name}" is registered read-only'))
-def remote_read_only(ctx: dict[str, Any], name: str) -> None:
-    ctx["rclone_known"].add(name)
-    ctx["rclone_listed"].add(name)
-    ctx["rclone_writable"].discard(name)
 
 
 @given(parsers.parse('"{remote_path}" is already mounted'))
@@ -213,31 +162,6 @@ def storage_holds(ctx: dict[str, Any], key: str, value: str) -> None:
     ctx["storage_key"] = key
 
 
-@given(parsers.parse('the storage secret "{key}" holds a local directory'))
-def storage_holds_local(ctx: dict[str, Any], key: str, tmp_path: Path) -> None:
-    local = tmp_path / "repo"
-    ctx["vault"][key] = str(local)
-    ctx["storage_key"] = key
-
-
-@given("the runbook requires that storage to be writable")
-def storage_requires_writable(ctx: dict[str, Any]) -> None:
-    ctx["storage_writable"] = True
-
-
-# ── Given: system users ───────────────────────────────────────────────────
-
-
-@given(parsers.parse('the "{username}" user already exists'))
-def user_exists(ctx: dict[str, Any], username: str) -> None:
-    ctx["users"].add(username)
-
-
-@given(parsers.parse('the "{username}" user does not exist'))
-def user_absent(ctx: dict[str, Any], username: str) -> None:
-    ctx["users"].discard(username)
-
-
 # ── Given: upstream runbooks ──────────────────────────────────────────────
 
 
@@ -249,26 +173,6 @@ def jellyfin_requires_podman(ctx: dict[str, Any]) -> None:
 @given("install_podman's check() reports it is not satisfied")
 def upstream_unsatisfied(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     install_upstream(ctx, monkeypatch, check=lambda: False)
-
-
-@given("install_podman's check() reports it is satisfied on the controller")
-def upstream_satisfied(ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    install_upstream(ctx, monkeypatch, check=lambda: True)
-    ctx["decorators"] = [guard.requires("infrastructure.install_podman")]
-
-
-@given(parsers.parse('install_podman requires the "{username}" user'))
-def upstream_declares_a_user(
-    ctx: dict[str, Any], monkeypatch: pytest.MonkeyPatch, username: str
-) -> None:
-    """Re-stub the upstream, this time carrying its own guard.user declaration."""
-    install_upstream(
-        ctx,
-        monkeypatch,
-        check=lambda: True,
-        decorators=[guard.user(username, CREATE_DIOT)],
-    )
-    ctx["decorators"] = [guard.requires("infrastructure.install_podman")]
 
 
 @given(parsers.parse("install_podman's check() raises {error}"))
@@ -301,17 +205,6 @@ def run_requiring_sudo(ctx: dict[str, Any]) -> None:
 @when(parsers.re(r'^I run a runbook requiring that secret and answer "(?P<answer>[^"]*)"$'))
 def run_requiring_secret(ctx: dict[str, Any], answer: str) -> None:
     ctx["answers"] = [answer]
-    _run_secret(ctx)
-
-
-@when(
-    parsers.re(
-        r'^I run a runbook requiring that secret and answer "(?P<first>[^"]*)"'
-        r' then "(?P<second>[^"]*)"$'
-    )
-)
-def run_requiring_secret_twice(ctx: dict[str, Any], first: str, second: str) -> None:
-    ctx["answers"] = [first, second]
     _run_secret(ctx)
 
 
@@ -351,32 +244,7 @@ def run_requiring_storage(ctx: dict[str, Any]) -> None:
     run_declared(ctx)
 
 
-@when(parsers.parse('I run a runbook requiring the "{username}" user'))
-def run_requiring_user(ctx: dict[str, Any], username: str) -> None:
-    ctx["decorators"] = [guard.user(username, CREATE_DIOT)]
-    run_declared(ctx)
-
-
 # ── Then: ordering, main(), exit codes ────────────────────────────────────
-
-
-@then("the requirements are satisfied in that order")
-def satisfied_in_order(ctx: dict[str, Any]) -> None:
-    assert ctx["events"][:3] == [
-        "prompt:sudo",
-        "upstream:install_podman",
-        f"playbook:{ENSURE_PATH}",
-    ], ctx["events"]
-
-
-@then("main() runs only after all of them succeed")
-def main_runs_last(ctx: dict[str, Any]) -> None:
-    assert ctx["events"][-1] == "main"
-
-
-@then("main() runs")
-def main_ran(ctx: dict[str, Any]) -> None:
-    assert "main" in ctx["events"]
 
 
 @then("main() does not run")
@@ -396,16 +264,6 @@ def no_later_requirement(ctx: dict[str, Any]) -> None:
 @then(parsers.parse("the run's exit code is {code:d}"))
 def run_exit_code(ctx: dict[str, Any], code: int) -> None:
     assert ctx.get("exit_code") == code
-
-
-# ── Then: controller-only ─────────────────────────────────────────────────
-
-
-@then("it is refused naming the target and the reason")
-def refused_naming_target(ctx: dict[str, Any]) -> None:
-    message = "\n".join(ctx["messages"])
-    assert ctx["target"] in message
-    assert ctx["reason"] in message
 
 
 # ── Then: prompts ─────────────────────────────────────────────────────────
@@ -443,21 +301,9 @@ def prompted_hidden(ctx: dict[str, Any]) -> None:
     assert ctx["prompts"][0]["hide_input"] is True
 
 
-@then("I am told it cannot be empty")
-def told_cannot_be_empty(ctx: dict[str, Any]) -> None:
-    assert any("cannot be empty" in message for message in ctx["echoes"]), ctx["echoes"]
-
-
 @then(parsers.parse('the secret "{key}" is stored as "{value}"'))
 def secret_stored_as(ctx: dict[str, Any], key: str, value: str) -> None:
     assert ctx["vault"].get(key) == value
-
-
-@then(parsers.parse('a random token is stored for "{key}"'))
-def random_token_stored(ctx: dict[str, Any], key: str) -> None:
-    stored = ctx["vault"].get(key)
-    assert stored, "expected a generated value"
-    assert len(stored) >= 20, stored
 
 
 @then("it raises naming the unknown prerequisite and listing the registered ones")
@@ -499,7 +345,6 @@ def enable_rclone_not_run(ctx: dict[str, Any]) -> None:
     assert not _ran(ctx, ENABLE_RCLONE)
 
 
-@then("enable_rclone.yml runs to mount it")
 @then("once registered, enable_rclone.yml runs to mount it")
 def enable_rclone_ran(ctx: dict[str, Any]) -> None:
     assert _ran(ctx, ENABLE_RCLONE)
@@ -508,16 +353,6 @@ def enable_rclone_ran(ctx: dict[str, Any]) -> None:
 @then("I am prompted to create the rclone remote")
 def prompted_to_create_remote(ctx: dict[str, Any]) -> None:
     assert ctx["rclone_created"], "expected prompt_create_remote to be called"
-
-
-@then(parsers.parse('"{name}" is re-registered read-write'))
-def re_registered_writable(ctx: dict[str, Any], name: str) -> None:
-    assert {"name": name, "writable": True} in ctx["rclone_added"]
-
-
-@then("the user-creation playbook is run")
-def user_playbook_ran(ctx: dict[str, Any]) -> None:
-    assert _ran(ctx, CREATE_DIOT)
 
 
 @then(parsers.parse('it fails telling me to re-set it with "{hint}"'))
@@ -533,11 +368,6 @@ def fails_with_reset_hint(ctx: dict[str, Any], hint: str) -> None:
 @then("install_podman is executed before install_jellyfin's main()")
 def upstream_ran_first(ctx: dict[str, Any]) -> None:
     assert ctx["events"].index("upstream:install_podman") < ctx["events"].index("main")
-
-
-@then("install_podman is not re-run")
-def upstream_not_run(ctx: dict[str, Any]) -> None:
-    assert "upstream:install_podman" not in ctx["events"]
 
 
 @then("install_podman is run rather than treated as broken")

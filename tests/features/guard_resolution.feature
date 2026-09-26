@@ -4,13 +4,12 @@ Feature: Resolve a runbook's declared prerequisites before it runs
   So that I am prompted only for what is genuinely missing, in dependency order,
   and a runbook never runs half-provisioned
 
-  # Ordering and short-circuit -----------------------------------------------
+  # Declaration order, controller-only refusal, blank and generated secrets,
+  # unstattable paths, storage dispatch, the system-user guard and upstream
+  # check() short-circuits are pinned in
+  # tests/unit/adapters/test_guard_executor.py rather than here.
 
-  Scenario: Requirements are satisfied in declaration order, outermost first
-    Given a runbook declares a sudo prerequisite then an upstream runbook then a path
-    When I run that runbook
-    Then the requirements are satisfied in that order
-    And main() runs only after all of them succeed
+  # Short-circuit ------------------------------------------------------------
 
   # Only the requirement kinds that provision something report failure by
   # returning an exit code; a prerequisite or secret that cannot be satisfied
@@ -23,24 +22,6 @@ Feature: Resolve a runbook's declared prerequisites before it runs
     Then no later requirement is attempted
     And main() does not run
     And the run's exit code is 4
-
-  # Controller-only runbooks -------------------------------------------------
-
-  @controller-only
-  Scenario: A controller-only runbook refuses a remote target
-    Given the target is a remote ssh host
-    And a runbook is controller-only because "workstation tooling"
-    When I run that runbook
-    Then it is refused naming the target and the reason
-    And main() does not run
-    And the run's exit code is 1
-
-  @controller-only
-  Scenario: A controller-only runbook runs normally on the controller
-    Given the target is the controller
-    And a runbook is controller-only because "workstation tooling"
-    When I run that runbook
-    Then main() runs
 
   # Prerequisites ------------------------------------------------------------
 
@@ -79,23 +60,6 @@ Feature: Resolve a runbook's declared prerequisites before it runs
     When I run a runbook requiring that secret and answer "s3cret"
     Then I am prompted with hidden input
 
-  # A blank answer used to be stored: the prompt carried default="" when no
-  # default was declared, so one stray Enter wrote an empty value, and because
-  # the vault only records that the key exists, nothing ever asked again --
-  # tailscale_auth_key stayed permanently poisoned.
-  Scenario: A blank answer to a secret with no default is re-prompted, not stored
-    Given the secret "tailscale_auth_key" is not in the vault
-    And it declares no default
-    When I run a runbook requiring that secret and answer "" then "tskey-abc"
-    Then I am told it cannot be empty
-    And the secret "tailscale_auth_key" is stored as "tskey-abc"
-
-  Scenario: A generate-on-blank secret produces a random value when left blank
-    Given the secret "baikal_admin_password" is not in the vault
-    And it declares generate-on-blank
-    When I run a runbook requiring that secret and answer ""
-    Then a random token is stored for "baikal_admin_password"
-
   # Local paths --------------------------------------------------------------
 
   @controller-only
@@ -109,17 +73,6 @@ Feature: Resolve a runbook's declared prerequisites before it runs
   Scenario: A path with the wrong owner is reconciled by the playbook
     Given the target is the controller
     And "/srv/jellyfin/config" exists but is owned by the wrong user
-    When I run a runbook requiring that path
-    Then ensure_path.yml runs to reconcile it
-
-  # A directory the operator cannot search is not evidence the path is right.
-  # /srv/baikal is created mode 2770 diot:baikal, and the guards for the two
-  # directories inside it then stat them as an operator who is not in that
-  # group; that used to leave an unhandled PermissionError.
-  @controller-only
-  Scenario: A path the operator cannot stat is reconciled rather than crashing the run
-    Given the target is the controller
-    And "/srv/baikal/config" cannot be stat'd
     When I run a runbook requiring that path
     Then ensure_path.yml runs to reconcile it
 
@@ -149,55 +102,14 @@ Feature: Resolve a runbook's declared prerequisites before it runs
 
   # Vaulted storage ----------------------------------------------------------
   # @storage holds a location the operator supplies at runtime, which may be a
-  # local directory or an rclone remote, so the kind of provisioning it needs
-  # is not known until the vault has been read. It is also the only guard that
-  # can require a *writable* remote -- @mount always declares a read-only one.
-
-  Scenario: A writable storage requirement upgrades a read-only rclone registration
-    Given the storage secret "restic_repository" holds "backup:snapshots"
-    And the remote "backup" is registered read-only
-    And the runbook requires that storage to be writable
-    When I run a runbook requiring that storage
-    Then "backup" is re-registered read-write
-    And enable_rclone.yml runs to mount it
-
-  Scenario: A storage location holding an rclone path dispatches to the mount flow
-    Given the storage secret "restic_repository" holds "pcloud:backups"
-    When I run a runbook requiring that storage
-    Then enable_rclone.yml runs to mount it
-    And ensure_path.yml is not run
-
-  Scenario: A storage location holding a local path dispatches to the path flow
-    Given the storage secret "restic_repository" holds a local directory
-    When I run a runbook requiring that storage
-    Then ensure_path.yml runs to reconcile it
-    And enable_rclone.yml is not run
+  # local directory or an rclone remote, so it cannot be checked until the
+  # vault has been read.
 
   Scenario: A storage location that reads back empty fails with a re-set hint
     Given the storage secret "restic_repository" holds ""
     When I run a runbook requiring that storage
     Then it fails telling me to re-set it with "strata config secret restic_repository"
     And main() does not run
-
-  # System users -------------------------------------------------------------
-
-  # Existence is not fitness. create_diot_user.yml also creates the group,
-  # allocates the subuid and subgid ranges and enables lingering, and a passwd
-  # entry is evidence of none of that -- a diot missing any of them satisfied
-  # the old fast path permanently. The play is idempotent, so it runs either
-  # way and repairs whatever is missing.
-  @controller-only
-  Scenario: An existing system user still has its creation playbook reconciled
-    Given the target is the controller
-    And the "diot" user already exists
-    When I run a runbook requiring the "diot" user
-    Then the user-creation playbook is run
-
-  Scenario: A missing system user is created by its playbook
-    Given the target is the controller
-    And the "diot" user does not exist
-    When I run a runbook requiring the "diot" user
-    Then the user-creation playbook is run
 
   # Upstream runbooks --------------------------------------------------------
 
@@ -206,23 +118,6 @@ Feature: Resolve a runbook's declared prerequisites before it runs
     And install_podman's check() reports it is not satisfied
     When I run install_jellyfin
     Then install_podman is executed before install_jellyfin's main()
-
-  Scenario: A satisfied upstream runbook is skipped via its check()
-    Given install_podman's check() reports it is satisfied on the controller
-    When I run install_jellyfin
-    Then install_podman is not re-run
-
-  # check() answers for the upstream's own work, never for its dependencies.
-  # It used to return outright, so a satisfied upstream took its whole declared
-  # chain with it: install_podman's check() is `which podman`, which made the
-  # diot guard it declares unreachable from every server app on any machine
-  # with podman on PATH.
-  Scenario: A satisfied upstream skips its own play but not its guards
-    Given install_podman's check() reports it is satisfied on the controller
-    And install_podman requires the "diot" user
-    When I run install_jellyfin
-    Then install_podman is not re-run
-    And the user-creation playbook is run
 
   # A check() is only ever an optimisation, so one that cannot answer must not
   # be fatal: OSError is the unreadable-path case, RuntimeError the unreadable-
@@ -237,3 +132,4 @@ Feature: Resolve a runbook's declared prerequisites before it runs
       | error        |
       | OSError      |
       | RuntimeError |
+
