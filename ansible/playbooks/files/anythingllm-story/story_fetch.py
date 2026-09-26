@@ -1,9 +1,10 @@
 """Fetch a news article and keep only its paragraph text.
 
 Only public internet hosts are fetched: every address a host name resolves to
-must be global, the connection goes to the address that was checked (so a
-second DNS answer cannot swap in a private one), and every redirect hop is
-checked again. Standard library only.
+must be global unicast, and so must any IPv4 address an IPv6 address embeds;
+the connection goes to the address that was checked (so a second DNS answer
+cannot swap in a private one), and every redirect hop is checked again.
+Standard library only.
 """
 
 from __future__ import annotations
@@ -25,21 +26,58 @@ MAX_URL = 2000
 DEADLINE = 45  # seconds for one source, all redirects and reads included
 PORTS = {"http": 80, "https": 443}
 USER_AGENT = "Mozilla/5.0 (compatible; DailySeekStoryDesk/1.0)"
+# IPv6 prefixes whose low 32 bits are an IPv4 address: compatible, mapped,
+# translated (SIIT) and the NAT64 well-known prefix. `is_global` passes some of
+# them whatever IPv4 address they carry.
+EMBEDS_V4 = tuple(
+    ipaddress.ip_network(n) for n in ("::/96", "::ffff:0:0/96", "::ffff:0:0:0/96", "64:ff9b::/96")
+)
+# Never a public web host, though `is_global` passes each on some CPython
+# release, 3.12.3 included: the deprecated 6to4 relay anycast, IETF protocol
+# assignments, local-use NAT64, 6to4, documentation, deprecated site-local,
+# SRv6 and the dummy prefix.
+NOT_HOSTS = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        *("192.88.99.0/24", "192.0.0.0/24", "64:ff9b:1::/48", "2002::/16", "3fff::/20"),
+        *("fec0::/10", "5f00::/16", "100:0:0:1::/64"),
+    )
+)
 
 
 class FetchError(Exception):
     """A source that could not be read, with the reason."""
 
 
+def embedded_v4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 address carries, if it carries one."""
+    if ip.sixtofour:
+        return ip.sixtofour
+    if ip.teredo:
+        return ip.teredo[1]
+    if any(ip in net for net in EMBEDS_V4):
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return None
+
+
+def public(address: str) -> bool:
+    """True for a global unicast address whose embedded IPv4 address, if any, is one too."""
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    if ip.is_multicast or not ip.is_global or any(ip in net for net in NOT_HOSTS):
+        return False
+    inner = embedded_v4(ip) if isinstance(ip, ipaddress.IPv6Address) else None
+    return inner is None or public(str(inner))
+
+
 def public_address(host: str, port: int) -> str:
-    """One address for host, after checking that every address it resolves to is global."""
+    """One address for host, after checking that every address it resolves to is public."""
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
         msg = f"cannot resolve {host}"
         raise FetchError(msg) from exc
     addresses = [str(info[4][0]) for info in infos]
-    if not addresses or not all(ipaddress.ip_address(a).is_global for a in addresses):
+    if not addresses or not all(public(a) for a in addresses):
         msg = f"{host} is not a public internet host"
         raise FetchError(msg)
     return addresses[0]

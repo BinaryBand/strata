@@ -202,7 +202,7 @@ def server(monkeypatch, root: Path, tmp_path_factory):
     sock_path = str(tmp_path_factory.mktemp("sock") / "review.sock")
     monkeypatch.setattr(review, "SOCKET", sock_path)
     srv = review.UnixHTTPServer(sock_path, review.Handler)
-    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     yield sock_path
     srv.shutdown()

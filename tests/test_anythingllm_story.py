@@ -195,7 +195,21 @@ def test_only_plain_http_urls_are_accepted(mods, url: str) -> None:
 
 @pytest.mark.parametrize(
     "addresses",
-    [["127.0.0.1"], ["10.1.2.3"], ["100.100.100.100"], ["93.184.215.14", "192.168.0.5"], ["::1"]],
+    [
+        ["127.0.0.1"],
+        ["10.1.2.3"],
+        ["100.100.100.100"],
+        ["93.184.215.14", "192.168.0.5"],
+        ["::1"],
+        ["::127.0.0.1"],  # IPv4-compatible: is_global passes it
+        ["::ffff:0:a00:1"],  # IPv4-translated: is_global passes it
+        ["64:ff9b::a00:1"],  # NAT64 of 10.0.0.1: is_global passes it
+        ["ff0e::1"],  # multicast: is_global passes it
+        ["192.0.0.9"],  # IETF protocol assignments: is_global passes it
+        ["64:ff9b:1::a00:1"],  # local-use NAT64: is_global passes it on 3.12.3
+        ["2002:5db8:d822::1"],  # 6to4: is_global passes it on 3.12.3
+        ["fec0::1"],  # deprecated site-local: is_global passes it
+    ],
 )
 def test_a_host_with_any_non_public_address_is_refused(mods, monkeypatch, addresses) -> None:
     _, fetch, _ = mods
@@ -204,6 +218,17 @@ def test_a_host_with_any_non_public_address_is_refused(mods, monkeypatch, addres
     )
     with pytest.raises(fetch.FetchError, match="not a public"):
         fetch.public_address("news.example", 443)
+
+
+@pytest.mark.parametrize("address", ["93.184.215.14", "2606:4700::1111"])
+def test_a_host_with_only_public_addresses_is_fetched_from_one_of_them(
+    mods, monkeypatch, address
+) -> None:
+    _, fetch, _ = mods
+    monkeypatch.setattr(
+        fetch.socket, "getaddrinfo", lambda *_a, **_k: [(0, 0, 0, "", (address, 0))]
+    )
+    assert fetch.public_address("news.example", 443) == address
 
 
 def test_a_redirect_to_a_file_url_is_refused(mods, monkeypatch) -> None:
