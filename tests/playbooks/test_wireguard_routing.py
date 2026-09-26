@@ -17,7 +17,7 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-from tests._ansible import PLAYBOOKS_DIR
+from tests.playbooks._ansible import PLAYBOOKS_DIR
 
 # Tailscale's policy rules occupy 5210-5270; the kernel's main-table rule is 32766.
 _TAILSCALE_LAST_PREF = 5270

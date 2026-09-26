@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 
 from strata.core.models.server_apps_config import ServerAppsDefaults
-from tests._ansible import PLAYBOOKS_DIR
+from tests.playbooks._ansible import PLAYBOOKS_DIR
 
 # playbook file -> vars it must source from server_apps_defaults.
 DEFAULTED_VARS: dict[str, tuple[str, ...]] = {

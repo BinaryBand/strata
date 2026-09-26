@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests._ansible import ANSIBLE_DIR, TASK_FILES, iter_tasks
+from tests.playbooks._ansible import ANSIBLE_DIR, TASK_FILES, iter_tasks
 
 
 @pytest.mark.parametrize(

@@ -11,8 +11,8 @@ re-running the play every time and never letting `@guard.requires` short
 circuit.
 
 Runbooks are exempt from the mirror-test rule (MIRROR_EXEMPT_DIRS), so this is
-a collective module like test_guard_completeness.py rather than one file per
-runbook under tests/unit/.
+one collective module under tests/unit/core/runbooks/ rather than one file per
+runbook.
 """
 
 from __future__ import annotations

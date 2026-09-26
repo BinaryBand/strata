@@ -232,7 +232,7 @@ def overlapping_backup_paths() -> list[tuple[str, str]]:
 
     Reported rather than raised: these are registered at import time, so
     raising here would make the whole runbook package unimportable and take
-    discovery down with it. tests/test_guard_completeness.py turns this into
+    discovery down with it. tests/playbooks/test_guard_completeness.py turns this into
     a suite failure, which is where a layout mistake belongs.
     """
     pairs: list[tuple[str, str]] = []

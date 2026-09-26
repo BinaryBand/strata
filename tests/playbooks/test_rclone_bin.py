@@ -13,7 +13,7 @@ import jinja2
 import pytest
 import yaml
 
-from tests._ansible import ANSIBLE_DIR, PLAYBOOKS_DIR, iter_tasks
+from tests.playbooks._ansible import ANSIBLE_DIR, PLAYBOOKS_DIR, iter_tasks
 
 _ROLE = ANSIBLE_DIR / "roles" / "diot_systemd_units"
 _BREW_RCLONE = "/home/linuxbrew/.linuxbrew/bin/rclone"

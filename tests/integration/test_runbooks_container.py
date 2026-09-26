@@ -71,5 +71,5 @@ def test_runbook_against_fresh_container(
         assert exit_code != 0, (
             f"{case.module} unexpectedly succeeded -- if a guard was added to "
             f"close this gap, remove its KNOWN_GAPS entry in "
-            f"tests/test_guard_completeness.py and flip expect_success here"
+            f"tests/playbooks/test_guard_completeness.py and flip expect_success here"
         )

@@ -33,7 +33,7 @@ import yaml
 import strata.core.runbooks as _runbook_pkg
 from strata.core import guard
 from strata.core import requirements as req
-from tests._ansible import ANSIBLE_DIR, iter_tasks
+from tests.playbooks._ansible import ANSIBLE_DIR, iter_tasks
 
 # Binary name -> dotted runbook (relative to strata.core.runbooks) that
 # installs it. Only tools actually observed as literal command/shell

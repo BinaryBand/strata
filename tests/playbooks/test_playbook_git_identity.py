@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import yaml
 
-from tests._ansible import TASK_FILES, iter_tasks
+from tests.playbooks._ansible import TASK_FILES, iter_tasks
 
 # The modules that can run a git commit. `command` cannot chain, but it can
 # still invoke `git commit` directly.
