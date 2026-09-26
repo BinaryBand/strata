@@ -30,7 +30,6 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from strata.adapters import state
 from strata.adapters.ansible import secrets
 from strata.cli import dispatch
 from strata.core import paths
@@ -52,7 +51,6 @@ def _isolate_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ~/.local/state/strata/state.json.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setattr(state, "_OLD_CONFIG_FILE", tmp_path / "no-legacy.json")
 
 
 _BACKUP = "playbooks/backup.yml"

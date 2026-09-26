@@ -25,9 +25,8 @@ scenarios("runbook_dispatch.feature")
 
 @pytest.fixture(autouse=True)
 def _isolate_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
-    # State: real AppState logic against a throwaway XDG dir; block legacy migration.
+    # State: real AppState logic against a throwaway XDG dir.
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setattr(state, "_OLD_CONFIG_FILE", tmp_path / "no-legacy.json")
 
     # guard_executor.execute: record instead of satisfying guards / running playbooks.
     calls: list[dict[str, Any]] = []

@@ -24,8 +24,6 @@ from strata.core.models import AppState
 def _isolated_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point AppState persistence at a scratch XDG state dir."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    # The legacy-location migration would otherwise touch the repo.
-    monkeypatch.setattr(state_mod, "_OLD_CONFIG_FILE", tmp_path / "absent.json")
     # Default every dispatch test to a non-tty so the host picker never fires;
     # the picker tests below opt back into a tty explicitly.
     monkeypatch.setattr(dispatch.sys.stdin, "isatty", lambda: False)

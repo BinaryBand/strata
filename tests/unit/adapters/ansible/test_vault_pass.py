@@ -75,33 +75,3 @@ def test_the_shell_script_reads_the_same_keychain_entry() -> None:
     text = script.read_text()
     assert vault_pass._SERVICE in text
     assert vault_pass._ACCOUNT in text
-
-
-# ── migration from the pre-rename mr-manager keychain entry ────────────
-
-
-def test_get_migrates_password_stored_under_the_old_service(fake_keyring: FakeKeyring) -> None:
-    fake_keyring.store[("mr-manager", "vault")] = "hunter2"
-
-    assert vault_pass.get_vault_password() == "hunter2"
-    assert fake_keyring.store[("strata", "vault")] == "hunter2"
-
-
-def test_migration_leaves_the_old_entry_in_place(fake_keyring: FakeKeyring) -> None:
-    fake_keyring.store[("mr-manager", "vault")] = "hunter2"
-
-    vault_pass.get_vault_password()
-
-    assert fake_keyring.store[("mr-manager", "vault")] == "hunter2"
-
-
-def test_new_entry_is_not_overwritten_by_the_old_one(fake_keyring: FakeKeyring) -> None:
-    fake_keyring.store[("strata", "vault")] = "current"
-    fake_keyring.store[("mr-manager", "vault")] = "stale"
-
-    assert vault_pass.get_vault_password() == "current"
-
-
-def test_get_returns_none_when_neither_entry_exists(fake_keyring: FakeKeyring) -> None:
-    assert vault_pass.get_vault_password() is None
-    assert fake_keyring.store == {}

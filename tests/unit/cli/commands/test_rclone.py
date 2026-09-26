@@ -14,7 +14,6 @@ import pytest
 from typer.testing import CliRunner
 
 from strata.adapters import guard_executor
-from strata.adapters import state as state_mod
 from strata.adapters.ansible import inventory, rclone
 from strata.cli.commands.rclone import _remote_completer, app
 
@@ -98,7 +97,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _FakeRclone:
 @pytest.fixture(autouse=True)
 def _isolated_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setattr(state_mod, "_OLD_CONFIG_FILE", tmp_path / "absent.json")
 
 
 _BASE_INI = (

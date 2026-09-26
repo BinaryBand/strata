@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from strata.adapters import guard_executor, state
+from strata.adapters import guard_executor
 from strata.cli import dispatch
 from strata.core.models import Device
 
@@ -48,7 +48,6 @@ def _isolate_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ~/.local/state/strata/state.json.
     """
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setattr(state, "_OLD_CONFIG_FILE", tmp_path / "no-legacy.json")
 
 
 _ENSURE_PATH = "playbooks/ensure_path.yml"
