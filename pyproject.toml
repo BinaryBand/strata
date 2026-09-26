@@ -94,11 +94,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "PLR2004", "ANN", "D", "INP001", "SLF001"]
 "conftest.py" = ["S", "ANN", "D", "INP001"]
-# Two standalone stdlib-only scripts that sit outside the layered package.
-# bootstrap.py runs before the package is installable; ansible/vault_pass.py is
-# invoked by ansible as --vault-password-file and its stdout IS its interface.
-# For both, terminal output and shelling out are the job, not a layering leak.
-"bootstrap.py" = ["T20", "S603", "S607", "INP001"]
+# ansible/vault_pass.py is a standalone script outside the layered package:
+# ansible invokes it as --vault-password-file and its stdout IS its interface.
 "ansible/vault_pass.py" = ["T20", "INP001"]
 # print() and Typer's function-call defaults / boolean flags are idiomatic here.
 # PLR0913 joins them for the same reason: a Typer command's parameters ARE its

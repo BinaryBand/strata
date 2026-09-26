@@ -1,9 +1,21 @@
 ---
-- name: Enable crash recovery and post-crash diagnostics
+- name: Keep the machine up, and diagnosable after a crash
   hosts: all
   become: true
 
   tasks:
+    # A server that suspends drops off the network and stops its services; a
+    # laptop lid or an idle timer is enough to trigger it.
+    - name: Never suspend or hibernate
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - sleep.target
+        - suspend.target
+        - hibernate.target
+        - hybrid-sleep.target
+
     - name: Auto-reboot after a kernel panic or oops
       ansible.builtin.copy:
         dest: /etc/sysctl.d/99-panic.conf
