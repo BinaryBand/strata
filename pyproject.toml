@@ -96,7 +96,7 @@ ignore = [
 # surface, not the complexity of the function. Splitting a 6-flag command to
 # satisfy it would change the CLI, not improve the code. C901 is deliberately
 # NOT ignored -- branchy command bodies are still worth splitting.
-"strata/cli/**" = ["T20", "B008", "FBT001", "FBT002", "PLR0913"]
+"src/strata/cli/**" = ["T20", "B008", "FBT001", "FBT002", "PLR0913"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -112,7 +112,7 @@ max-statements = 40
 
 [tool.vulture]
 min_confidence = 80
-paths = ["strata", "tests"]
+paths = ["src", "tests"]
 ignore_decorators = ["@pytest.fixture", "@pytest.mark.*"]
 
 [tool.pytest.ini_options]
@@ -127,6 +127,3 @@ markers = [
 # --import-mode=importlib so the mirrored tests/unit/ tree can reuse test_*.py
 # basenames across directories without module-name collisions.
 addopts = "-m 'not integration' --import-mode=importlib"
-
-[tool.uv.build-backend]
-module-root = ""

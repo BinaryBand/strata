@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# strata/core/paths.py -> strata/core -> strata -> repo root.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# src/strata/core/paths.py -> src/strata/core -> src/strata -> src -> repo root.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 ANSIBLE_DIR = PROJECT_ROOT / "ansible"
 INVENTORY_DIR = ANSIBLE_DIR / "inventory"

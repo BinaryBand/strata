@@ -8,7 +8,7 @@
 # precedence ladder handles the override naturally).
 #
 # The schema is enforced by the Pydantic model at
-# strata/core/models/server_apps_config.py -- run `strata dev schema` to regenerate
+# src/strata/core/models/server_apps_config.py -- run `strata dev schema` to regenerate
 # the VS Code intellisense schema after editing this file's structure.
 #
 # Data directories are deliberately NOT here: they are declared with guard.path

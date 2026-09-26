@@ -16,7 +16,7 @@ are echoed back automatically (that is `flutter run`, on whatever port it
 picked); any other origin has to be named with `--allow-origin`.
 
 Because the action routes can run privileged playbooks, they require a bearer
-token (`strata/adapters/gui_token.py`) that `strata gui` prints. The server
+token (`src/strata/adapters/gui_token.py`) that `strata gui` prints. The server
 itself still only binds 127.0.0.1 -- reaching it from another device is still
 `tailscale serve <port>`, never `tailscale funnel` -- so the token's job is to
 stop anything else already on that tailnet from running a playbook against

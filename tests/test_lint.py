@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "strata"
+PACKAGE = ROOT / "src" / "strata"
 TESTS = ROOT / "tests"
 # The mirrored, per-layer unit tests live under tests/unit/, leaving the rest of
 # tests/ (e.g. tests/integration/) free for categories the mirror check does not
