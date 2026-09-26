@@ -1,6 +1,8 @@
 ---
-# Install the /story service (files/anythingllm-story/): full stories for The
-# Daily Seek, written by DeepSeek the first time a headline is opened. Paths arrive as extravars; ports come from server_apps_defaults.
+# Install the /story service (services/story/ in the anyllm checkout at
+# anyllm_src): full stories for The Daily Seek, written by DeepSeek the first
+# time a headline is opened. Paths arrive as extravars; ports come from
+# server_apps_defaults.
 #
 # Like /review, the service listens on a Unix socket in a 0700 runtime
 # directory and serves only the tailnet login read below from the
@@ -15,15 +17,10 @@
   become: true
 
   vars:
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     anythingllm_group: anythingllm
-    anythingllm_http_port: "{{ server_apps_defaults.anythingllm.port }}"
     anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
-    anythingllm_api: "http://127.0.0.1:{{ anythingllm_http_port }}/api"
     anythingllm_story_socket: /run/anythingllm-story/story.sock
     anythingllm_story_key_file: /etc/anythingllm-story/deepseek-api-key
-    anythingllm_story_retired_workspace: Story desk
 
   tasks:
     - name: Require the path extravars
@@ -61,63 +58,6 @@
         fail_msg: >-
           The controller is not logged in to Tailscale as a user, so there is
           no login to allow. Log in with `tailscale up`, then re-run.
-
-    # --- Retire the AnythingLLM route --------------------------------------
-    # Stories used to be written by a "Story desk" workspace through
-    # AnythingLLM's developer API, with an all-access API key. The service now
-    # calls DeepSeek directly, so both are removed, and the key file with them.
-    - name: Log in to AnythingLLM
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/request-token"
-        method: POST
-        body_format: json
-        body: {password: "{{ anythingllm_password }}"}
-      register: anythingllm_story_login_token
-      no_log: true
-
-    - name: Read the workspaces
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/workspaces"
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      register: anythingllm_story_workspaces
-
-    - name: Delete the retired story workspace
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/workspace/{{ item.slug }}"
-        method: DELETE
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      changed_when: true
-      loop: >-
-        {{ anythingllm_story_workspaces.json.workspaces
-           | selectattr('name', 'eq', anythingllm_story_retired_workspace) | list }}
-      loop_control:
-        label: "{{ item.slug }}"
-
-    # The listing carries every key's secret, so nothing of it is logged.
-    - name: Read AnythingLLM's API keys
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/system/api-keys"
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      register: anythingllm_story_api_keys
-      no_log: true
-
-    - name: Delete the retired story API key
-      ansible.builtin.uri:
-        url: "{{ anythingllm_api }}/system/api-key/{{ item.id }}"
-        method: DELETE
-        headers: {Authorization: "Bearer {{ anythingllm_story_login_token.json.token }}"}
-      changed_when: true
-      loop: >-
-        {{ anythingllm_story_api_keys.json.apiKeys
-           | selectattr('name', 'eq', 'story-service') | list }}
-      loop_control:
-        label: "{{ item.id }}"
-      no_log: true
-
-    - name: Remove the retired API key file
-      ansible.builtin.file:
-        path: "{{ anythingllm_story_key_file | dirname }}/api-key"
-        state: absent
 
     # --- The DeepSeek key, copied from AnythingLLM's settings ---------------
     # AnythingLLM's settings file stays the one owner of the key and model; a
@@ -167,63 +107,43 @@
         group: root
         mode: "0600"
       no_log: true
-      notify: Restart the story service
+      register: anythingllm_story_key
 
-    - name: Ensure the service's code directory exists
-      ansible.builtin.file:
-        path: "{{ anythingllm_story_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    - name: Install the service's code
-      ansible.builtin.copy:
-        src: "anythingllm-story/{{ item }}"
-        dest: "{{ anythingllm_story_dir }}/{{ item }}"
-        owner: root
-        group: root
-        mode: "0644"
-      loop:
-        - story.py
-        - story_fetch.py
-        - story_model.py
-        - story_page.py
-        - story_sources.py
-      notify: Restart the story service
-
-    - name: Install the service's unit
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/anythingllm-story.service
-        owner: root
-        group: root
-        mode: "0644"
-        content: |
-          [Unit]
-          Description=The Daily Seek's full stories, written on first open, mounted at /story
+    - name: Install the service
+      ansible.builtin.include_role:
+        name: anyllm_service
+      vars:
+        anyllm_service_name: anythingllm-story
+        anyllm_service_description: The Daily Seek's full stories, written on first open, mounted at /story
+        anyllm_service_src: story
+        anyllm_service_dir: "{{ anythingllm_story_dir }}"
+        anyllm_service_main: story.py
+        anyllm_service_files:
+          - story.py
+          - story_fetch.py
+          - story_model.py
+          - story_page.py
+          - story_sources.py
+        anyllm_service_user: "{{ diot_user }}"
+        anyllm_service_group: "{{ anythingllm_group }}"
+        anyllm_service_restart: "{{ anythingllm_story_key.changed }}"
+        anyllm_service_unit_extra: |
           After=network-online.target
           Wants=network-online.target
-
-          [Service]
-          User={{ diot_user }}
-          Group={{ anythingllm_group }}
-          ExecStart=/usr/bin/python3 {{ anythingllm_story_dir }}/story.py
-          Environment=STORY_LOGIN={{ anythingllm_story_login }}
-          Environment=STORY_SOCKET={{ anythingllm_story_socket }}
-          Environment=STORY_INDEX={{ anythingllm_site_public_dir }}/stories
-          Environment=STORY_CACHE={{ anythingllm_story_cache_dir }}
-          Environment=STORY_MODEL={{ anythingllm_story_model }}
-          Environment=PYTHONDONTWRITEBYTECODE=1
+        anyllm_service_environment:
+          - STORY_LOGIN={{ anythingllm_story_login }}
+          - STORY_SOCKET={{ anythingllm_story_socket }}
+          - STORY_INDEX={{ anythingllm_site_public_dir }}/stories
+          - STORY_CACHE={{ anythingllm_story_cache_dir }}
+          - STORY_MODEL={{ anythingllm_story_model }}
+        anyllm_service_sandbox: |
           LoadCredential=deepseek-api-key:{{ anythingllm_story_key_file }}
           RuntimeDirectory=anythingllm-story
           RuntimeDirectoryMode=0700
           UMask=0077
-          Restart=on-failure
           ReadOnlyPaths={{ anythingllm_site_public_dir }}
           ReadWritePaths={{ anythingllm_story_cache_dir }}
-          ProtectSystem=strict
           ProtectHome=yes
-          PrivateTmp=yes
           # AnythingLLM's storage, with its settings and other keys, is hidden
           # although diot owns it; so are other processes and core dumps.
           InaccessiblePaths={{ anythingllm_storage_dir }}
@@ -233,28 +153,6 @@
           # The internet, and loopback for the local DNS resolver: no LAN, no tailnet.
           RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
           IPAddressDeny=10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10
-          NoNewPrivileges=yes
-          CapabilityBoundingSet=
-          RestrictNamespaces=yes
-          LockPersonality=yes
-          ProtectKernelTunables=yes
-          ProtectKernelModules=yes
-          ProtectControlGroups=yes
-          SystemCallArchitectures=native
-
-          [Install]
-          WantedBy=multi-user.target
-      notify: Restart the story service
-
-    - name: Enable and start the service
-      ansible.builtin.systemd_service:
-        name: anythingllm-story.service
-        enabled: true
-        state: started
-        daemon_reload: true
-
-    - name: Apply a changed service, code or key before checking the service
-      ansible.builtin.meta: flush_handlers
 
     # Any story path answers 404 until a story exists, which is enough to show
     # the service is up and accepts the allowed login.
@@ -270,33 +168,13 @@
       delay: 2
       until: anythingllm_story_health.status == 404
 
-    - name: Read the tailscale serve config
-      ansible.builtin.command: tailscale serve status --json
-      register: anythingllm_story_serve_status
-      changed_when: false
-
-    - name: Select the port's /story handler
-      vars:
-        anythingllm_story_serve: "{{ anythingllm_story_serve_status.stdout | default('{}', true) | from_json }}"
-      ansible.builtin.set_fact:
-        anythingllm_story_handlers: >-
-          {{ (anythingllm_story_serve.Web | default({}))
-             | dict2items
-             | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
-             | map(attribute='value.Handlers') | map('dict2items') | flatten
-             | selectattr('key', 'eq', '/story')
-             | map(attribute='value.Proxy') | select('defined') | list }}
-
     - name: Mount the service at /story on the site's port
-      ansible.builtin.command:
-        argv:
-          - tailscale
-          - serve
-          - --bg
-          - "--https={{ anythingllm_site_port }}"
-          - --set-path=/story
-          - "unix:{{ anythingllm_story_socket }}"
-      when: ("unix:" ~ anythingllm_story_socket) not in anythingllm_story_handlers
+      ansible.builtin.include_role:
+        name: tailscale_serve
+      vars:
+        tailscale_serve_port: "{{ anythingllm_site_port }}"
+        tailscale_serve_path: /story
+        tailscale_serve_backend: "unix:{{ anythingllm_story_socket }}"
 
     - name: Ensure the site builder's drop-in directory exists
       ansible.builtin.file:
@@ -319,12 +197,6 @@
       notify: Restart the site builder
 
   handlers:
-    - name: Restart the story service
-      ansible.builtin.systemd_service:
-        name: anythingllm-story.service
-        state: restarted
-        daemon_reload: true
-
     - name: Restart the site builder
       ansible.builtin.systemd_service:
         name: anythingllm-site-build.service

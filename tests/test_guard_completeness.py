@@ -6,10 +6,10 @@ runbook can't silently ship an assumption that nothing in its guard chain
 actually satisfies. This is deliberately narrow: it only sees tools invoked
 through ansible.builtin.command/shell task literals (after resolving simple
 play-level `vars:` substitutions), in either the `cmd:` or the `argv:` form,
-not tools consumed through dedicated Ansible modules/roles (server apps are
-mostly driven through the podman_quadlet_service role and systemd units) or
-tools assumed present on the base OS with no runbook provider at all (e.g.
-git, rclone -- neither has an installing runbook to point TOOL_PROVIDERS at).
+in the playbook itself or in any role it includes, not tools consumed through
+dedicated Ansible modules or tools assumed present on the base OS with no
+runbook provider at all (e.g. git, rclone -- neither has an installing runbook
+to point TOOL_PROVIDERS at).
 Those are out of reach of this kind of static check and are tracked as prose
 findings in the project plan instead.
 
@@ -56,6 +56,12 @@ KNOWN_GAPS: dict[str, frozenset[str]] = {}
 
 _PLAYBOOK_RE = re.compile(r'run_playbook\(\s*"(playbooks/[^"]+\.yml)"')
 _COMMAND_KEYS = ("ansible.builtin.command", "command", "ansible.builtin.shell", "shell")
+_ROLE_KEYS = (
+    "ansible.builtin.include_role",
+    "include_role",
+    "ansible.builtin.import_role",
+    "import_role",
+)
 
 
 def _import_all_runbooks() -> None:
@@ -111,6 +117,36 @@ def _command_strings(tasks: object) -> list[str]:
     ]
 
 
+def _role_names(tasks: object) -> set[str]:
+    """Roles `tasks` pulls in, by `roles:` entry or include_role/import_role task."""
+    names: set[str] = set()
+    for task in iter_tasks(tasks):
+        for key in _ROLE_KEYS:
+            spec = task.get(key)
+            if isinstance(spec, dict) and isinstance(name := spec.get("name"), str):
+                names.add(name)
+        for entry in cast("list[object]", task.get("roles") or []):
+            name = entry.get("role") if isinstance(entry, dict) else entry
+            if isinstance(name, str):
+                names.add(name)
+    return names
+
+
+def _role_tasks(names: set[str]) -> list[object]:
+    """Every task file of the named roles, and of the roles those include."""
+    seen: set[str] = set()
+    task_files: list[object] = []
+    pending = set(names)
+    while pending:
+        name = pending.pop()
+        seen.add(name)
+        for path in sorted((ANSIBLE_DIR / "roles" / name / "tasks").glob("*.yml")):
+            tasks = yaml.safe_load(path.read_text())
+            task_files.append(tasks)
+            pending |= _role_names(tasks) - seen
+    return task_files
+
+
 def _tools_used(playbook_path: Path) -> set[str]:
     plays = yaml.safe_load(playbook_path.read_text())
     tools: set[str] = set()
@@ -118,8 +154,10 @@ def _tools_used(playbook_path: Path) -> set[str]:
         if not isinstance(play, dict):
             continue
         play_vars = {k: v for k, v in (play.get("vars") or {}).items() if isinstance(v, str)}
-        for section in ("pre_tasks", "tasks", "post_tasks"):
-            for raw_cmd in _command_strings(play.get(section)):
+        sections = [play.get(s) for s in ("pre_tasks", "tasks", "post_tasks")]
+        sections += _role_tasks(_role_names(play))
+        for section in sections:
+            for raw_cmd in _command_strings(section):
                 cmd = raw_cmd
                 for name, value in play_vars.items():
                     cmd = cmd.replace("{{ " + name + " }}", value)

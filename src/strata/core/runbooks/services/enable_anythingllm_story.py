@@ -5,8 +5,8 @@ tailnet user logged in on the controller when this runs. On a story's first
 open it fetches the story's sources and has DeepSeek write the story directly,
 with thinking off, then caches it. The site builder is switched to link
 headlines to /story instead of to the first source. The DeepSeek key is copied
-from AnythingLLM's settings into a root-only file on the host; the retired
-AnythingLLM workspace and API key the service once used are deleted.
+from AnythingLLM's settings into a root-only file on the host. The service's
+code comes from the anyllm checkout.
 """
 
 from strata.core import guard
@@ -24,13 +24,6 @@ _CACHE_DIR = f"{_ROOT}/story-cache"
 @guard.requires("services.enable_anythingllm_site")
 @guard.requires("infrastructure.enable_tailscale")
 @guard.path(_CACHE_DIR, owner="diot", group="anythingllm", mode="0700")
-# Deleting the retired workspace and API key needs a login; the password is the
-# one install_anythingllm vaulted and wrote into AnythingLLM's settings.
-@guard.secret(
-    "anythingllm_password",
-    prompt="AnythingLLM login password (blank to generate one)",
-    generate=True,
-)
 def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
     """Install the /story service and point the site's headlines at it."""
     return runner.run_playbook(

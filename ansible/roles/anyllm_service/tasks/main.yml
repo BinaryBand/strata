@@ -1,0 +1,83 @@
+---
+# Install one of anyllm's server programs (a stdlib Python service from the
+# anyllm checkout's services/ directory) as a hardened system unit. Its code
+# lives root-owned on the host, out of the AI agent's reach; the unit runs it
+# as an unprivileged account with the sandbox every such service shares, plus
+# whatever the caller adds. The unit is restarted whenever its code, its unit
+# or a caller-named input changes. checkout.yml, run first, stops the play
+# when the anyllm checkout is missing on the controller.
+#
+# Required vars:
+#   anyllm_service_name         unit basename, e.g. anythingllm-review
+#   anyllm_service_description  the unit's Description=
+#   anyllm_service_src          directory under the checkout's services/
+#   anyllm_service_dir          where the code goes on the host
+#   anyllm_service_files        files to copy, relative to both
+#   anyllm_service_main         the file ExecStart runs
+#   anyllm_service_user         User=
+#   anyllm_service_group        Group=
+#
+# Optional vars:
+#   anyllm_service_unit_extra   extra [Unit] lines (default none)
+#   anyllm_service_environment  list of NAME=value for Environment= (default [])
+#   anyllm_service_sandbox      extra [Service] lines: runtime directory,
+#                               UMask, paths, network (default none)
+#   anyllm_service_restart      restart even when nothing here changed, for an
+#                               input the caller writes (default false)
+- name: Require anyllm_service vars
+  ansible.builtin.assert:
+    that:
+      - anyllm_service_name | default('') | length > 0
+      - anyllm_service_description | default('') | length > 0
+      - anyllm_service_src | default('') | length > 0
+      - anyllm_service_dir | default('') | length > 0
+      - anyllm_service_files | default([]) | length > 0
+      - anyllm_service_main | default('') | length > 0
+      - anyllm_service_user | default('') | length > 0
+      - anyllm_service_group | default('') | length > 0
+    fail_msg: Every required anyllm_service var must be set; see the role's header.
+
+- ansible.builtin.import_tasks: checkout.yml
+
+- name: "Ensure {{ anyllm_service_name }}'s code directory exists"
+  ansible.builtin.file:
+    path: "{{ anyllm_service_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "Install {{ anyllm_service_name }}'s code"
+  ansible.builtin.copy:
+    src: "{{ anyllm_src }}/services/{{ anyllm_service_src }}/{{ item }}"
+    dest: "{{ anyllm_service_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ anyllm_service_files }}"
+  register: anyllm_service_code
+
+- name: "Install {{ anyllm_service_name }}'s unit"
+  ansible.builtin.template:
+    src: service.j2
+    dest: "/etc/systemd/system/{{ anyllm_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: anyllm_service_unit
+
+- name: "Enable and start {{ anyllm_service_name }}"
+  ansible.builtin.systemd_service:
+    name: "{{ anyllm_service_name }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: "Restart {{ anyllm_service_name }} onto changed code or config"
+  ansible.builtin.systemd_service:
+    name: "{{ anyllm_service_name }}.service"
+    state: restarted
+    daemon_reload: true
+  when: >-
+    anyllm_service_code.changed or anyllm_service_unit.changed
+    or (anyllm_service_restart | default(false) | bool)

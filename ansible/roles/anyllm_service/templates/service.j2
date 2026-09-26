@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+[Unit]
+Description={{ anyllm_service_description }}
+{{ anyllm_service_unit_extra | default('') }}
+[Service]
+User={{ anyllm_service_user }}
+Group={{ anyllm_service_group }}
+ExecStart=/usr/bin/python3 {{ anyllm_service_dir }}/{{ anyllm_service_main }}
+{% for variable in anyllm_service_environment | default([]) %}
+Environment={{ variable }}
+{% endfor %}
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+{{ anyllm_service_sandbox | default('') }}
+# Every anyllm service: a read-only system, a private /tmp, no privileges to
+# gain, no namespaces, a fixed ABI.
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

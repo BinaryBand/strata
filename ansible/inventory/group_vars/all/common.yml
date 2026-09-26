@@ -1,0 +1,12 @@
+---
+# The account that owns the server apps' rootless containers and systemd
+# --user units (created by create_diot_user.yml), and its user manager's
+# runtime directory. The runtime directory resolves only after the play has
+# looked the account up with ansible.builtin.getent.
+diot_user: diot
+diot_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+
+# The anyllm checkout on the controller that the AnythingLLM services
+# (/review, /story, the site builder) are installed from. Defaults to a clone
+# beside this repository; override it per host with `strata config var`.
+anyllm_src: "{{ (playbook_dir ~ '/../../../anyllm') | realpath }}"

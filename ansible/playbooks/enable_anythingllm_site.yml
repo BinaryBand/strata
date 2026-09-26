@@ -5,9 +5,10 @@
 # Zola series come from server_apps_defaults.
 #
 # The agent writes small data files into its site folder; a builder service
-# (files/anythingllm-site-build/) validates them, builds the site with
-# strata's templates (files/anythingllm-site-zola/) and publishes each build
-# into the public folder as a release behind a `current` link.
+# validates them, builds the site with the Zola skeleton and publishes each
+# build into the public folder as a release behind a `current` link. The
+# builder, the skeleton, the format spec and the default stylesheet come from
+# services/site/ in the anyllm checkout at anyllm_src.
 #
 # nginx, not `tailscale serve <folder>`, because only a web server can send
 # headers: Cache-Control stops browsers from reusing yesterday's front page,
@@ -19,8 +20,6 @@
   become: true
 
   vars:
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     anythingllm_group: anythingllm
     anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
     anythingllm_site_local_port: "{{ server_apps_defaults.anythingllm.site_local_port }}"
@@ -45,6 +44,13 @@
           The site's directory extravars must be set; run this through the
           services.enable_anythingllm_site runbook.
 
+    - name: Require the anyllm checkout on the controller
+      ansible.builtin.include_role:
+        name: anyllm_service
+        tasks_from: checkout
+      vars:
+        anyllm_service_src: site
+
     # The paper's colours and type: a default for a fresh install, then the
     # agent's to edit. Layout is strata's layout.css in the skeleton.
     - name: Ensure the news folder exists
@@ -67,19 +73,19 @@
 
     - name: Place the default news stylesheet
       ansible.builtin.copy:
-        src: anythingllm-site/news-style.css
+        src: "{{ anyllm_src }}/services/site/news-style.css"
         dest: "{{ anythingllm_site_dir }}/news/style.css"
         force: false
         owner: "{{ diot_user }}"
         group: "{{ anythingllm_group }}"
         mode: "0660"
 
-    # The format spec describes what the validator accepts, so it is strata's
-    # and rewritten on every run; the rest of the agent's folder is seeded
+    # The format spec describes what the validator accepts, so it is the
+    # builder's and rewritten on every run; the rest of the agent's folder is seeded
     # elsewhere and then belongs to the agent and the user.
     - name: Write the content format spec
       ansible.builtin.copy:
-        src: anythingllm-site/FORMAT.md
+        src: "{{ anyllm_src }}/services/site/FORMAT.md"
         dest: "{{ anythingllm_site_dir }}/FORMAT.md"
         owner: "{{ diot_user }}"
         group: "{{ anythingllm_group }}"
@@ -150,7 +156,7 @@
         owner: root
         group: root
       when: not anythingllm_zola_installed.stat.exists
-      notify: Restart the site builder
+      register: anythingllm_zola_unpacked
 
     - name: Remove the downloaded archive
       ansible.builtin.file:
@@ -163,7 +169,7 @@
         dest: /usr/local/bin/zola
         state: link
         force: true
-      notify: Restart the site builder
+      register: anythingllm_zola_linked
 
     # --- The builder --------------------------------------------------------
     - name: Read this host's tailnet name for the site's links
@@ -171,7 +177,7 @@
       register: anythingllm_site_tailnet
       changed_when: false
 
-    - name: Ensure the skeleton and builder directories exist
+    - name: Ensure the skeleton's directories exist
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -185,12 +191,11 @@
         - "{{ anythingllm_site_zola_dir }}/static"
         - "{{ anythingllm_site_zola_dir }}/static/news"
         - "{{ anythingllm_site_zola_dir }}/static/news/regions"
-        - "{{ anythingllm_site_build_dir }}"
 
     # Root-owned: the agent cannot change what a page is built from.
     - name: Install the Zola skeleton
       ansible.builtin.copy:
-        src: "anythingllm-site-zola/{{ item }}"
+        src: "{{ anyllm_src }}/services/site/zola/{{ item }}"
         dest: "{{ anythingllm_site_zola_dir }}/{{ item }}"
         owner: root
         group: root
@@ -211,73 +216,37 @@
         - static/news/regions/world.svg
 
     - name: Install the builder
-      ansible.builtin.copy:
-        src: "anythingllm-site-build/{{ item }}"
-        dest: "{{ anythingllm_site_build_dir }}/{{ item }}"
-        owner: root
-        group: root
-        mode: "0644"
-      loop:
-        - build.py
-        - common.py
-        - pictures.py
-        - validate.py
-      notify: Restart the site builder
-
-    - name: Install the builder's service
+      ansible.builtin.include_role:
+        name: anyllm_service
       vars:
         anythingllm_site_cert: "{{ (anythingllm_site_tailnet.stdout | from_json).CertDomains | default([], true) | first }}"
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/anythingllm-site-build.service
-        owner: root
-        group: root
-        mode: "0644"
-        content: |
-          [Unit]
-          Description=Build the AnythingLLM agent's site with Zola whenever it changes
-
-          [Service]
-          User={{ diot_user }}
-          Group={{ anythingllm_group }}
-          ExecStart=/usr/bin/python3 {{ anythingllm_site_build_dir }}/build.py
-          Environment=SITE_SOURCE={{ anythingllm_site_dir }}
-          Environment=SITE_SKELETON={{ anythingllm_site_zola_dir }}
-          Environment=SITE_PUBLIC={{ anythingllm_site_public_dir }}
-          Environment=SITE_ZOLA=/usr/local/bin/zola
-          Environment=SITE_BASE_URL=https://{{ anythingllm_site_cert }}:{{ anythingllm_site_port }}
-          Environment=PYTHONDONTWRITEBYTECODE=1
+        anyllm_service_name: anythingllm-site-build
+        anyllm_service_description: Build the AnythingLLM agent's site with Zola whenever it changes
+        anyllm_service_src: site/build
+        anyllm_service_dir: "{{ anythingllm_site_build_dir }}"
+        anyllm_service_main: build.py
+        anyllm_service_files:
+          - build.py
+          - common.py
+          - pictures.py
+          - validate.py
+        anyllm_service_user: "{{ diot_user }}"
+        anyllm_service_group: "{{ anythingllm_group }}"
+        anyllm_service_restart: "{{ anythingllm_zola_unpacked.changed or anythingllm_zola_linked.changed }}"
+        anyllm_service_environment:
+          - SITE_SOURCE={{ anythingllm_site_dir }}
+          - SITE_SKELETON={{ anythingllm_site_zola_dir }}
+          - SITE_PUBLIC={{ anythingllm_site_public_dir }}
+          - SITE_ZOLA=/usr/local/bin/zola
+          - SITE_BASE_URL=https://{{ anythingllm_site_cert }}:{{ anythingllm_site_port }}
+        anyllm_service_sandbox: |
           UMask=0027
-          Restart=on-failure
           # Reads everything it needs; writes only the public folder and the
-          # agent's BUILD.md; no network; no privileges to gain.
-          ProtectSystem=strict
+          # agent's BUILD.md; no network.
           ReadWritePaths={{ anythingllm_site_public_dir }} {{ anythingllm_site_dir }}
           ProtectHome=yes
-          PrivateTmp=yes
           PrivateNetwork=yes
           RestrictAddressFamilies=AF_UNIX
-          NoNewPrivileges=yes
-          CapabilityBoundingSet=
-          RestrictNamespaces=yes
-          LockPersonality=yes
-          ProtectKernelTunables=yes
-          ProtectKernelModules=yes
-          ProtectControlGroups=yes
-          SystemCallArchitectures=native
-
-          [Install]
-          WantedBy=multi-user.target
-      notify: Restart the site builder
-
-    - name: Enable and start the builder
-      ansible.builtin.systemd_service:
-        name: anythingllm-site-build.service
-        enabled: true
-        state: started
-        daemon_reload: true
-
-    - name: Apply a changed builder before waiting for its build
-      ansible.builtin.meta: flush_handlers
 
     # nginx switches to the build output only once a build has published.
     - name: Wait for a published build
@@ -354,65 +323,19 @@
         - anythingllm_site_health.cache_control | default('') == 'no-cache'
         - "'script-src' in (anythingllm_site_health.content_security_policy | default(''))"
 
-    - name: Read the tailscale serve config
-      ansible.builtin.command: tailscale serve status --json
-      register: anythingllm_site_serve_status
-      changed_when: false
-
-    - name: Select the port's current root handler
-      vars:
-        anythingllm_site_serve: "{{ anythingllm_site_serve_status.stdout | default('{}', true) | from_json }}"
-      ansible.builtin.set_fact:
-        anythingllm_site_listener: >-
-          {{ (anythingllm_site_serve.TCP | default({})).get(anythingllm_site_port | string, {}) }}
-        anythingllm_site_roots: >-
-          {{ (anythingllm_site_serve.Web | default({}))
-             | dict2items
-             | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
-             | map(attribute='value.Handlers') | map('dict2items') | flatten
-             | selectattr('key', 'eq', '/')
-             | map(attribute='value') | list }}
-
-    # The port is this play's if its root proxies to nginx, or serves the
-    # folder directly (how this play published it before nginx). Anything else
-    # belongs to another service.
-    - name: Require an existing listener on the port to be this site's
-      ansible.builtin.assert:
-        that:
-          - >-
-            (anythingllm_site_roots | selectattr('Proxy', 'defined') | map(attribute='Proxy') | list
-             + anythingllm_site_roots | selectattr('Path', 'defined') | map(attribute='Path') | list)
-            | intersect([anythingllm_site_backend, anythingllm_site_dir]) | length > 0
-        fail_msg: >-
-          Port {{ anythingllm_site_port }} is already served on the tailnet,
-          but not by this site (root handlers: {{ anythingllm_site_roots }}).
-          Check `tailscale serve status`, remove that listener with `tailscale
-          serve --https={{ anythingllm_site_port }} off` if it is stale, then
-          re-run.
-      when: anythingllm_site_listener | length > 0
-
-    # One command replaces the old folder handler in place, with no gap.
+    # Switched over in one command, with no gap, once nginx has answered.
     - name: Proxy the tailnet port to nginx
-      ansible.builtin.command:
-        argv:
-          - tailscale
-          - serve
-          - --bg
-          - "--https={{ anythingllm_site_port }}"
-          - "{{ anythingllm_site_backend }}"
-      when: anythingllm_site_backend not in (anythingllm_site_roots | selectattr('Proxy', 'defined') | map(attribute='Proxy') | list)
+      ansible.builtin.include_role:
+        name: tailscale_serve
+      vars:
+        tailscale_serve_port: "{{ anythingllm_site_port }}"
+        tailscale_serve_backend: "{{ anythingllm_site_backend }}"
 
   handlers:
-    - name: Restart the site builder
-      ansible.builtin.systemd_service:
-        name: anythingllm-site-build.service
-        state: restarted
-        daemon_reload: true
-
     - name: Restart the site's nginx
       become_user: "{{ diot_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+        XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
       ansible.builtin.systemd_service:
         name: anythingllm-site.service
         state: restarted

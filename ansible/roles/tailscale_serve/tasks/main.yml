@@ -1,0 +1,66 @@
+---
+# Publish a loopback backend on this host's tailnet address over HTTPS, at one
+# path of one port, with the tailnet's own certificate. `tailscale serve --bg`
+# runs only when the path does not already proxy to the backend, so a re-run
+# changes nothing.
+#
+# At the port's root, a listener that proxies anywhere else belongs to another
+# service, and overwriting it is the operator's call, so the role stops. A
+# sub-path (e.g. /story) shares the port with the root's owner and is set
+# beside it.
+#
+# Required vars:
+#   tailscale_serve_port     HTTPS port on the tailnet address
+#   tailscale_serve_backend  what the path proxies to (http://127.0.0.1:<port>
+#                            or unix:<socket>)
+#
+# Optional vars:
+#   tailscale_serve_path     handler path (default "/")
+- name: Require tailscale_serve vars
+  ansible.builtin.assert:
+    that:
+      - tailscale_serve_port | string | length > 0
+      - tailscale_serve_backend | default('') | length > 0
+    fail_msg: tailscale_serve_port and tailscale_serve_backend must both be set.
+
+- name: "Read the tailscale serve config for port {{ tailscale_serve_port }}"
+  ansible.builtin.command: tailscale serve status --json
+  register: tailscale_serve_status
+  changed_when: false
+
+- name: "Select the port's listener and its {{ tailscale_serve_path | default('/') }} proxies"
+  vars:
+    tailscale_serve_config: "{{ tailscale_serve_status.stdout | default('{}', true) | from_json }}"
+  ansible.builtin.set_fact:
+    tailscale_serve_listener: >-
+      {{ (tailscale_serve_config.TCP | default({})).get(tailscale_serve_port | string, {}) }}
+    tailscale_serve_proxies: >-
+      {{ (tailscale_serve_config.Web | default({}))
+         | dict2items
+         | selectattr('key', 'match', '.*:' ~ tailscale_serve_port ~ '$')
+         | map(attribute='value.Handlers') | map('dict2items') | flatten
+         | selectattr('key', 'eq', tailscale_serve_path | default('/'))
+         | map(attribute='value.Proxy') | select('defined') | list }}
+
+- name: Require an existing listener on the port to be this backend's
+  ansible.builtin.assert:
+    that:
+      - tailscale_serve_backend in tailscale_serve_proxies
+    fail_msg: >-
+      Port {{ tailscale_serve_port }} is already served on the tailnet, but
+      not to {{ tailscale_serve_backend }} (root proxies:
+      {{ tailscale_serve_proxies }}). Check `tailscale serve status`, remove
+      that listener with `tailscale serve --https={{ tailscale_serve_port }}
+      off` if it is stale, then re-run.
+  when:
+    - tailscale_serve_path | default('/') == '/'
+    - tailscale_serve_listener | length > 0
+
+- name: "Serve {{ tailscale_serve_backend }} on the tailnet"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['tailscale', 'serve', '--bg', '--https=' ~ tailscale_serve_port]
+         + ([] if tailscale_serve_path | default('/') == '/'
+            else ['--set-path=' ~ tailscale_serve_path])
+         + [tailscale_serve_backend] }}
+  when: tailscale_serve_backend not in tailscale_serve_proxies

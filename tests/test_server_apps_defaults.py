@@ -40,7 +40,7 @@ DEFAULTED_VARS: dict[str, tuple[str, ...]] = {
         "anythingllm_site_image",
         "anythingllm_zola_series",
     ),
-    "enable_anythingllm_story.yml": ("anythingllm_http_port", "anythingllm_site_port"),
+    "enable_anythingllm_story.yml": ("anythingllm_site_port",),
     "enable_anythingllm_review.yml": ("anythingllm_site_port", "anythingllm_review_port"),
     "install_anythingllm.yml": ("anythingllm_http_port", "anythingllm_image"),
     "install_baikal.yml": ("baikal_http_port", "baikal_image"),

@@ -1,7 +1,8 @@
 ---
-# Install the read-only /review monitor (files/anythingllm-review/) as a
-# hardened system service and serve it at the root of its own tailnet port,
-# a separate origin from the agent-built site and /story on the site's port.
+# Install the read-only /review monitor (services/review/ in the anyllm
+# checkout at anyllm_src) as a hardened system service and serve it at the
+# root of its own tailnet port, a separate origin from the agent-built site
+# and /story on the site's port.
 # The AnythingLLM root arrives as an extravar; the ports come from
 # server_apps_defaults.
 #
@@ -15,14 +16,11 @@
   become: true
 
   vars:
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     anythingllm_group: anythingllm
     anythingllm_site_port: "{{ server_apps_defaults.anythingllm.site_port }}"
     anythingllm_review_port: "{{ server_apps_defaults.anythingllm.review_port }}"
     anythingllm_review_dir: "{{ anythingllm_root }}/review"
     anythingllm_review_socket: /run/anythingllm-review/review.sock
-    anythingllm_review_backend: "unix:{{ anythingllm_review_socket }}"
 
   tasks:
     - name: Require the AnythingLLM root extravar
@@ -68,112 +66,59 @@
         database: passwd
         key: "{{ diot_user }}"
 
-    - name: Ensure the monitor's code directory exists
-      ansible.builtin.file:
-        path: "{{ anythingllm_review_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
-    - name: Install the monitor's code
-      ansible.builtin.copy:
-        src: "anythingllm-review/{{ item }}"
-        dest: "{{ anythingllm_review_dir }}/{{ item }}"
-        owner: root
-        group: root
-        mode: "0644"
-      loop:
-        - review.py
-        - review_artifacts.py
-        - review_builtins.json
-        - review_content.py
-        - review_files.py
-        - review_knowledge.py
-        - review_layout.py
-        - review_overview.py
-        - review_run.py
-        - review_secrets.py
-        - review_story.py
-        - review_style.py
-        - review_tasks.py
-        - review_thread.py
-        - review_tools.py
-        - review_viewer.py
-        - review_workspace.py
-      notify: Restart the review monitor
-
-    - name: Remove modules the monitor no longer has
-      ansible.builtin.file:
-        path: "{{ anythingllm_review_dir }}/{{ item }}"
-        state: absent
-      loop:
-        - review_skills.py
-      notify: Restart the review monitor
-
-    - name: Install the monitor's service
+    - name: Install the monitor
+      ansible.builtin.include_role:
+        name: anyllm_service
       vars:
         anythingllm_review_uid: "{{ ansible_facts.getent_passwd[diot_user][1] }}"
         anythingllm_site_cert: "{{ (anythingllm_review_tailnet.stdout | from_json).CertDomains | default([], true) | first }}"
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/anythingllm-review.service
-        owner: root
-        group: root
-        mode: "0644"
-        content: |
-          [Unit]
-          Description=Read-only AnythingLLM admin monitor, on its own tailnet port
+        anyllm_service_name: anythingllm-review
+        anyllm_service_description: Read-only AnythingLLM admin monitor, on its own tailnet port
+        anyllm_service_src: review
+        anyllm_service_dir: "{{ anythingllm_review_dir }}"
+        anyllm_service_main: review.py
+        anyllm_service_files:
+          - review.py
+          - review_artifacts.py
+          - review_builtins.json
+          - review_content.py
+          - review_files.py
+          - review_knowledge.py
+          - review_layout.py
+          - review_overview.py
+          - review_run.py
+          - review_secrets.py
+          - review_story.py
+          - review_style.py
+          - review_tasks.py
+          - review_thread.py
+          - review_tools.py
+          - review_viewer.py
+          - review_workspace.py
+        anyllm_service_user: "{{ diot_user }}"
+        anyllm_service_group: "{{ anythingllm_group }}"
+        anyllm_service_unit_extra: |
           After=network.target
-
-          [Service]
-          User={{ diot_user }}
-          Group={{ anythingllm_group }}
-          ExecStart=/usr/bin/python3 {{ anythingllm_review_dir }}/review.py
-          Environment=REVIEW_ROOT={{ anythingllm_root }}
-          Environment=REVIEW_LOGIN={{ anythingllm_review_login }}
-          Environment=REVIEW_SOCKET={{ anythingllm_review_socket }}
-          Environment=REVIEW_PREFIX=
-          Environment=REVIEW_SITE_URL=https://{{ anythingllm_site_cert }}:{{ anythingllm_site_port }}
-          Environment=PYTHONDONTWRITEBYTECODE=1
+        anyllm_service_environment:
+          - REVIEW_ROOT={{ anythingllm_root }}
+          - REVIEW_LOGIN={{ anythingllm_review_login }}
+          - REVIEW_SOCKET={{ anythingllm_review_socket }}
+          - REVIEW_PREFIX=
+          - REVIEW_SITE_URL=https://{{ anythingllm_site_cert }}:{{ anythingllm_site_port }}
           # For `systemctl --user is-active` on diot's AnythingLLM units.
-          Environment=XDG_RUNTIME_DIR=/run/user/{{ anythingllm_review_uid }}
-          Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ anythingllm_review_uid }}/bus
+          - XDG_RUNTIME_DIR=/run/user/{{ anythingllm_review_uid }}
+          - DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ anythingllm_review_uid }}/bus
+        anyllm_service_sandbox: |
           RuntimeDirectory=anythingllm-review
           RuntimeDirectoryMode=0700
           UMask=0077
-          Restart=on-failure
-          # Read-only everywhere, no network at all (the socket is a file),
-          # no privileges to gain.
+          # Read-only everywhere, no network at all (the socket is a file).
           ReadOnlyPaths={{ anythingllm_root }}
-          ProtectSystem=strict
           # read-only, not yes: "yes" also hides /run/user, where diot's user
           # manager listens for the service-state check.
           ProtectHome=read-only
-          PrivateTmp=yes
           PrivateNetwork=yes
           RestrictAddressFamilies=AF_UNIX
-          NoNewPrivileges=yes
-          CapabilityBoundingSet=
-          RestrictNamespaces=yes
-          LockPersonality=yes
-          ProtectKernelTunables=yes
-          ProtectKernelModules=yes
-          ProtectControlGroups=yes
-          SystemCallArchitectures=native
-
-          [Install]
-          WantedBy=multi-user.target
-      notify: Restart the review monitor
-
-    - name: Enable and start the monitor
-      ansible.builtin.systemd_service:
-        name: anythingllm-review.service
-        enabled: true
-        state: started
-        daemon_reload: true
-
-    - name: Apply a changed service or code before checking the monitor
-      ansible.builtin.meta: flush_handlers
 
     # Mount it on the tailnet only once it answers the allowed login.
     - name: Check that the monitor answers over its socket
@@ -188,68 +133,9 @@
       delay: 2
       until: anythingllm_review_health.status == 200
 
-    - name: Read the tailscale serve config
-      ansible.builtin.command: tailscale serve status --json
-      register: anythingllm_review_serve_status
-      changed_when: false
-
-    - name: Select the review port's root handler and the site port's old /review handler
-      vars:
-        anythingllm_review_serve: "{{ anythingllm_review_serve_status.stdout | default('{}', true) | from_json }}"
-        anythingllm_review_web: "{{ (anythingllm_review_serve.Web | default({})) | dict2items }}"
-      ansible.builtin.set_fact:
-        anythingllm_review_listener: >-
-          {{ (anythingllm_review_serve.TCP | default({})).get(anythingllm_review_port | string, {}) }}
-        anythingllm_review_roots: >-
-          {{ anythingllm_review_web
-             | selectattr('key', 'match', '.*:' ~ anythingllm_review_port ~ '$')
-             | map(attribute='value.Handlers') | map('dict2items') | flatten
-             | selectattr('key', 'eq', '/')
-             | map(attribute='value.Proxy') | select('defined') | list }}
-        anythingllm_review_old: >-
-          {{ anythingllm_review_web
-             | selectattr('key', 'match', '.*:' ~ anythingllm_site_port ~ '$')
-             | map(attribute='value.Handlers') | map('dict2items') | flatten
-             | selectattr('key', 'eq', '/review')
-             | list }}
-
-    - name: Require an existing listener on the review port to be this monitor's
-      ansible.builtin.assert:
-        that:
-          - anythingllm_review_backend in anythingllm_review_roots
-        fail_msg: >-
-          Port {{ anythingllm_review_port }} is already served on the tailnet,
-          but not by this monitor (root handlers: {{ anythingllm_review_roots }}).
-          Check `tailscale serve status`, remove that listener with `tailscale
-          serve --https={{ anythingllm_review_port }} off` if it is stale, then
-          re-run.
-      when: anythingllm_review_listener | length > 0
-
     - name: Serve the monitor at the root of its own tailnet port
-      ansible.builtin.command:
-        argv:
-          - tailscale
-          - serve
-          - --bg
-          - "--https={{ anythingllm_review_port }}"
-          - "{{ anythingllm_review_backend }}"
-      when: anythingllm_review_backend not in anythingllm_review_roots
-
-    # Before it had its own origin, the monitor was mounted at /review on the
-    # site's port.
-    - name: Remove the old /review mount from the site's port
-      ansible.builtin.command:
-        argv:
-          - tailscale
-          - serve
-          - "--https={{ anythingllm_site_port }}"
-          - --set-path=/review
-          - "off"
-      when: anythingllm_review_old | length > 0
-
-  handlers:
-    - name: Restart the review monitor
-      ansible.builtin.systemd_service:
-        name: anythingllm-review.service
-        state: restarted
-        daemon_reload: true
+      ansible.builtin.include_role:
+        name: tailscale_serve
+      vars:
+        tailscale_serve_port: "{{ anythingllm_review_port }}"
+        tailscale_serve_backend: "unix:{{ anythingllm_review_socket }}"
