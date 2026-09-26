@@ -4,7 +4,7 @@
 
   vars:
     tap_name: mylocal/tools
-    formula_file: "{{ (playbook_dir + '/../../static/homebrew-tools/Formula/antigravity.rb') | realpath }}"
+    formula_file: "{{ playbook_dir }}/files/homebrew-tools/Formula/antigravity.rb"
     brew_bin: /home/linuxbrew/.linuxbrew/bin/brew
     antigravity_bin: /home/linuxbrew/.linuxbrew/bin/antigravity
 

@@ -71,7 +71,7 @@ def _import_all_runbooks() -> None:
 
 
 def _runbook_names() -> list[str]:
-    """Dotted runbook names, e.g. 'services.install_from_git'."""
+    """Dotted runbook names, e.g. 'services.install_jellyfin'."""
     _import_all_runbooks()
     prefix = _runbook_pkg.__name__ + "."
     names = [

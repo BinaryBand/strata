@@ -37,7 +37,7 @@ ALLOWED_EXCEPTIONS: dict[str, str] = {
 
 
 def _runbook_names() -> list[str]:
-    """Dotted runbook names, e.g. 'services.install_from_git'.
+    """Dotted runbook names, e.g. 'services.install_jellyfin'.
 
     Walks the package the same way discovery does, so a module this gate would
     reject cannot hide by being unimportable or by sitting outside a category.
