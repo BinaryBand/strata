@@ -16,32 +16,6 @@
 # so the directory a guard creates and the directory the container binds cannot
 # drift apart.
 server_apps_defaults:
-  anythingllm:
-    # Pinned by minor series: upstream moves the 1.16 tag across patch
-    # releases, and moving to 1.17 is a deliberate edit here. The Quadlet role
-    # pulls only a missing image, so a host keeps the 1.16 build it first
-    # pulled until the image is removed.
-    image: docker.io/mintplexlabs/anythingllm:1.16
-    # AnythingLLM listens on 3001 inside the container and its own UI builds
-    # absolute links from that port, so the published port matches it.
-    port: 3001
-    # The agent-written site (enable_anythingllm_site), served by tailscale on
-    # its own port so its pages are a separate origin from AnythingLLM's UI.
-    site_port: 8443
-    # The /review monitor (enable_anythingllm_review), on its own tailnet port
-    # so its pages are a separate origin from the agent-built site and /story.
-    review_port: 8444
-    # nginx serving that site on loopback, behind tailscale serve. The
-    # unprivileged build runs entirely as uid 101 (mapped onto diot), which the
-    # stock image cannot: its master must create /var/cache/nginx as root.
-    # Pinned by minor series: 1.30 is nginx's stable line, and moving on is a
-    # deliberate edit here.
-    site_local_port: 8088
-    site_image: docker.io/nginxinc/nginx-unprivileged:1.30-alpine
-    # The Zola release series that builds the site: the newest 0.23.x is
-    # installed and checked against GitHub's published SHA-256. Moving to a
-    # new series (0.23 templates use Tera 2) is a deliberate edit here.
-    zola_series: "0.23"
   baikal:
     image: docker.io/ckulka/baikal:nginx
     port: 8080

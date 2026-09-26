@@ -1,8 +1,11 @@
 ---
 # Write a Quadlet unit for a diot-owned rootless Podman service, regenerate
 # the user systemd manager's services from it, and start it. Callers:
-# install_baikal.yml, install_jellyfin.yml, install_minio.yml,
-# install_anythingllm.yml and enable_anythingllm_site.yml.
+# install_baikal.yml, install_jellyfin.yml and install_minio.yml here, and the
+# anyllm repository's AnythingLLM playbooks, which run from this ansible/
+# folder and reach the role through ansible.cfg's roles_path. The vars below
+# are therefore an interface: renaming one breaks a caller this repo's tests
+# cannot see.
 #
 # Required vars:
 #   quadlet_user     the become_user the service runs as (e.g. diot)
@@ -30,8 +33,8 @@
       quadlet_user, quadlet_group, quadlet_name and quadlet_content must all
       be set before including podman_quadlet_service.
 
-# The group and its setgid data directory are provisioned declaratively by
-# guard.path on the runbook; this only wires quadlet_user's membership into
+# The caller provisions the group and its setgid data directory (strata's
+# runbooks with guard.path); this only wires quadlet_user's membership into
 # that group for runtime sharing with other service users.
 - name: "Add {{ quadlet_user }} to the {{ quadlet_group }} group"
   ansible.builtin.user:
