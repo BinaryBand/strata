@@ -1,0 +1,20 @@
+# Template for managed.yml, the every-host variables the strata CLI writes
+# (`strata rclone add|serve add`, `strata config var` without --target). The
+# CLI creates managed.yml on first write; copying this is only for writing it
+# by hand.
+#
+# managed.yml itself is gitignored -- it names your storage remotes and ports,
+# which are yours and not this repository's business.
+
+# rclone remotes mounted under /mnt/rclone/<remote> by enable_rclone.
+rclone_remotes:
+  - myremote
+# The subset of rclone_remotes mounted read-write; the rest mount read-only.
+rclone_writable_remotes:
+  - myremote
+# rclone paths served over plain HTTP on loopback by enable_rclone_http.
+rclone_http_serves:
+  - name: media
+    path: myremote:Media
+    base_url: /media
+    port: 8083
