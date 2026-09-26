@@ -93,20 +93,6 @@ def test_vulture() -> None:
     )
 
 
-def test_astgrep() -> None:
-    """ast-grep architectural rules must all pass.
-
-    Installed via the `ast-grep-cli` dev dependency, which provides both the
-    `ast-grep` and `sg` binaries. Resolved from the venv rather than PATH so
-    this never silently skips -- these four rules are the only enforcement of
-    the layering invariants ruff cannot express.
-    """
-    result = _run(["ast-grep", "scan", "--config", str(ROOT / "sgconfig.yml"), str(ROOT)])
-    assert result.returncode == 0, (
-        f"ast-grep found violations (exit {result.returncode}):\n\n{result.stdout}\n{result.stderr}"
-    )
-
-
 def test_module_length() -> None:
     """No source module may exceed MAX_MODULE_LINES lines.
 

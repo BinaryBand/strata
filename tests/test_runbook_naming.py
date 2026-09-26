@@ -11,9 +11,8 @@ leaves a service running" at the moment of choosing.
 `docs/LEDGER.md` carried this as an open opportunity for a long time,
 noting the rule was neither written down nor enforced (and misremembering a
 `remove_*` prefix that never existed). It is written down now, in docs/ARCHITECTURE.md.
-This gate is what keeps it true: no ast-grep rule can express it, because the
-rules in `static/rules/` match code structure and this is a fact about file
-names.
+This gate is what keeps it true: no linter can express it, because it is a
+fact about file names, not code structure.
 
 The allowlist is deliberately small and each entry has to say why. It exists
 for the runbooks that are neither kind of provisioning step -- operations you
