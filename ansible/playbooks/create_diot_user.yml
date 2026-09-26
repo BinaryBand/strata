@@ -9,7 +9,6 @@
   become: true
 
   vars:
-    diot_user: diot
     diot_group: diot
 
     # Single managed user, so a fixed range is fine and keeps runs

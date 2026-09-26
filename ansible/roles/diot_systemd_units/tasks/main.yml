@@ -32,7 +32,7 @@
     desired_units: "{{ unit_keys | map('regex_replace', '^(.*)$', unit_prefix ~ '\\1.service') | list }}"
   # systemd --user is reached over diot's lingering runtime dir.
   environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
+    XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
   block:
     - name: Ensure diot's systemd user directory exists
       ansible.builtin.file:

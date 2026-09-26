@@ -11,10 +11,6 @@
   become: true
 
   vars:
-    # become_user: diot runs module code as diot, who cannot read operator's
-    # project venv; pin the system interpreter both users can execute.
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     jellyfin_group: jellyfin
     jellyfin_image: "{{ server_apps_defaults.jellyfin.image }}"
     jellyfin_http_port: "{{ server_apps_defaults.jellyfin.port }}"

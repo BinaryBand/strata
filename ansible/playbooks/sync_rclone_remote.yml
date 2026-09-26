@@ -14,12 +14,10 @@
   hosts: all
   become: false
 
-  vars:
-    ansible_python_interpreter: /usr/bin/python3
-    # rclone_synced_remotes comes from host_vars/<host>.yml. Deliberately NOT
-    # defaulted here: a play var would outrank the host_var and shadow it with
-    # an empty list. Use `| default([])` at each reference so an unset list is
-    # safe on a first run.
+  # rclone_synced_remotes comes from host_vars/<host>.yml. Deliberately NOT
+  # defaulted here: a play var would outrank the host_var and shadow it with
+  # an empty list. Use `| default([])` at each reference so an unset list is
+  # safe on a first run.
 
   tasks:
     - name: Install rclone

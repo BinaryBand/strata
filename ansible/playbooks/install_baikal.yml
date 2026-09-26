@@ -10,10 +10,6 @@
   become: true
 
   vars:
-    # become_user: diot runs module code as diot, who cannot read operator's
-    # project venv; pin the system interpreter both users can execute.
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     baikal_group: baikal
     baikal_image: "{{ server_apps_defaults.baikal.image }}"
     baikal_http_port: "{{ server_apps_defaults.baikal.port }}"

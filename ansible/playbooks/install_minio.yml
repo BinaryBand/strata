@@ -10,10 +10,6 @@
   become: true
 
   vars:
-    # become_user: diot runs module code as diot, who cannot read operator's
-    # project venv; pin the system interpreter both users can execute.
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     minio_group: minio
     minio_image: "{{ server_apps_defaults.minio.image }}"
     minio_api_port: "{{ server_apps_defaults.minio.port }}"

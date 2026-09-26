@@ -26,8 +26,6 @@
   become: true
 
   vars:
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
     operator_rclone_conf: "{{ lookup('env', 'HOME') }}/.config/rclone/rclone.conf"
     # rclone_remotes comes from group_vars/all/managed.yml (maintained by `strata rclone
     # register`). Deliberately NOT defaulted here: a play var would outrank the

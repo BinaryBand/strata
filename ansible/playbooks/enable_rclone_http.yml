@@ -13,13 +13,10 @@
   hosts: all
   become: true
 
-  vars:
-    ansible_python_interpreter: /usr/bin/python3
-    diot_user: diot
-    # rclone_http_serves comes from group_vars/all/managed.yml (maintained by `strata
-    # rclone serve`). Deliberately NOT defaulted here, for the same reason as
-    # rclone_remotes in enable_rclone.yml: a play var would outrank the
-    # group_var and shadow it with an empty list.
+  # rclone_http_serves comes from group_vars/all/managed.yml (maintained by `strata
+  # rclone serve`). Deliberately NOT defaulted here, for the same reason as
+  # rclone_remotes in enable_rclone.yml: a play var would outrank the
+  # group_var and shadow it with an empty list.
 
   tasks:
     - name: Reconcile diot's rclone HTTP serve units
