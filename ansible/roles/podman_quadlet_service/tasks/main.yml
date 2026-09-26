@@ -1,8 +1,131 @@
 ---
-# Default entry point: deploy then start, for services with no work to splice
-# in between. This is what a plain `include_role` runs, and what both current
-# callers (install_baikal.yml, install_jellyfin.yml) use. See deploy.yml's
-# header for the vars this expects; a caller needing to interleave its own
-# tasks includes deploy.yml / start.yml separately with `tasks_from`.
-- ansible.builtin.import_tasks: deploy.yml
-- ansible.builtin.import_tasks: start.yml
+# Write a Quadlet unit for a diot-owned rootless Podman service, regenerate
+# the user systemd manager's services from it, and start it. Callers:
+# install_baikal.yml, install_jellyfin.yml, install_minio.yml,
+# install_anythingllm.yml and enable_anythingllm_site.yml.
+#
+# Required vars:
+#   quadlet_user     the become_user the service runs as (e.g. diot)
+#   quadlet_group    group quadlet_user is added to for shared volume access
+#   quadlet_name     unit basename -- written to <name>.container
+#   quadlet_content  full Quadlet unit file content
+#
+# Optional vars:
+#   quadlet_mode          mode for the .container file (default "0644";
+#                         tighten to "0600" when the unit embeds secrets)
+#   quadlet_no_log        suppress logging of the write task (default false;
+#                         set true when quadlet_content embeds a secret, so
+#                         it never reaches the run log)
+#   quadlet_extra_notify  handler names to notify when the unit changes, for a
+#                         caller that must restart its service onto the new
+#                         unit (the regenerate below runs before they flush)
+- name: Require podman_quadlet_service vars
+  ansible.builtin.assert:
+    that:
+      - quadlet_user | default('') | length > 0
+      - quadlet_group | default('') | length > 0
+      - quadlet_name | default('') | length > 0
+      - quadlet_content | default('') | length > 0
+    fail_msg: >-
+      quadlet_user, quadlet_group, quadlet_name and quadlet_content must all
+      be set before including podman_quadlet_service.
+
+# The group and its setgid data directory are provisioned declaratively by
+# guard.path on the runbook; this only wires quadlet_user's membership into
+# that group for runtime sharing with other service users.
+- name: "Add {{ quadlet_user }} to the {{ quadlet_group }} group"
+  ansible.builtin.user:
+    name: "{{ quadlet_user }}"
+    groups: "{{ quadlet_group }}"
+    append: true
+
+- name: "Look up {{ quadlet_user }}'s uid and home directory"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ quadlet_user }}"
+
+# The first start of a unit whose image is not local pulls it inside
+# ExecStart, and a multi-gigabyte image outlasts systemd's start timeout: the
+# start job fails even though the container comes up once the pull finishes.
+# Pulling here, outside any systemd job, takes that wait off the start. It runs
+# before the unit is written because writing it notifies a caller's restart
+# handler (quadlet_extra_notify), which would otherwise start the service
+# before the image is local once handlers flush. The image is read from the unit's own Image= line
+# so it has one spelling. Only a missing image is pulled; refreshing a tag
+# already present is not this role's job.
+- name: "Require an Image= line in the {{ quadlet_name }} unit"
+  ansible.builtin.assert:
+    that:
+      - (quadlet_content | regex_search('^Image=(.+)$', multiline=True)) is not none
+    fail_msg: >-
+      quadlet_content for {{ quadlet_name }} has no line of the form
+      `Image=<ref>` at the start of a line; the role reads the image to pull
+      from it.
+
+- name: "Ensure the {{ quadlet_name }} image is present"
+  become_user: "{{ quadlet_user }}"
+  vars:
+    quadlet_image: "{{ quadlet_content | regex_search('^Image=(.+)$', '\\1', multiline=True) | first }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ quadlet_runtime_dir }}"
+  block:
+    - name: "Check whether the {{ quadlet_name }} image is local"
+      ansible.builtin.command:
+        argv: [podman, image, exists, "{{ quadlet_image }}"]
+      register: quadlet_image_exists
+      changed_when: false
+      failed_when: quadlet_image_exists.rc not in [0, 1]
+
+    - name: "Pull the {{ quadlet_name }} image"
+      ansible.builtin.command:
+        argv: [podman, pull, "{{ quadlet_image }}"]
+      when: quadlet_image_exists.rc == 1
+
+- name: "Write the {{ quadlet_name }} Quadlet unit"
+  become_user: "{{ quadlet_user }}"
+  vars:
+    quadlet_home: "{{ ansible_facts.getent_passwd[quadlet_user][4] }}"
+  # systemd --user is reached over quadlet_user's lingering runtime dir;
+  # without XDG_RUNTIME_DIR the user-scoped systemd_service tasks below
+  # cannot connect.
+  environment:
+    XDG_RUNTIME_DIR: "{{ quadlet_runtime_dir }}"
+  block:
+    - name: Ensure the Quadlet directory exists
+      ansible.builtin.file:
+        path: "{{ quadlet_home }}/.config/containers/systemd"
+        state: directory
+        mode: "0700"
+
+    - name: "Write the {{ quadlet_name }}.container unit"
+      ansible.builtin.copy:
+        dest: "{{ quadlet_home }}/.config/containers/systemd/{{ quadlet_name }}.container"
+        mode: "{{ quadlet_mode | default('0644') }}"
+        content: "{{ quadlet_content }}"
+      no_log: "{{ quadlet_no_log | default(false) }}"
+      notify: "{{ quadlet_extra_notify | default([]) }}"
+
+# Quadlet units only become systemd services on a daemon-reload. It runs every
+# time, not only when the unit changed, so that a previously generated service
+# that was lost (reboot, systemd reset, ...) is recovered too, and it runs
+# before the caller's restart handlers flush, so they restart onto the new
+# unit.
+- name: Regenerate user systemd units from Quadlet files
+  become_user: "{{ quadlet_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ quadlet_runtime_dir }}"
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true
+
+- name: Restart onto a changed unit before starting
+  ansible.builtin.meta: flush_handlers
+
+- name: "Ensure {{ quadlet_name }} is running"
+  become_user: "{{ quadlet_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ quadlet_runtime_dir }}"
+  ansible.builtin.systemd_service:
+    name: "{{ quadlet_name }}.service"
+    scope: user
+    state: started
