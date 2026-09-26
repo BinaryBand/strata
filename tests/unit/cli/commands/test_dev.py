@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -20,9 +21,13 @@ def test_dev_exposes_schema_command() -> None:
     assert "schema" in names
 
 
-def test_dev_schema_regenerates_and_reports_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`dev schema` calls write_schema and echoes where it wrote, without touching disk."""
-    monkeypatch.setattr(ServerAppsDefaults, "write_schema", lambda: Path("/tmp/out.json"))
+def test_dev_schema_regenerates_and_reports_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`dev schema` writes the model's JSON Schema and echoes where it wrote."""
+    out = tmp_path / "schema.json"
+    monkeypatch.setattr(dev, "_SCHEMA_PATH", out)
     result = runner.invoke(app, ["dev", "schema"])
     assert result.exit_code == 0
-    assert "/tmp/out.json" in result.output
+    assert str(out) in result.output
+    assert json.loads(out.read_text()) == ServerAppsDefaults.model_json_schema()

@@ -12,9 +12,12 @@ from typing import Annotated
 
 import typer
 
-from strata.adapters import gui_token
+from strata.adapters import fs, gui_token
 from strata.cli import gui_server
+from strata.core import paths
 from strata.core.models import ServerAppsDefaults
+
+_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "server_apps_schema.json"
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -27,12 +30,13 @@ def dev_schema() -> None:
     """Write the JSON Schema for server_apps_defaults.yml to .vscode/.
 
     Regenerates .vscode/server_apps_schema.json from the Pydantic model at
-    strata/core/models/server_apps_config.py.  VS Code yaml.schemas points at
-    that file, so editing the YAML gets intellisense and validation.
+    src/strata/core/models/server_apps_config.py.  VS Code yaml.schemas points
+    at that file, so editing the YAML gets intellisense and validation.
     Run this any time you change the model structure.
     """
-    out_path = ServerAppsDefaults.write_schema()
-    typer.echo(f"Wrote schema to {out_path}")
+    schema = ServerAppsDefaults.model_json_schema()
+    fs.write_text(_SCHEMA_PATH, json.dumps(schema, indent=2, sort_keys=True) + "\n")
+    typer.echo(f"Wrote schema to {_SCHEMA_PATH}")
 
 
 @app.command("gui-data")

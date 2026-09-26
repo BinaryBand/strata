@@ -16,15 +16,7 @@ gitignored, so each checkout regenerates the schema with `strata dev schema`.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from pydantic import BaseModel
-
-from strata.core import paths
-
-_PROJECT_ROOT = paths.PROJECT_ROOT
-_SCHEMA_PATH = _PROJECT_ROOT / ".vscode" / "server_apps_schema.json"
 
 
 class BaikalDefaults(BaseModel):
@@ -72,14 +64,3 @@ class ServerAppsDefaults(BaseModel):
     baikal: BaikalDefaults
     jellyfin: JellyfinDefaults
     minio: MinioDefaults
-
-    @classmethod
-    def write_schema(cls) -> Path:
-        """Generate the JSON Schema from this model and write it to ``.vscode/``.
-
-        Returns the path written to, so callers can print it or check staleness.
-        """
-        schema = cls.model_json_schema()
-        _SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SCHEMA_PATH.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
-        return _SCHEMA_PATH
