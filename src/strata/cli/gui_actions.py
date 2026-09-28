@@ -122,13 +122,18 @@ def get_run(run_id: str) -> RunState | None:
     return None
 
 
+def _query_param(query: dict[str, list[str]], key: str, default: str | None = None) -> str | None:
+    """Return the first value for `key` in a parsed query string, or `default`."""
+    return (query.get(key) or [default])[0]
+
+
 def get_runbook_status(handler: JsonHandler, query: dict[str, list[str]]) -> None:
     """Handle `GET /api/runbook-status`."""
-    dotted_name = (query.get("dotted_name") or [None])[0]
+    dotted_name = _query_param(query, "dotted_name")
     if dotted_name is None:
         _send_json(handler, 400, {"error": "dotted_name is required"})
         return
-    target = (query.get("target") or [None])[0]
+    target = _query_param(query, "target")
     status, payload = runbook_status(dotted_name, target)
     _send_json(handler, status, payload)
 
@@ -140,11 +145,11 @@ def get_reachable(handler: JsonHandler, query: dict[str, list[str]]) -> None:
     Machines screen can test reachability *before* adding one -- the point
     of testing first.
     """
-    host = (query.get("host") or [None])[0]
+    host = _query_param(query, "host")
     if not host:
         _send_json(handler, 400, {"error": "host is required"})
         return
-    port_str = (query.get("port") or ["22"])[0]
+    port_str = _query_param(query, "port", "22")
     port = int(port_str) if port_str.isdigit() else 22
     reachable = reachability.tcp_reachable(host, port)
     _send_json(handler, 200, {"reachable": reachable})
