@@ -18,6 +18,7 @@ blanket `# type: ignore`. Declaring instead of doing removes all three.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Literal
@@ -237,11 +238,10 @@ def overlapping_backup_paths() -> list[tuple[str, str]]:
     """
     pairs: list[tuple[str, str]] = []
     items = sorted(_backup_paths.items())
-    for i, (tag, path) in enumerate(items):
-        for other_tag, other_path in items[i + 1 :]:
-            candidate, other = PurePosixPath(path), PurePosixPath(other_path)
-            if candidate.is_relative_to(other) or other.is_relative_to(candidate):
-                pairs.append((tag, other_tag))
+    for (tag, path), (other_tag, other_path) in itertools.combinations(items, 2):
+        candidate, other = PurePosixPath(path), PurePosixPath(other_path)
+        if candidate.is_relative_to(other) or other.is_relative_to(candidate):
+            pairs.append((tag, other_tag))
     return pairs
 
 
