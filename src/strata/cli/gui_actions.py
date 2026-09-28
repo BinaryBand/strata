@@ -150,7 +150,7 @@ def get_reachable(handler: JsonHandler, query: dict[str, list[str]]) -> None:
         _send_json(handler, 400, {"error": "host is required"})
         return
     port_str = _query_param(query, "port", "22")
-    port = int(port_str) if port_str.isdigit() else 22
+    port = int(port_str) if port_str and port_str.isdigit() else 22
     reachable = reachability.tcp_reachable(host, port)
     _send_json(handler, 200, {"reachable": reachable})
 
