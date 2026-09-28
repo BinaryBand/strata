@@ -66,6 +66,11 @@ def is_writable(name: str) -> bool:
     return name in list_writable_remotes()
 
 
+def _without(items: list[str], name: str) -> list[str]:
+    """Return *items* with *name* dropped, preserving order."""
+    return [r for r in items if r != name]
+
+
 def add_to_config(name: str, *, writable: bool = False) -> None:
     """Record *name* in rclone_remotes (idempotent). Does not touch rclone config.
 
@@ -80,9 +85,7 @@ def add_to_config(name: str, *, writable: bool = False) -> None:
     writable_remotes = list_writable_remotes()
     currently_writable = name in writable_remotes
     if writable != currently_writable:
-        new_writable = (
-            [*writable_remotes, name] if writable else [r for r in writable_remotes if r != name]
-        )
+        new_writable = [*writable_remotes, name] if writable else _without(writable_remotes, name)
         group_vars.set_var(_WRITABLE_VAR, new_writable)
 
 
@@ -98,10 +101,10 @@ def remove_from_config(name: str) -> bool:
     remotes = list_remotes()
     if name not in remotes:
         return False
-    group_vars.set_var(_REMOTES_VAR, [r for r in remotes if r != name])
+    group_vars.set_var(_REMOTES_VAR, _without(remotes, name))
     writable_remotes = list_writable_remotes()
     if name in writable_remotes:
-        group_vars.set_var(_WRITABLE_VAR, [r for r in writable_remotes if r != name])
+        group_vars.set_var(_WRITABLE_VAR, _without(writable_remotes, name))
     return True
 
 
@@ -165,7 +168,7 @@ def remove_synced_remote(host: str, name: str) -> bool:
     remotes = list_synced_remotes(host)
     if name not in remotes:
         return False
-    host_vars.set_var(host, _SYNCED_REMOTES_VAR, [r for r in remotes if r != name])
+    host_vars.set_var(host, _SYNCED_REMOTES_VAR, _without(remotes, name))
     return True
 
 
@@ -213,7 +216,7 @@ def _guess_default_backend_type(name: str) -> str | None:
     remote if there's exactly one, since multiple existing remotes
     (e.g. `pcloud`) give no unambiguous default.
     """
-    existing = [r for r in remote_completion() if r != name]
+    existing = _without(remote_completion(), name)
     if "pcloud" in existing:
         return remote_type("pcloud")
     if len(existing) == 1:
