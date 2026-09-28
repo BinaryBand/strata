@@ -294,11 +294,9 @@ def remove(name: str) -> bool:
     # One read, reused. Reading three times meant the membership check and
     # the text that got rewritten were different snapshots of the file.
     text = _read()
-    sections = _parse_ini(text)
-    for line in sections.get(_LOCAL_GROUP, []):
-        parsed = _parse_host_line(line)
-        if parsed and parsed["name"] == name:
-            return False
+    local_names = {e["name"] for e in _entries_from_sections(text, group=_LOCAL_GROUP)}
+    if name in local_names:
+        return False
 
     entries = _entries_from_sections(text)
     new_entries = [e for e in entries if e["name"] != name]
