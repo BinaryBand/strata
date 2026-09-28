@@ -9,6 +9,7 @@ preserving comments and the ``[all]`` section untouched.
 """
 
 import re
+from typing import cast
 
 from strata.adapters import fs
 from strata.core import paths
@@ -121,9 +122,10 @@ def _build_host_line(entry: dict[str, object]) -> str:
     parts.extend(
         f"{var}={entry[key]}" for key, var in _KNOWN_VARS if entry.get(key) not in (None, "")
     )
-    extras = entry.get(_EXTRAS_KEY) or {}
-    if isinstance(extras, dict):
-        parts.extend(f"{var}={value}" for var, value in extras.items())
+    # _EXTRAS_KEY always holds a dict -- every entry that reaches here was
+    # built by _parse_host_line or add(), both of which set it that way.
+    extras = cast("dict[str, str]", entry.get(_EXTRAS_KEY) or {})
+    parts.extend(f"{var}={value}" for var, value in extras.items())
     return " ".join(parts)
 
 
