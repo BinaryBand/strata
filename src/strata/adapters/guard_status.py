@@ -47,7 +47,9 @@ def check_result(module: types.ModuleType, *, target: str | None) -> bool | None
     return guard_executor.check_safely(check, ports.NullReporter())
 
 
-def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  # noqa: PLR0911, PLR0912, C901
+def guard_status(  # noqa: PLR0911, PLR0912, C901
+    requirement: req.Requirement, *, target: str | None
+) -> str:
     """Report whether `requirement` looks satisfied, without prompting or mutating.
 
     Same shape as `_satisfy_one`'s dispatch and the same reasoning applies:
@@ -55,6 +57,13 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
     control flow, and assert_never keeps a new variant from silently falling
     through.
     """
+    # SystemUser, LocalPath and Mount each read local machine state (the
+    # passwd db, the filesystem, rclone's config), so none of them means
+    # anything about a remote target. Checked once here rather than in each
+    # of their three branches below.
+    off_controller = not guard_executor.is_controller(target)
+    if isinstance(requirement, req.SystemUser | req.LocalPath | req.Mount) and off_controller:
+        return "unknown"
     match requirement:
         case req.ControllerOnly():
             return "satisfied" if guard_executor.is_controller(target) else "missing"
@@ -63,11 +72,10 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
             # of names here, so registering a prerequisite cannot leave this
             # endpoint reporting it missing forever.
             return "satisfied" if prerequisites.satisfied(requirement.name) else "missing"
-        case req.Secret():
-            return "satisfied" if secrets.has_secret(requirement.vault_key) else "missing"
-        case req.Storage():
-            # Existence only: confirming the vault value's mount/path is live
-            # would need the vault unlocked, which this read-only check must not do.
+        case req.Secret() | req.Storage():
+            # Existence only: confirming a Storage vault value's mount/path is
+            # live would need the vault unlocked, which this read-only check
+            # must not do, so it collapses to the same has_secret check.
             return "satisfied" if secrets.has_secret(requirement.vault_key) else "missing"
         case req.SystemUser():
             # Existence, deliberately, even though the executor stopped
@@ -75,20 +83,14 @@ def guard_status(requirement: req.Requirement, *, target: str | None) -> str:  #
             # creation playbook). The question this endpoint answers is "does
             # the account exist", which is still a true thing to report; it is
             # simply no longer a skip condition.
-            if not guard_executor.is_controller(target):
-                return "unknown"
             try:
                 pwd.getpwnam(requirement.username)
             except KeyError:
                 return "missing"
             return "satisfied"
         case req.LocalPath():
-            if not guard_executor.is_controller(target):
-                return "unknown"
             return "satisfied" if guard_executor.path_satisfied(requirement) else "missing"
         case req.Mount():
-            if not guard_executor.is_controller(target):
-                return "unknown"
             remote_name = rclone.remote_name(requirement.remote_path)
             if remote_name not in rclone.list_remotes():
                 return "missing"
