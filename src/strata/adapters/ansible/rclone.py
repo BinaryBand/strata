@@ -78,10 +78,12 @@ def add_to_config(name: str, *, writable: bool = False) -> None:
         group_vars.set_var(_REMOTES_VAR, remotes)
 
     writable_remotes = list_writable_remotes()
-    if writable and name not in writable_remotes:
-        group_vars.set_var(_WRITABLE_VAR, [*writable_remotes, name])
-    elif not writable and name in writable_remotes:
-        group_vars.set_var(_WRITABLE_VAR, [r for r in writable_remotes if r != name])
+    currently_writable = name in writable_remotes
+    if writable != currently_writable:
+        new_writable = (
+            [*writable_remotes, name] if writable else [r for r in writable_remotes if r != name]
+        )
+        group_vars.set_var(_WRITABLE_VAR, new_writable)
 
 
 def remove_from_config(name: str) -> bool:
