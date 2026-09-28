@@ -82,14 +82,9 @@ def _task_status(res: Mapping[str, object]) -> str:
     said everything went fine and only the final status line disagreed.
     Order matters: a failed task can also carry changed=True.
     """
-    if res.get("unreachable", False):
-        return "unreachable"
-    if res.get("failed", False):
-        return "failed"
-    if res.get("skipped", False):
-        return "skipped"
-    if res.get("changed", False):
-        return "changed"
+    for status in ("unreachable", "failed", "skipped", "changed"):
+        if res.get(status, False):
+            return status
     return "ok"
 
 
