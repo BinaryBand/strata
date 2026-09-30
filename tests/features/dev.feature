@@ -16,6 +16,7 @@ Feature: Maintainer tooling behind a hidden dev namespace
   Scenario: Regenerate the server-apps schema
     When I run "strata dev schema"
     Then .vscode/server_apps_schema.json is written from the ServerAppsDefaults model
+    And .vscode/app_spec_schema.json is written from the AppSpec model
     And the output reports the path it wrote
 
   Scenario: The regenerated schema matches the current model

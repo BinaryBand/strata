@@ -1,0 +1,25 @@
+# Baikal CalDAV/CardDAV, a rootless Podman container owned by diot.
+# Admin and user accounts are created through Baikal's own web installer on
+# first visit; the runbook only stands up the service and its data volumes.
+name: baikal
+alias: install Baïkal
+description: Baikal CalDAV/CardDAV server
+image: docker.io/ckulka/baikal:nginx
+dirs:
+  - path: /srv/baikal
+  # Rootless Podman maps the container's www-data (UID 33) to a subordinate host
+  # UID that is neither diot nor in the baikal group. Mode 2777 is a pragmatic
+  # workaround: it lets the container's internal user write to these volumes
+  # while the setgid bit keeps the baikal group on new files.
+  - path: /srv/baikal/config
+    mode: "2777"
+  - path: /srv/baikal/Specific
+    mode: "2777"
+volumes:
+  - {host: /srv/baikal/config, container: /var/www/baikal/config}
+  - {host: /srv/baikal/Specific, container: /var/www/baikal/Specific}
+ports:
+  - {host: 8080, container: 80}
+backup:
+  tag: baikal
+  path: /srv/baikal

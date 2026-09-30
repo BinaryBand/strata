@@ -16,6 +16,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 ANSIBLE_DIR = PROJECT_ROOT / "ansible"
+APPS_DIR = ANSIBLE_DIR / "apps"
 INVENTORY_DIR = ANSIBLE_DIR / "inventory"
 HOSTS_INI = INVENTORY_DIR / "hosts.ini"
 GROUP_VARS_DIR = INVENTORY_DIR / "group_vars"

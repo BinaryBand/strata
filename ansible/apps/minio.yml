@@ -1,0 +1,24 @@
+# MinIO object storage, a rootless Podman container owned by diot.
+# Unlike Baikal/Jellyfin's non-root internal users, MinIO's container runs as
+# root, which rootless Podman maps to the invoking diot user by default -- no
+# Baikal-style 2777 workaround needed for the container to write here.
+name: minio
+alias: install MinIO
+description: MinIO object storage server
+# docker.io/minio/minio is gated behind Docker Hub auth as of 2025; quay.io is
+# MinIO's own supported public mirror.
+image: quay.io/minio/minio:latest
+dirs:
+  - path: /srv/minio/data
+volumes:
+  - {host: /srv/minio/data, container: /data}
+ports:
+  - {host: 9000, container: 9000}
+  - {host: 9001, container: 9001}
+command: server /data --console-address ":9001"
+secrets:
+  - {name: minio_root_user, kind: text, prompt: MinIO root username, default: admin, env: MINIO_ROOT_USER}
+  - {name: minio_root_password, prompt: MinIO root password, generate: true, env: MINIO_ROOT_PASSWORD}
+backup:
+  tag: minio
+  path: /srv/minio/data

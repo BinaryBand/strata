@@ -1,0 +1,22 @@
+# Jellyfin media server, a rootless Podman container owned by diot.
+# The media library lives on the pcloud rclone mount, not here -- only
+# Jellyfin's local config/state is backed up. The cache is reproducible and
+# deliberately left out of the backup tag.
+name: jellyfin
+alias: install Jellyfin
+description: Jellyfin media server
+image: docker.io/jellyfin/jellyfin:latest
+dirs:
+  - path: /srv/jellyfin/config
+  - path: /srv/jellyfin/cache
+volumes:
+  - {host: /srv/jellyfin/config, container: /config}
+  - {host: /srv/jellyfin/cache, container: /cache}
+mount:
+  remote: "pcloud:Media"
+  container: /media
+ports:
+  - {host: 8096, container: 8096}
+backup:
+  tag: jellyfin
+  path: /srv/jellyfin/config
