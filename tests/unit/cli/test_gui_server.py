@@ -13,6 +13,7 @@ import http.client
 import json
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import pytest
@@ -216,6 +217,32 @@ def test_preflight_allows_the_token_header(served: str) -> None:
         assert response.status == 204
         assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
         assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:54321"
+
+
+# -- Host check (DNS rebinding) ------------------------------------------
+
+
+def _get_with_host(url: str, host: str) -> int:
+    connection = http.client.HTTPConnection(urllib.parse.urlsplit(url).netloc, timeout=5)
+    connection.request("GET", "/api/gui-data", headers={"Host": host})
+    return connection.getresponse().status
+
+
+def test_a_rebound_domain_is_refused(served: str) -> None:
+    """A page that points its own domain at 127.0.0.1 still sends that domain as Host."""
+    port = served.rsplit(":", 1)[1]
+    assert _get_with_host(served, f"attacker.example:{port}") == 403
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost:1", "[::1]:1", "BOX.example.ts.net"])
+def test_loopback_and_a_named_origins_host_are_answered(served: str, host: str) -> None:
+    """tailscale serve forwards the tailnet name, which is the named origin's host."""
+    assert _get_with_host(served, host) == 200
+
+
+def test_allowed_hosts_adds_named_origins_and_hosts_to_loopback() -> None:
+    hosts = gui_server.allowed_hosts(["https://box.example.ts.net:8443"], ["Other.example:9"])
+    assert hosts == {"127.0.0.1", "localhost", "::1", "box.example.ts.net", "other.example"}
 
 
 # -- routing and auth ----------------------------------------------------

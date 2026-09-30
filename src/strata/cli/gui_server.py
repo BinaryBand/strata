@@ -170,6 +170,26 @@ def _allowed_origin(origin: str, extra: frozenset[str]) -> str | None:
     return origin if host in {"127.0.0.1", "localhost", "::1"} else None
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _host_name(value: str) -> str | None:
+    """Return the lower-cased host name in a `Host` header or an origin, without its port."""
+    return urlsplit(value if "//" in value else f"//{value}").hostname
+
+
+def allowed_hosts(allow_origins: Sequence[str], allow_hosts: Sequence[str]) -> frozenset[str]:
+    """Return the `Host` names a request may carry: loopback, each named origin's, and any named.
+
+    A named origin's host is allowed because `tailscale serve` forwards the
+    tailnet name it was reached on as `Host`, which is that origin's host.
+    """
+    named = {_host_name(origin) for origin in allow_origins} | {
+        _host_name(host) for host in allow_hosts
+    }
+    return _LOOPBACK_HOSTS | {name for name in named if name}
+
+
 class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
     """Serves the read-only snapshot and the action API. No static files.
 
@@ -182,6 +202,7 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
 
     _token: str
     _allow_origins: frozenset[str] = frozenset()
+    _allowed_hosts: frozenset[str] = _LOOPBACK_HOSTS
 
     def end_headers(self) -> None:
         """Add the CORS headers to every response, then close the header block.
@@ -230,6 +251,14 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
         route body raises becomes a JSON response: without this the exception
         unwound out of the handler and the socket closed with nothing sent.
         """
+        # DNS rebinding: a web page can point its own domain at 127.0.0.1, and
+        # the browser then treats this server as same-origin with that page, so
+        # CORS never applies and the open read routes -- every inventory host,
+        # address and user -- are readable. The page cannot change the `Host`
+        # it sends, which still names its own domain.
+        if _host_name(self.headers.get("Host", "")) not in self._allowed_hosts:
+            send_json(self, 403, {"error": "unrecognised Host; name it with --allow-host"})
+            return
         parsed = urlsplit(self.path)
         matches = (
             (route, found)
@@ -260,11 +289,12 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
 
 
 def _request_handler(
-    token: str, allow_origins: frozenset[str]
+    token: str, allow_origins: frozenset[str], hosts: frozenset[str]
 ) -> type[http.server.BaseHTTPRequestHandler]:
     """Configure and return `GuiRequestHandler` for one `strata gui` process's lifetime."""
     GuiRequestHandler._token = token  # noqa: SLF001 -- this module owns GuiRequestHandler
     GuiRequestHandler._allow_origins = allow_origins  # noqa: SLF001
+    GuiRequestHandler._allowed_hosts = hosts  # noqa: SLF001
     return GuiRequestHandler
 
 
@@ -272,6 +302,7 @@ def serve(
     *,
     port: int,
     allow_origins: Sequence[str] = (),
+    allow_hosts: Sequence[str] = (),
     announce: Callable[[str], None],
 ) -> None:
     """Serve the /api/* routes on loopback until interrupted.
@@ -280,13 +311,16 @@ def serve(
     taken, which the caller turns into an operator-facing message.
 
     `allow_origins` names the non-loopback origins the app may be served from;
-    loopback ones are allowed without being named.
+    loopback ones are allowed without being named. A request is answered only
+    when its `Host` is loopback, one of those origins' hosts, or in
+    `allow_hosts`.
 
     `announce` receives the lines to print; passing it in keeps this module
     free of Typer so the server can be exercised without a CLI runner.
     """
     token = gui_token.get_or_create_token()
-    handler = _request_handler(token, frozenset(allow_origins))
+    hosts = allowed_hosts(allow_origins, allow_hosts)
+    handler = _request_handler(token, frozenset(allow_origins), hosts)
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         # Read the port back off the socket rather than echoing the argument:
         # port 0 means "let the kernel choose", and then the requested port is

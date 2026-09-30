@@ -100,6 +100,15 @@ def gui(
             "loopback is always allowed.",
         ),
     ] = None,
+    allow_host: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow-host",
+            help="Extra Host name a request may carry, for a device reaching this "
+            "without a browser origin. Repeatable; loopback and --allow-origin "
+            "hosts are always allowed.",
+        ),
+    ] = None,
 ) -> None:
     """Serve the runbook catalog and action API on loopback for the GUI app.
 
@@ -116,7 +125,9 @@ def gui(
     ansible-runner on the open internet -- and hand that device the token too,
     since the tailnet alone doesn't gate who can run a playbook against this
     box. Name that device's origin with --allow-origin so the browser there
-    doesn't discard the responses.
+    doesn't discard the responses. A request whose Host is not loopback or
+    one of those origins' hosts is refused, so a web page that rebinds its own
+    domain to 127.0.0.1 cannot read the API; name any other with --allow-host.
     """
     # Deferred: gui_server pulls in the whole guard/vault stack, which no other command needs.
     from strata.cli import gui_server  # noqa: PLC0415
@@ -125,6 +136,7 @@ def gui(
         gui_server.serve(
             port=port,
             allow_origins=allow_origin or [],
+            allow_hosts=allow_host or [],
             announce=typer.echo,
         )
     except OSError as exc:

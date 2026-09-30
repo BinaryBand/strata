@@ -146,7 +146,9 @@ def gui_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 def test_gui_serves_the_api_on_the_default_port(gui_calls: list[dict]) -> None:
     result = runner.invoke(app, ["gui"])
     assert result.exit_code == 0
-    assert gui_calls == [{"port": 8765, "allow_origins": [], "announce": main.typer.echo}]
+    assert gui_calls == [
+        {"port": 8765, "allow_origins": [], "allow_hosts": [], "announce": main.typer.echo}
+    ]
 
 
 def test_gui_forwards_a_custom_port(gui_calls: list[dict]) -> None:
@@ -163,6 +165,12 @@ def test_gui_collects_repeated_allow_origin_flags(gui_calls: list[dict]) -> None
     )
     assert result.exit_code == 0
     assert gui_calls[0]["allow_origins"] == ["http://box:3000", "http://box:4000"]
+
+
+def test_gui_collects_repeated_allow_host_flags(gui_calls: list[dict]) -> None:
+    result = runner.invoke(app, ["gui", "--allow-host", "a.example", "--allow-host", "b.example"])
+    assert result.exit_code == 0
+    assert gui_calls[0]["allow_hosts"] == ["a.example", "b.example"]
 
 
 def test_gui_reports_a_taken_port_without_a_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
