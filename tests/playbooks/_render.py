@@ -9,6 +9,7 @@ emulated.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -65,11 +66,18 @@ def include_role_task(playbook: Path) -> dict[str, Any]:
     return tasks[0]
 
 
-def snapshot(module: ModuleType, *, content_var: str, content_key: str) -> dict[str, Any]:
+def snapshot(
+    module: ModuleType,
+    *,
+    content_var: str,
+    content_key: str,
+    facts: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """What running `module` deploys: its declarations, the role vars and the unit it renders.
 
     `content_var` names the role var holding the unit text; it is rendered
-    under `content_key` and left out of the role vars.
+    under `content_key` and left out of the role vars. `facts` stands in for what the
+    play learns on the host with `set_fact` (a tailnet name), which no snapshot can.
     """
     runner = RecordingPlaybookRunner()
     assert module.main(runner=runner) == 0
@@ -80,7 +88,7 @@ def snapshot(module: ModuleType, *, content_var: str, content_key: str) -> dict[
         if isinstance(r, req.Secret)
     }
     playbook_name, extravars, _target = runner.calls[0]
-    context = {**group_vars(), **secrets, **extravars}
+    context = {**group_vars(), **secrets, **extravars, **(facts or {})}
     task = include_role_task(PLAYBOOKS_DIR / Path(playbook_name).name)
     return {
         "alias": guard.alias_of(module.main),

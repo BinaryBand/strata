@@ -52,6 +52,17 @@ SOURCE_MANIFEST: dict[str, Any] = {
 }
 
 
+# SOURCE_MANIFEST mounted on the tailnet: the command takes the host's name as strata hands it.
+TAILNET_MANIFEST: dict[str, Any] = {
+    **SOURCE_MANIFEST,
+    "run": {
+        "command": "uv run --no-sync demo serve --port 8123 --allow-host ${STRATA_TAILNET_HOST}",
+        "env": {"MODE": "prod"},
+    },
+    "tailnet": {"path": "/demo", "port": 8123},
+}
+
+
 def write_project(directory: Path, **overrides: Any) -> Path:
     """Create a project at `directory` whose strata.app.yml is SOURCE_MANIFEST plus overrides."""
     directory.mkdir(parents=True, exist_ok=True)

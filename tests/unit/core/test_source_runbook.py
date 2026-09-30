@@ -10,7 +10,7 @@ from strata.core import guard, source_runbook
 from strata.core import requirements as req
 from strata.core.models import SourceAppSpec
 from strata.core.models.source_app_spec import Toolchain
-from tests._fakes import SOURCE_MANIFEST, RecordingPlaybookRunner
+from tests._fakes import SOURCE_MANIFEST, TAILNET_MANIFEST, RecordingPlaybookRunner
 
 _PROJECT = Path("/home/you/Dev/demo")
 
@@ -65,6 +65,10 @@ def test_main_runs_the_source_playbook_with_the_resolved_project() -> None:
         "build": "uv sync --frozen",
         "command": "uv run --no-sync demo serve --host ${DEMO_HOST}",
         "env": {"MODE": "prod"},
+        "toolchain": "uv",
+        "dirs": ["/srv/demo", "/srv/demo/data", "/srv/demo/config"],
+        "tailnet": None,
+        "tailnet_host_env": "STRATA_TAILNET_HOST",
         "secret_env": [{"name": "demo_host", "env": "DEMO_HOST"}],
         "secret_files": [{"name": "demo_key", "path": "/srv/demo/config/key"}],
     }
@@ -77,3 +81,24 @@ def test_only_a_secret_with_an_env_name_reaches_the_unit() -> None:
     app = runner.calls[0][1]["source_app"]
     assert app["secret_env"] == []
     assert app["secret_files"] == [{"name": "demo_key", "path": "/srv/demo/config/key"}]
+
+
+def test_a_project_on_the_tailnet_needs_the_host_on_it_before_the_play_reads_its_name() -> None:
+    module = source_runbook.build(SourceAppSpec.model_validate(TAILNET_MANIFEST), _PROJECT)
+    guards = guard.declared(module.main)
+    assert req.UpstreamRunbook("infrastructure.enable_tailscale") in guards
+    toolchain = guards.index(req.UpstreamRunbook("infrastructure.install_uv"))
+    assert guards[toolchain + 1] == req.UpstreamRunbook("infrastructure.enable_tailscale")
+
+
+def test_a_project_off_the_tailnet_does_not_ask_for_tailscale() -> None:
+    assert req.UpstreamRunbook("infrastructure.enable_tailscale") not in guard.declared(
+        _build().main
+    )
+
+
+def test_the_tailnet_mount_reaches_the_play() -> None:
+    module = source_runbook.build(SourceAppSpec.model_validate(TAILNET_MANIFEST), _PROJECT)
+    runner = RecordingPlaybookRunner()
+    module.main(runner=runner)
+    assert runner.calls[0][1]["source_app"]["tailnet"] == {"path": "/demo", "port": 8123}

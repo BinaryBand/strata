@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from strata.core.models import SourceAppSpec
-from tests._fakes import SOURCE_MANIFEST
+from tests._fakes import SOURCE_MANIFEST, TAILNET_MANIFEST
 
 
 def _manifest(**overrides: Any) -> dict[str, Any]:
@@ -74,3 +74,47 @@ def test_the_app_lives_under_srv_by_name() -> None:
 def test_an_inconsistent_manifest_is_refused(overrides: dict[str, Any], message: str) -> None:
     with pytest.raises(ValidationError, match=message.replace("(", r"\(").replace(")", r"\)")):
         SourceAppSpec.model_validate(_manifest(**overrides))
+
+
+def test_a_project_is_not_on_the_tailnet_unless_it_says_so() -> None:
+    assert SourceAppSpec.model_validate(_manifest()).tailnet is None
+
+
+def test_a_tailnet_mount_is_a_path_and_a_loopback_port() -> None:
+    spec = SourceAppSpec.model_validate(TAILNET_MANIFEST)
+    assert spec.tailnet is not None
+    assert (spec.tailnet.path, spec.tailnet.port) == ("/demo", 8123)
+
+
+@pytest.mark.parametrize(
+    ("tailnet", "message"),
+    [
+        ({"path": "/", "port": 8123}, "path"),
+        ({"path": "demo", "port": 8123}, "path"),
+        ({"path": "/demo/", "port": 8123}, "path"),
+        ({"path": "/a b", "port": 8123}, "path"),
+        ({"path": "/demo", "port": 0}, "port"),
+        ({"path": "/demo", "port": 70000}, "port"),
+        ({"path": "/demo"}, "port"),
+        ({"path": "/demo", "port": 8123, "funnel": True}, "funnel"),
+    ],
+)
+def test_a_malformed_tailnet_mount_is_refused(tailnet: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        SourceAppSpec.model_validate({**TAILNET_MANIFEST, "tailnet": tailnet})
+
+
+def test_a_tailnet_mount_needs_a_command_that_uses_the_host_name() -> None:
+    manifest = {**TAILNET_MANIFEST, "run": {"command": "uv run demo serve", "env": {}}}
+    with pytest.raises(ValidationError, match=r"never uses \$\{STRATA_TAILNET_HOST\}"):
+        SourceAppSpec.model_validate(manifest)
+
+
+def test_the_host_name_variable_is_strata_s_when_a_mount_is_declared() -> None:
+    command = TAILNET_MANIFEST["run"]["command"]
+    manifest = {
+        **TAILNET_MANIFEST,
+        "run": {"command": command, "env": {"STRATA_TAILNET_HOST": "x"}},
+    }
+    with pytest.raises(ValidationError, match="STRATA_TAILNET_HOST is set by strata"):
+        SourceAppSpec.model_validate(manifest)

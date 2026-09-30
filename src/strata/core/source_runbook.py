@@ -15,7 +15,7 @@ from types import ModuleType
 
 from strata.core import guard
 from strata.core.models import SourceAppSpec
-from strata.core.models.source_app_spec import Toolchain
+from strata.core.models.source_app_spec import TAILNET_HOST_ENV, Toolchain
 from strata.core.runbook_module import (
     OWNER,
     Guard,
@@ -29,6 +29,9 @@ PLAYBOOK = "playbooks/install_source_app.yml"
 
 # The runbook that puts each toolchain on a host. A new Toolchain value needs a row.
 TOOLCHAIN_RUNBOOKS: dict[Toolchain, str] = {"uv": "infrastructure.install_uv"}
+
+# The runbook that puts a host on the tailnet, which `tailscale serve` needs.
+TAILNET_RUNBOOK = "infrastructure.enable_tailscale"
 
 
 def build(spec: SourceAppSpec, project_dir: Path) -> ModuleType:
@@ -47,13 +50,16 @@ def _guards(spec: SourceAppSpec) -> list[Guard]:
     """The guards, outermost first: the order the executor satisfies them in.
 
     A directory's owner is created by the user guard, so the paths follow it.
-    The toolchain runbook runs before the play that builds with it.
+    The toolchain runbook runs before the play that builds with it, and a service
+    that is mounted on the tailnet needs the host on it before the play reads its name.
     """
     guards = [
         *leading_guards(spec.alias, spec.backup),
         guard.user(OWNER, "playbooks/create_diot_user.yml"),
         guard.requires(TOOLCHAIN_RUNBOOKS[spec.toolchain]),
     ]
+    if spec.tailnet:
+        guards.append(guard.requires(TAILNET_RUNBOOK))
     guards += state_guards(spec.name, spec.dirs)
     return guards + secret_guards(spec.secrets)
 
@@ -68,6 +74,10 @@ def _payload(spec: SourceAppSpec, project_dir: Path) -> dict[str, object]:
         "build": spec.build,
         "command": spec.run.command,
         "env": dict(spec.run.env),
+        "toolchain": spec.toolchain,
+        "dirs": [d.path for d in spec.dirs],
+        "tailnet": spec.tailnet.model_dump() if spec.tailnet else None,
+        "tailnet_host_env": TAILNET_HOST_ENV,
         "secret_env": [{"name": s.name, "env": s.env} for s in spec.secrets_in_unit],
         "secret_files": [{"name": s.name, "path": s.file} for s in spec.secrets if s.file],
     }

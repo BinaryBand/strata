@@ -127,10 +127,24 @@ def _one_command(value: object) -> str:
     return str(entry.get("cmd", ""))
 
 
+# A task that runs only for a project that declares a feature is not evidence that every
+# runbook on the play needs that feature's tool. The guard such a project declares is
+# pinned where the runbook is built (tests/unit/core/test_source_runbook.py), and a task
+# that uses the tool with no condition is still seen here.
+_FEATURE_CONDITIONS = ("source_app.tailnet",)
+
+
+def _for_a_declared_feature(task: dict[str, object]) -> bool:
+    conditions = task.get("when")
+    parts = conditions if isinstance(conditions, list) else [conditions]
+    return any(feature in str(part) for part in parts for feature in _FEATURE_CONDITIONS)
+
+
 def _command_strings(tasks: object) -> list[str]:
     return [
         _one_command(value)
         for task in iter_tasks(tasks)
+        if not _for_a_declared_feature(task)
         for key in _COMMAND_KEYS
         if (value := task.get(key)) is not None
     ]

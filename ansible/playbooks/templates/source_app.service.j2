@@ -6,6 +6,26 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={{ source_app.root }}/current
+# The service sees the filesystem read-only, except the state directories it declares
+# (never the app root, which holds the releases), and has no /home and a private /tmp.
+# ProtectKernelModules and CapabilityBoundingSet are left out: a user manager cannot
+# drop capabilities, and a unit that asks fails to start with status 218.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths={{ source_app.dirs | reject('equalto', source_app.root) | join(' ') }}
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+{% if source_app.toolchain == 'uv' %}
+# uv keeps a cache under $HOME, which the service cannot see.
+Environment="UV_CACHE_DIR=/tmp/uv-cache"
+{% endif %}
+{% if source_app.tailnet %}
+Environment="{{ source_app.tailnet_host_env }}={{ tailnet_host }}"
+{% endif %}
 {% for name, value in source_app.env.items() %}
 Environment="{{ name }}={{ value }}"
 {% endfor %}

@@ -7,7 +7,9 @@
 # extravar and has already provisioned the state directories with guard.path and
 # put the toolchain on the host, so nothing about a particular project is
 # spelled here. State lives in those directories, never in a release. A secret
-# written into the unit or a file is read from the vault by name.
+# written into the unit or a file is read from the vault by name. A project that
+# declares `tailnet` is also mounted there with `tailscale serve`, under the
+# host's own tailnet name, which the unit receives as STRATA_TAILNET_HOST.
 - name: Deploy an external project as a systemd user service of diot
   hosts: all
   become: true
@@ -171,6 +173,58 @@
         label: "{{ item.path }}"
       notify: "Restart {{ source_app.name }}"
 
+    # A project mounted on the tailnet is told the name this host answers to there.
+    # The name is read here, from tailscale, so no repository writes a machine's name,
+    # and a path already mounted for another backend stops the play before anything
+    # changes: the mount is strata's to add, not to take over.
+    - name: Read this host's tailnet status
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.command:
+        argv: [tailscale, status, --json]
+      register: tailnet_status
+      changed_when: false
+
+    - name: Find this host's tailnet name
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.set_fact:
+        tailnet_host: >-
+          {{ (((tailnet_status.stdout | from_json).Self | default({}, true)).DNSName
+              | default('', true)) | trim('.') }}
+
+    - name: Require a tailnet name
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.assert:
+        that: tailnet_host | length > 0
+        fail_msg: >-
+          This host has no tailnet name. Run `strata runbook enable_tailscale --target {{
+          inventory_hostname }}` and enable MagicDNS and HTTPS for the tailnet.
+
+    - name: Read the tailscale serve configuration
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.command:
+        argv: [tailscale, serve, status, --json]
+      register: tailnet_serve
+      changed_when: false
+
+    - name: Find what the mount path points at now
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.set_fact:
+        tailnet_backend: "http://127.0.0.1:{{ source_app.tailnet.port }}"
+        tailnet_mounted: >-
+          {{ (((((tailnet_serve.stdout | default('{}', true) | from_json).Web | default({}, true))
+              [tailnet_host ~ ':443'] | default({}, true)).Handlers | default({}, true))
+              [source_app.tailnet.path] | default({}, true)).Proxy | default('', true) }}
+
+    - name: Refuse to take over a mount that points elsewhere
+      when: source_app.tailnet | default(none) is not none
+      ansible.builtin.assert:
+        that: tailnet_mounted in ['', tailnet_backend]
+        fail_msg: >-
+          {{ source_app.tailnet.path }} on {{ tailnet_host }} already points at {{
+          tailnet_mounted }}, not {{ tailnet_backend }}. If that is a leftover, remove it with
+          `sudo tailscale serve --https=443 --set-path {{ source_app.tailnet.path }} off`
+          and run this again.
+
     - name: "Deploy and start {{ source_app.name }}"
       ansible.builtin.include_role:
         name: diot_service
@@ -182,6 +236,19 @@
         service_no_log: "{{ source_app.secret_env | length > 0 }}"
         service_extra_notify: ["Restart {{ source_app.name }}"]
         service_content: "{{ lookup('ansible.builtin.template', 'source_app.service.j2') }}"
+
+    - name: "Mount {{ source_app.name }} on the tailnet"
+      when: source_app.tailnet | default(none) is not none and tailnet_mounted == ''
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - --bg
+          - --yes
+          - --set-path
+          - "{{ source_app.tailnet.path }}"
+          - "{{ tailnet_backend }}"
+      changed_when: true
 
   handlers:
     - name: "Restart {{ source_app.name }}"
