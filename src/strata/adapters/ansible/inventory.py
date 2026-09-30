@@ -165,15 +165,7 @@ def _group_entries(sections: dict[str, list[str]], group: str) -> list[dict[str,
 
 
 def _entries_from_sections(text: str, group: str = _REMOTE_GROUP) -> list[dict[str, object]]:
-    """Extract host entries from one section of parsed INI text.
-
-    Scoped to a single group on purpose. This used to sweep every section
-    that was not explicitly preserved, so hosts in an operator-defined group
-    like ``[servers]`` were collected as entries and then written into
-    ``[remote]`` by _rewrite -- while _render_section also passed their
-    original group through untouched, leaving the same host in two groups
-    with only the four modelled variables in one of them.
-    """
+    """Parse `text` and return the host entries in `group` (see _group_entries)."""
     return _group_entries(_parse_ini(text), group)
 
 
@@ -365,11 +357,11 @@ def all_hosts() -> list[Device]:
     since a runbook can target either. ``[local]`` hosts default to a ``local``
     connection when the line does not say otherwise.
     """
-    text = _read()
+    sections = _parse_ini(_read())
     return [
         _device_from(entry, group=group)
         for group in (_LOCAL_GROUP, _REMOTE_GROUP)
-        for entry in _entries_from_sections(text, group=group)
+        for entry in _group_entries(sections, group)
     ]
 
 
