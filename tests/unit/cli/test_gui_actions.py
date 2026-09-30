@@ -95,11 +95,15 @@ def _noop_main(**_kwargs: object) -> int:
 
 
 def _install_runbook(
-    monkeypatch: pytest.MonkeyPatch, main: Callable[..., int] = _noop_main
+    monkeypatch: pytest.MonkeyPatch,
+    main: Callable[..., int] = _noop_main,
+    validate_tags: Callable[[list[str] | None], None] | None = None,
 ) -> None:
     """Make the runbook name `fake` resolve to a stub module whose main() is `main`."""
     module = ModuleType("fake_runbook")
     module.__dict__["main"] = main
+    if validate_tags is not None:
+        module.__dict__["validate_tags"] = validate_tags
     monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
     monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: module)
     monkeypatch.setattr(gui_actions.runner, "set_reporter", lambda _r: None)
@@ -219,6 +223,20 @@ def test_post_run_passes_a_known_target_and_good_tags_to_start_run(
     assert gui_actions.post_run(Request(body=body)) == {"run_id": "r1"}
     assert gui_actions.post_run(Request(body={"dotted_name": "fake"})) == {"run_id": "r1"}
     assert calls == [("fake", "rpi4", ["jellyfin"]), ("fake", None, None)]
+
+
+def test_start_run_refuses_tags_the_runbook_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    def reject(tags: list[str] | None) -> None:
+        msg = f"Unknown tag(s): {tags}"
+        raise ValueError(msg)
+
+    _install_runbook(monkeypatch, validate_tags=reject)
+    monkeypatch.setattr(gui_actions.guard_executor, "execute", _refuse_to_start)
+
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.start_run("fake", None, ["nope"])
+
+    assert (excinfo.value.status, excinfo.value.message) == (400, "Unknown tag(s): ['nope']")
 
 
 def test_get_run_status_unknown_id() -> None:

@@ -159,6 +159,13 @@ def get_secret(name: str) -> str | None:
         raise RuntimeError(msg) from exc
 
 
+def require_value(name: str, value: str) -> None:
+    """Raise ValueError if `value` is empty, so a caller can refuse before prompting."""
+    if not value:
+        msg = f"secret {name!r} cannot be empty"
+        raise ValueError(msg)
+
+
 def set_secret(name: str, value: str) -> None:
     """Vault-encrypt `value` and store it as `name` in the secrets file.
 
@@ -169,9 +176,7 @@ def set_secret(name: str, value: str) -> None:
         name: Secret variable name to write.
         value: Plaintext to encrypt under that name.
     """
-    if not value:
-        msg = f"secret {name!r} cannot be empty"
-        raise ValueError(msg)
+    require_value(name, value)
     block = _encrypt(name, value) + "\n"
 
     content = SECRETS_FILE.read_text() if SECRETS_FILE.exists() else ""

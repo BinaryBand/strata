@@ -20,6 +20,7 @@ from typing import Any
 
 from strata.adapters import guard_executor, guard_status, reachability
 from strata.adapters.ansible import host_vars, inventory, runner, secrets, vault_pass
+from strata.cli.dispatch import tag_rejection
 from strata.cli.gui_http import ApiError, Request, require
 from strata.core import discovery, guard, ports
 
@@ -91,6 +92,8 @@ def start_run(dotted_name: str, target: str | None, tags: list[str] | None) -> d
         if resolved is None:
             raise ApiError(400, f"unknown runbook {dotted_name!r}")
         module = discovery.load(resolved)
+        if (rejection := tag_rejection(module, tags)) is not None:
+            raise ApiError(400, rejection)
         state = RunState(run_id=uuid.uuid4().hex)
         _current_run = state
 
@@ -192,8 +195,8 @@ def post_run(request: Request) -> dict[str, Any]:
     here rather than reaching the executor as whatever JSON happened to hold. An
     unknown host is refused the way `_helpers.require_host` refuses one for the
     rclone commands; that helper raises `typer.Exit`, so the check is repeated
-    rather than called. Whether a tag is one this runbook knows is not checked:
-    that is `validate_tags`, which only the CLI's `run_runbook` runs up front.
+    rather than called. Whether a tag is one this runbook knows is checked by
+    `start_run`, through the same `validate_tags` hook the CLI runs.
     """
     (dotted_name,) = require(request.body, "dotted_name")
     target = request.body.get("target")

@@ -105,9 +105,8 @@ def test_vault_password_rejects_an_empty_value_with_exit_1(
     assert "cannot be empty" in result.output
 
 
-@pytest.mark.usefixtures("vault_password_asked")
-def test_secret_rejects_an_empty_value_with_exit_1(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(secrets, "set_secret", _refuse_empty)
+def test_secret_rejects_an_empty_value_before_asking_for_a_vault_password() -> None:
+    """The autouse guard makes `ensure_vault_password` and `set_secret` raise if reached."""
     result = runner.invoke(app, ["secret", "jellyfin_api_key", "--value", ""])
     assert result.exit_code == 1
     assert "cannot be empty" in result.output

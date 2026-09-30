@@ -95,26 +95,31 @@ def _preflight_tags(module: ModuleType, tags: str | None) -> tuple[list[str] | N
 
     Returns the parsed tags (None when the runbook takes none) and an error
     message, or None when the selection is good.
-
-    A runbook that can reject a selection outright says so with a module-level
-    `validate_tags`, checked here rather than left to `main()`. By the time
-    main() runs the guard chain has already been satisfied -- and since a
-    satisfied upstream stopped skipping its own guards, that chain reconciles
-    the diot account and the restic repository. A typo should not cost a sudo
-    play, nor surface as an uncaught ValueError.
     """
     parsed_tags: list[str] | None = None
     if tags is not None and accepts_tags(module.main):
         parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
+    return parsed_tags, tag_rejection(module, parsed_tags)
 
+
+def tag_rejection(module: ModuleType, tags: list[str] | None) -> str | None:
+    """Return why this runbook refuses `tags`, or None when it accepts them.
+
+    A runbook that can reject a selection outright says so with a module-level
+    `validate_tags`, checked ahead of the executor rather than left to
+    `main()`. By the time main() runs the guard chain has already been
+    satisfied -- and since a satisfied upstream stopped skipping its own
+    guards, that chain reconciles the diot account and the restic repository.
+    A typo should not cost a sudo play, nor surface as an uncaught ValueError.
+    """
     validate = getattr(module, "validate_tags", None)
     if validate is None:
-        return parsed_tags, None
+        return None
     try:
-        validate(parsed_tags)
+        validate(tags)
     except ValueError as exc:
-        return parsed_tags, str(exc)
-    return parsed_tags, None
+        return str(exc)
+    return None
 
 
 def _report_import_failures() -> None:
