@@ -13,14 +13,14 @@ Feature: Discover and launch runbooks
   # Skipped so one broken module can't take the whole listing down, but
   # reported so the operator is not left thinking the runbook never existed --
   # it used to vanish silently from --list, from the picker and from name
-  # resolution, so `strata runbook install_jellyfin` answered "Unknown
+  # resolution, so `strata runbook install_antigravity` answered "Unknown
   # runbook" and offered spelling suggestions for a module with an ImportError.
   Scenario: An unimportable runbook is reported, not fatal
-    Given the runbook "services.install_jellyfin" fails to import
+    Given the runbook "development.install_antigravity" fails to import
     When I run "strata runbook --list"
-    Then the output contains "install_baikal"
+    Then the output contains "install_jellyfin"
     And the output contains "could not be imported"
-    And the output contains "services.install_jellyfin"
+    And the output contains "development.install_antigravity"
 
   # Name resolution ----------------------------------------------------------
 

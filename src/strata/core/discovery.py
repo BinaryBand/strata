@@ -1,22 +1,24 @@
 """Discover runbook modules under strata.core.runbooks.
 
 Exposes ``iter_runbooks()`` which walks the runbook package, imports each
-module, and returns metadata the CLI uses for ``--list``, autocompletion,
-and bare-leaf resolution.
+module, adds the runbook built from each app spec in ansible/apps/, and returns
+metadata the CLI uses for ``--list``, autocompletion, and bare-leaf resolution.
 """
 
 from __future__ import annotations
 
 import difflib
+import functools
 import importlib
 import inspect
 import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from types import ModuleType
 
 import strata.core.runbooks as _runbook_pkg
-from strata.core import guard
+from strata.core import app_runbook, app_specs, guard, paths
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,49 @@ class ImportFailure:
     error: str
 
 
+def _info(short: str, module: ModuleType) -> RunbookInfo | None:
+    """Describe a runbook module, or return None for a helper module with no main()."""
+    main = getattr(module, "main", None)
+    if not callable(main):
+        # A module under runbooks/ with no main() is a helper, not a
+        # runbook. Appending it unconditionally put it in --list and the
+        # picker, and then dispatch died on a bare AttributeError the
+        # moment anyone selected it.
+        return None
+    docstring = (inspect.getdoc(module) or "").splitlines()
+    parts = short.split(".")
+    return RunbookInfo(
+        dotted_name=short,
+        leaf=parts[-1],
+        category=parts[-2] if len(parts) > 1 else "",
+        docstring_first_line=docstring[0].strip() if docstring else "",
+        accepts_tags=accepts_tags(main),
+        alias=guard.alias_of(main),
+    )
+
+
+@functools.cache
+def _spec_runbooks(
+    directory: Path,
+) -> tuple[dict[str, ModuleType], tuple[ImportFailure, ...]]:
+    """Build a runbook module from each spec under `directory`, once per process.
+
+    A spec that cannot be read or built is recorded as a failure like an
+    unimportable module, so one bad file does not take the others down. Building
+    registers the app's guards and backup tag, which is why it is cached rather
+    than repeated on every lookup.
+    """
+    modules: dict[str, ModuleType] = {}
+    failures: list[ImportFailure] = []
+    for path in app_specs.spec_files(directory):
+        short = app_runbook.dotted_name(path.stem)
+        try:
+            modules[short] = app_runbook.build(app_specs.load(path))
+        except Exception as exc:  # noqa: BLE001
+            failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
+    return modules, tuple(failures)
+
+
 def _walk() -> tuple[list[RunbookInfo], list[ImportFailure]]:
     """Import every runbook module, returning what worked and what did not."""
     pkg = _runbook_pkg
@@ -102,34 +147,33 @@ def _walk() -> tuple[list[RunbookInfo], list[ImportFailure]]:
             failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
             continue
 
-        main = getattr(module, "main", None)
-        if not callable(main):
-            # A module under runbooks/ with no main() is a helper, not a
-            # runbook. Appending it unconditionally put it in --list and the
-            # picker, and then dispatch died on a bare AttributeError the
-            # moment anyone selected it. (The old _EXCLUDE set was meant for
-            # this and could never match: it held "discovery", which is not
-            # in this package at all.)
-            continue
+        info = _info(short, module)
+        if info is not None:
+            results.append(info)
 
-        docstring = (inspect.getdoc(module) or "").splitlines()
-        parts = short.split(".")
-
-        results.append(
-            RunbookInfo(
-                dotted_name=short,
-                leaf=parts[-1],
-                category=parts[-2] if len(parts) > 1 else "",
-                docstring_first_line=docstring[0].strip() if docstring else "",
-                accepts_tags=accepts_tags(main),
-                alias=guard.alias_of(main),
+    spec_modules, spec_failures = _spec_runbooks(paths.APPS_DIR)
+    for short, module in spec_modules.items():
+        if any(r.dotted_name == short for r in results):
+            failures.append(
+                ImportFailure(short, "declared by both a runbook module and ansible/apps/")
             )
-        )
+            continue
+        info = _info(short, module)
+        if info is not None:
+            results.append(info)
+    failures.extend(spec_failures)
     return sorted(results, key=lambda r: r.dotted_name), failures
 
 
 def load(dotted_name: str) -> ModuleType:
-    """Import the runbook module named `dotted_name`, relative to the runbook package."""
+    """Return the runbook module named `dotted_name`, relative to the runbook package.
+
+    A Podman app declared in ansible/apps/ has no module to import; its runbook
+    is the one built from its spec.
+    """
+    spec_module = _spec_runbooks(paths.APPS_DIR)[0].get(dotted_name)
+    if spec_module is not None:
+        return spec_module
     return importlib.import_module(f"{_runbook_pkg.__name__}.{dotted_name}")
 
 

@@ -1,17 +1,14 @@
 """Runbook: back up server app data to the Restic repository, tagged per app.
 
-Each app declares its own backup location with @guard.backup_tag on its install
-runbook; this runbook discovers them by importing sibling modules under
-strata.core.runbooks.services.  Scope can be narrowed with
+Each app declares its own backup location, in its spec under ansible/apps/ (the
+`backup` block, which registers a @guard.backup_tag on its install runbook);
+this runbook discovers them by loading every runbook.  Scope can be narrowed with
 `strata runbook infrastructure.backup --tags baikal,jellyfin` or left unset to
 back up every app.
 """
 
-import pkgutil
-
 from strata.core import discovery, guard, paths
 from strata.core.ports import PlaybookRunner
-from strata.core.runbooks import services
 
 # Operator-owned repo config: host_vars, group_vars (including the vaulted
 # secrets), and hosts.ini. Always backed up under a static tag, as root rather
@@ -24,9 +21,8 @@ _CONFIG_PATH = str(paths.INVENTORY_DIR)
 
 
 def _discover_backup_paths() -> dict[str, str]:
-    """Import every services runbook so its backup_tag declarations register."""
-    for module in pkgutil.iter_modules(services.__path__):
-        discovery.load(f"services.{module.name}")
+    """Load every runbook so its backup_tag declarations register."""
+    discovery.iter_runbooks()
     return guard.backup_paths()
 
 

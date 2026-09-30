@@ -1,1 +1,1 @@
-"""Runbooks for long-running server apps, each a rootless Podman Quadlet unit."""
+"""The `services` runbook category: rootless Podman apps, each built from ansible/apps/."""

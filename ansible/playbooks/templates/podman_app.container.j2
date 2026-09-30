@@ -1,0 +1,29 @@
+[Unit]
+Description={{ podman_app.description }}
+{% if podman_app.requires_mounts_for %}
+RequiresMountsFor={{ podman_app.requires_mounts_for }}
+{% endif %}
+
+[Container]
+Image={{ podman_app.image }}
+{% for volume in podman_app.volumes %}
+Volume={{ volume.host }}:{{ volume.container }}:{{ volume.options }}
+{% endfor %}
+{% for name, value in podman_app.env.items() %}
+Environment={{ name }}={{ value }}
+{% endfor %}
+{% for secret in podman_app.secret_env %}
+Environment={{ secret.env }}={{ vars[secret.name] }}
+{% endfor %}
+{% if podman_app.command %}
+Exec={{ podman_app.command }}
+{% endif %}
+{% for port in podman_app.ports %}
+PublishPort={{ port.host }}:{{ port.container }}
+{% endfor %}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

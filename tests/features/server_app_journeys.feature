@@ -25,19 +25,19 @@ Feature: Provision server apps and their dependency chain end-to-end
   Scenario: Re-running an installed app reconciles diot and nothing else
     Given Jellyfin and its whole chain are already installed
     When I run "strata runbook services.install_jellyfin"
-    Then the only playbooks run are "playbooks/create_diot_user.yml" and "playbooks/install_jellyfin.yml"
+    Then the only playbooks run are "playbooks/create_diot_user.yml" and "playbooks/install_podman_app.yml"
 
   Scenario: Installing Baikal only requires Podman, not Jellyfin
     Given neither the diot user, Podman nor Jellyfin are installed
     When I run "strata runbook services.install_baikal"
     Then Podman is installed
-    And "playbooks/install_baikal.yml" is run
-    And "playbooks/install_jellyfin.yml" is not run
+    And "baikal" is deployed
+    And "jellyfin" is not deployed
 
   Scenario: Baikal declares three data directories, all provisioned before it
     Given neither the diot user, Podman nor Jellyfin are installed
     When I run "strata runbook services.install_baikal"
-    Then 3 directories are ensured before "playbooks/install_baikal.yml"
+    Then 3 directories are ensured before "playbooks/install_podman_app.yml"
 
   Scenario: Enabling the rclone HTTP server requires the rclone mount layer first
     Given the diot user and Podman are installed

@@ -21,17 +21,14 @@ its guard chain doesn't provide.
 
 from __future__ import annotations
 
-import importlib
 import inspect
-import pkgutil
 import re
 from pathlib import Path
 from typing import cast
 
 import yaml
 
-import strata.core.runbooks as _runbook_pkg
-from strata.core import guard
+from strata.core import discovery, guard
 from strata.core import requirements as req
 from tests.playbooks._ansible import ANSIBLE_DIR, iter_tasks
 
@@ -64,28 +61,22 @@ _ROLE_KEYS = (
 )
 
 
-def _import_all_runbooks() -> None:
-    for _, name, ispkg in pkgutil.walk_packages(_runbook_pkg.__path__, _runbook_pkg.__name__ + "."):
-        if not ispkg:
-            importlib.import_module(name)
-
-
 def _runbook_names() -> list[str]:
-    """Dotted runbook names, e.g. 'services.install_jellyfin'."""
-    _import_all_runbooks()
-    prefix = _runbook_pkg.__name__ + "."
-    names = [
-        name.removeprefix(prefix)
-        for _, name, ispkg in pkgutil.walk_packages(
-            _runbook_pkg.__path__, _runbook_pkg.__name__ + "."
-        )
-        if not ispkg
-    ]
-    return sorted(names)
+    """Dotted runbook names, e.g. 'services.install_jellyfin'.
+
+    Walks discovery, so the runbooks built from ansible/apps/ are checked like
+    any other, and loading them populates `guard.requires_map()`. A runbook that
+    fails to load fails here rather than dropping out of every check below.
+    """
+    assert not discovery.import_failures(), discovery.import_failures()
+    return [info.dotted_name for info in discovery.iter_runbooks()]
 
 
 def _playbook_for(runbook: str) -> Path | None:
-    module = importlib.import_module(f"strata.core.runbooks.{runbook}")
+    module = discovery.load(runbook)
+    named = getattr(module, "PLAYBOOK", None)
+    if named is not None:
+        return ANSIBLE_DIR / named
     match = _PLAYBOOK_RE.search(inspect.getsource(module))
     return ANSIBLE_DIR / match.group(1) if match else None
 
@@ -179,8 +170,7 @@ def _transitive_requires(runbook: str, requires_map: dict[str, list[str]]) -> se
 
 
 def _declared(runbook: str) -> list[req.Requirement]:
-    module = importlib.import_module(f"strata.core.runbooks.{runbook}")
-    main = getattr(module, "main", None)
+    main = getattr(discovery.load(runbook), "main", None)
     return guard.declared(main) if callable(main) else []
 
 

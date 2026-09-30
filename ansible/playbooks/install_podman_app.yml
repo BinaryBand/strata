@@ -1,0 +1,31 @@
+---
+# Deploy a Podman server app as a rootless container owned by diot: a Quadlet
+# unit under diot's lingering user manager, no root daemon. Every app declared
+# in ansible/apps/ runs this one play. Its runbook (core/app_runbook.py) hands
+# over the resolved app as the `podman_app` extravar and has already provisioned
+# the data directories with guard.path, so nothing about a particular app is
+# spelled here. A secret written into the unit is read from the vault by name.
+- name: Deploy a Podman server app as a rootless container owned by diot
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Require the app extravar
+      ansible.builtin.assert:
+        that:
+          - podman_app is defined
+          - podman_app.name | default('') | length > 0
+        fail_msg: >-
+          podman_app must be set; run this through the services.install_<app>
+          runbook, which is built from ansible/apps/<app>.yml.
+
+    - name: "Deploy and start {{ podman_app.name }}"
+      ansible.builtin.include_role:
+        name: podman_quadlet_service
+      vars:
+        quadlet_user: "{{ diot_user }}"
+        quadlet_group: "{{ podman_app.group }}"
+        quadlet_name: "{{ podman_app.name }}"
+        quadlet_mode: "{{ podman_app.unit_mode }}"
+        quadlet_no_log: "{{ podman_app.no_log }}"
+        quadlet_content: "{{ lookup('ansible.builtin.template', 'podman_app.container.j2') }}"

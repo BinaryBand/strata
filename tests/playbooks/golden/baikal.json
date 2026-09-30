@@ -11,6 +11,8 @@
     "baikal": "/srv/baikal"
   },
   "role_vars": {
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
     "quadlet_user": "diot",
     "quadlet_group": "baikal",
     "quadlet_name": "baikal"

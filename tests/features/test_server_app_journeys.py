@@ -51,6 +51,7 @@ def _isolate_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 _ENSURE_PATH = "playbooks/ensure_path.yml"
+_PODMAN_APP = "playbooks/install_podman_app.yml"
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +77,15 @@ def _journey_seams(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None
 
 def _ran(ctx: dict[str, Any]) -> list[str]:
     return [p["playbook"] for p in ctx["playbooks"]]
+
+
+def _deployed(ctx: dict[str, Any]) -> list[str]:
+    """The apps the generic Podman app playbook was run for, in order."""
+    return [
+        p["extravars"]["podman_app"]["name"]
+        for p in ctx["playbooks"]
+        if p["playbook"] == _PODMAN_APP
+    ]
 
 
 def _index(ctx: dict[str, Any], playbook: str) -> int:
@@ -176,12 +186,23 @@ def media_mount_up(ctx: dict[str, Any]) -> None:
 
 @then("Jellyfin is deployed last")
 def jellyfin_last(ctx: dict[str, Any]) -> None:
-    assert _ran(ctx)[-1] == "playbooks/install_jellyfin.yml", _ran(ctx)
+    assert _ran(ctx)[-1] == _PODMAN_APP, _ran(ctx)
+    assert _deployed(ctx) == ["jellyfin"], _deployed(ctx)
 
 
 @then(parsers.parse('the only playbooks run are "{first}" and "{second}"'))
 def only_these_playbooks(ctx: dict[str, Any], first: str, second: str) -> None:
     assert _ran(ctx) == [first, second], _ran(ctx)
+
+
+@then(parsers.parse('"{app}" is deployed'))
+def app_deployed(ctx: dict[str, Any], app: str) -> None:
+    assert app in _deployed(ctx), _deployed(ctx)
+
+
+@then(parsers.parse('"{app}" is not deployed'))
+def app_not_deployed(ctx: dict[str, Any], app: str) -> None:
+    assert app not in _deployed(ctx), _deployed(ctx)
 
 
 @then(parsers.parse('"{playbook}" is run'))
@@ -218,4 +239,5 @@ def chain_not_skipped(ctx: dict[str, Any]) -> None:
     ran = _ran(ctx)
     assert _ENSURE_PATH in ran, ran
     assert "playbooks/enable_rclone.yml" in ran, ran
-    assert ran[-1] == "playbooks/install_jellyfin.yml", ran
+    assert ran[-1] == _PODMAN_APP, ran
+    assert _deployed(ctx) == ["jellyfin"], _deployed(ctx)

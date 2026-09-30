@@ -12,7 +12,6 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from strata.core import paths
 from strata.core.models import AppSpec
 
 
@@ -37,6 +36,6 @@ def load(path: Path) -> AppSpec:
     return spec
 
 
-def load_all(directory: Path = paths.APPS_DIR) -> list[AppSpec]:
-    """Every app declared under `directory`, ordered by file name."""
-    return [load(path) for path in sorted(directory.glob("*.yml"))]
+def spec_files(directory: Path) -> list[Path]:
+    """The spec files under `directory`, ordered by file name."""
+    return sorted(directory.glob("*.yml"))

@@ -8,19 +8,21 @@ would only re-test pkgutil.
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import pkgutil
 import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-from strata.core import discovery
+from strata.core import discovery, guard, paths
 
 # A runbook that must exist for the dependency chain documented in docs/ARCHITECTURE.md
 # to work at all; if it is renamed these tests should be updated deliberately.
 _KNOWN_DOTTED = "services.install_jellyfin"
 _KNOWN_LEAF = "install_jellyfin"
+# A runbook that is a module file, for the tests that break its import.
+_FILE_DOTTED = "development.install_antigravity"
 
 
 @pytest.fixture(scope="module")
@@ -68,8 +70,7 @@ def test_every_listed_runbook_actually_has_a_main(
     """
     assert runbooks
     for info in runbooks:
-        module = importlib.import_module(f"strata.core.runbooks.{info.dotted_name}")
-        assert callable(module.main)
+        assert callable(discovery.load(info.dotted_name).main)
 
 
 def test_a_module_without_main_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,7 +133,7 @@ def test_an_unimportable_module_is_skipped_not_raised(
     real_import = discovery.importlib.import_module
 
     def flaky(name: str, package: str | None = None) -> ModuleType:
-        if name.endswith("." + _KNOWN_LEAF):
+        if name.endswith("." + _FILE_DOTTED):
             msg = "boom"
             raise ImportError(msg)
         return real_import(name, package)
@@ -140,7 +141,7 @@ def test_an_unimportable_module_is_skipped_not_raised(
     monkeypatch.setattr(discovery.importlib, "import_module", flaky)
 
     names = {r.dotted_name for r in discovery.iter_runbooks()}
-    assert _KNOWN_DOTTED not in names
+    assert _FILE_DOTTED not in names
     assert len(names) == len(runbooks) - 1
 
 
@@ -196,3 +197,71 @@ def test_suggest_only_returns_known_runbooks(
 ) -> None:
     known = {r.dotted_name for r in runbooks}
     assert set(discovery.suggest("services.install_jellyfn")) <= known
+
+
+# ── runbooks built from app specs ─────────────────────────────────────
+
+
+def test_an_app_spec_is_listed_as_a_runbook_with_its_alias(
+    runbooks: list[discovery.RunbookInfo],
+) -> None:
+    info = next(r for r in runbooks if r.dotted_name == _KNOWN_DOTTED)
+    assert (info.leaf, info.category, info.alias) == (_KNOWN_LEAF, "services", "install Jellyfin")
+    assert info.summary.startswith("deploy Jellyfin")
+
+
+def test_load_returns_the_module_built_from_the_spec() -> None:
+    module = discovery.load(_KNOWN_DOTTED)
+    assert module.__name__ == "strata.core.runbooks.services.install_jellyfin"
+    assert discovery.load(_KNOWN_DOTTED) is module
+
+
+@pytest.fixture
+def apps_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A private ansible/apps/, with the guard registries the builder writes to isolated."""
+    monkeypatch.setattr(paths, "APPS_DIR", tmp_path)
+    monkeypatch.setattr(guard, "_requires", {})
+    monkeypatch.setattr(guard, "_backup_paths", {})
+    return tmp_path
+
+
+def _copy_spec(apps_dir: Path, name: str, *, as_name: str | None = None) -> None:
+    source = (paths.PROJECT_ROOT / "ansible" / "apps" / f"{name}.yml").read_text()
+    (apps_dir / f"{as_name or name}.yml").write_text(source)
+
+
+def test_a_bad_spec_is_reported_and_the_others_still_load(apps_dir: Path) -> None:
+    _copy_spec(apps_dir, "baikal")
+    (apps_dir / "broken.yml").write_text("name: broken\n")
+
+    services = {r.dotted_name for r in discovery.iter_runbooks() if r.category == "services"}
+    failures = {f.dotted_name: f.error for f in discovery.import_failures()}
+
+    assert services == {"services.install_baikal"}
+    assert "AppSpecError" in failures["services.install_broken"]
+    assert "broken.yml" in failures["services.install_broken"]
+
+
+def test_a_spec_that_repeats_a_runbook_module_is_reported(
+    apps_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_spec(apps_dir, "baikal")
+    twin = ModuleType("strata.core.runbooks.services.install_baikal")
+    twin.main = lambda: 0  # ty: ignore[unresolved-attribute]
+    monkeypatch.setitem(sys.modules, "strata.core.runbooks.services.install_baikal", twin)
+    real_walk = pkgutil.walk_packages
+    yielded_twin = False
+
+    def walk_with_twin(*args: object, **kwargs: object) -> object:
+        # walk_packages recurses through this name, so offer the twin only once.
+        nonlocal yielded_twin
+        yield from real_walk(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        if not yielded_twin:
+            yielded_twin = True
+            yield None, "strata.core.runbooks.services.install_baikal", False
+
+    monkeypatch.setattr(discovery.pkgutil, "walk_packages", walk_with_twin)
+
+    failures = {f.dotted_name: f.error for f in discovery.import_failures()}
+    assert "declared by both" in failures["services.install_baikal"]
+    assert [r.dotted_name for r in discovery.iter_runbooks()].count("services.install_baikal") == 1

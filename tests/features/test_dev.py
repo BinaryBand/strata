@@ -13,12 +13,11 @@ from typing import Any
 from pytest_bdd import given, parsers, scenarios, then
 
 from strata.core import paths
-from strata.core.models import AppSpec, ServerAppsDefaults
+from strata.core.models import AppSpec
 
 scenarios("dev.feature")
 
-_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "server_apps_schema.json"
-_APP_SPEC_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "app_spec_schema.json"
+_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "app_spec_schema.json"
 
 
 def _listed_as_word(output: str, name: str) -> bool:
@@ -47,30 +46,23 @@ def listed_as_command(ctx: dict[str, Any], name: str) -> None:
     assert _listed_as_word(ctx["result"].output, name)
 
 
-@given("I have not changed the ServerAppsDefaults model")
+@given("I have not changed the AppSpec model")
 def model_unchanged() -> None:
     """No-op: the committed model is the baseline this scenario compares against."""
 
 
-@then(".vscode/server_apps_schema.json is written from the ServerAppsDefaults model")
+@then(".vscode/app_spec_schema.json is written from the AppSpec model")
 def schema_written_from_model(ctx: dict[str, Any]) -> None:
     assert ctx["result"].exit_code == 0
-    written = json.loads(_SCHEMA_PATH.read_text())
-    assert written == ServerAppsDefaults.model_json_schema()
-
-
-@then(".vscode/app_spec_schema.json is written from the AppSpec model")
-def app_spec_schema_written_from_model() -> None:
-    assert json.loads(_APP_SPEC_SCHEMA_PATH.read_text()) == AppSpec.model_json_schema()
+    assert json.loads(_SCHEMA_PATH.read_text()) == AppSpec.model_json_schema()
 
 
 @then("the output reports the path it wrote")
 def output_reports_path(ctx: dict[str, Any]) -> None:
-    assert "server_apps_schema.json" in ctx["result"].output
     assert "app_spec_schema.json" in ctx["result"].output
 
 
 @then("the written schema is byte-identical to the committed one")
 def schema_byte_identical() -> None:
-    expected = json.dumps(ServerAppsDefaults.model_json_schema(), indent=2, sort_keys=True) + "\n"
+    expected = json.dumps(AppSpec.model_json_schema(), indent=2, sort_keys=True) + "\n"
     assert _SCHEMA_PATH.read_text() == expected

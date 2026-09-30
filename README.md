@@ -12,7 +12,7 @@ The package is a three-layer scaffold, and an import-linter contract enforces it
 - `src/strata/core/` -- runbooks, models, guards, and the `Protocol` ports adapters satisfy. No I/O. `core/runbooks/` is grouped by category (`system/`, `package_managers/`, `development/`, `infrastructure/`, `services/`); each module exposes `main(target, *, runner)` and an optional `check()`, decorated with guards that *declare* requirements rather than satisfying them.
 - `src/strata/adapters/` -- everything that touches the outside world: `guard_executor.py` (satisfies what the guards declared, then calls `main()`), `ansible/` (runner, vault secrets, host_vars/group_vars, SSH keys, rclone, inventory), `proc.py`, `state.py`, `fs.py`.
 - `ansible/playbooks/` -- the actual playbooks. Paths resolve relative to `ansible/`, independent of where the runbook module lives. Sequences more than one playbook needs live in `ansible/roles/`.
-- `ansible/inventory/` -- `hosts.ini`, `host_vars/<host>.yml` (per-host plain variables, e.g. rclone synced remotes and a per-host restic repository) and `group_vars/all/managed.yml` (every-host rclone remotes and serves) are yours and gitignored, each with a `.example` template beside it; the CLI creates the variable files on first write. `group_vars/all/server_apps_defaults.yml` holds shared server-app defaults, and `group_vars/secrets/all.yml` the vault-encrypted secrets (gitignored).
+- `ansible/inventory/` -- `hosts.ini`, `host_vars/<host>.yml` (per-host plain variables, e.g. rclone synced remotes and a per-host restic repository) and `group_vars/all/managed.yml` (every-host rclone remotes and serves) are yours and gitignored, each with a `.example` template beside it; the CLI creates the variable files on first write. `group_vars/secrets/all.yml` holds the vault-encrypted secrets (gitignored). `ansible/apps/<name>.yml` declares each Podman server app.
 
 `docs/ARCHITECTURE.md` is the full structural reference -- the layer scaffold, the guard flow, the call chain from CLI to playbook, and the conventions a change is expected to hold to. `docs/LEDGER.md` records known asymmetries and refactor opportunities.
 
@@ -68,7 +68,7 @@ Guards are decorators on a runbook's `main()` that make a prerequisite hold befo
 - `@guard.storage(vault_key, owner=, group=, mode=, require_writable=)` -- ensure a vaulted storage location -- prompted for like `@guard.secret` -- is ready, dispatching to the `@guard.path` or `@guard.mount` flow at runtime depending on whether the stored value is a local path or a `remote:subpath`.
 - `@guard.requires("category.runbook")` -- ensure an upstream runbook has run first.
 - `@guard.controller_only(reason)` -- refuse a non-controller target outright, for workstation tooling whose playbook is deliberately `hosts: local`. Without it such a play matches no hosts under `--limit`, which ansible reports as success.
-- `@guard.backup_tag(tag, path)` -- declare that `path` is snapshotted under restic tag `tag`; `infrastructure.backup` collects these by importing every runbook.
+- `@guard.backup_tag(tag, path)` -- declare that `path` is snapshotted under restic tag `tag`; `infrastructure.backup` collects these by loading every runbook.
 - `@guard.alias(display_name)` -- the friendly name shown in `--list` and the picker. Metadata only; a runbook is still invoked by its dotted or leaf name.
 
 ## System and package managers
@@ -110,6 +110,8 @@ flowchart TD
 - `install_jellyfin` -- Jellyfin media server on port 8096; config and cache at `/srv/jellyfin/{config,cache}` (`diot:jellyfin`, setgid), with the read-only media library bound from `/mnt/rclone/pcloud/Media`.
 - `install_baikal` -- Baikal CalDAV/CardDAV server on port 8080; data at `/srv/baikal/{config,Specific}` (`diot:baikal`, setgid).
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
+
+These three are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.
 
 ## rclone mounts
 

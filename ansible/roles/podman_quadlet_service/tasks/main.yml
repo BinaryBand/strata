@@ -1,11 +1,7 @@
 ---
 # Write a Quadlet unit for a diot-owned rootless Podman service, regenerate
-# the user systemd manager's services from it, and start it. Callers:
-# install_baikal.yml, install_jellyfin.yml and install_minio.yml here, and the
-# anyllm repository's AnythingLLM playbooks, which run from this ansible/
-# folder and reach the role through ansible.cfg's roles_path. The vars below
-# are therefore an interface: renaming one breaks a caller this repo's tests
-# cannot see.
+# the user systemd manager's services from it, and start it. Its one caller is
+# install_podman_app.yml, which every app declared in ansible/apps/ runs.
 #
 # Required vars:
 #   quadlet_user     the become_user the service runs as (e.g. diot)

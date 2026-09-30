@@ -19,25 +19,29 @@ Regenerate a snapshot only for a change meant to alter the deployed unit:
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
 
-from strata.core import guard
+from strata.core import app_runbook, discovery, guard
 from strata.core import requirements as req
 from tests.playbooks._ansible import ANSIBLE_DIR, PLAYBOOKS_DIR, iter_tasks
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 GROUP_VARS = ANSIBLE_DIR / "inventory" / "group_vars" / "all"
+TEMPLATES_DIR = PLAYBOOKS_DIR / "templates"
 APPS = ("baikal", "jellyfin", "minio")
 
-_JINJA = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
+# What the role writes when a caller leaves a var out. The snapshot records the
+# effective value, so a play that states its default explicitly is not a change.
+_ROLE_DEFAULTS: dict[str, object] = {"quadlet_mode": "0644", "quadlet_no_log": False}
+# Ansible turns a templated "True"/"False" back into a bool.
+_BOOLS = {"True": True, "False": False}
 
 
 class _CapturingRunner:
@@ -59,17 +63,28 @@ class _CapturingRunner:
 
 
 def _render(value: object, context: dict[str, Any]) -> object:
-    """Render a string the way Ansible templates a var; anything else passes through."""
-    if isinstance(value, str):
-        return _JINJA.from_string(value).render(context)
-    return value
+    """Render a string the way Ansible templates a var; anything else passes through.
+
+    The template lookup and `vars` are the two Ansible features the play and its
+    template use. Blocks trim their newline, as Ansible's templating does.
+    """
+    if not isinstance(value, str):
+        return value
+    env = Environment(undefined=StrictUndefined, keep_trailing_newline=True, trim_blocks=True)
+    cast("dict[str, Any]", env.globals)["lookup"] = lambda kind, name: _lookup(
+        env, kind, name, context
+    )
+    rendered = env.from_string(value).render({**context, "vars": context})
+    return _BOOLS.get(rendered, rendered)
+
+
+def _lookup(env: Environment, kind: str, name: str, context: dict[str, Any]) -> str:
+    assert kind == "ansible.builtin.template", f"unsupported lookup {kind!r}"
+    return env.from_string((TEMPLATES_DIR / name).read_text()).render({**context, "vars": context})
 
 
 def _group_vars() -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-    for name in ("common.yml", "server_apps_defaults.yml"):
-        merged.update(yaml.safe_load((GROUP_VARS / name).read_text()))
-    return merged
+    return yaml.safe_load((GROUP_VARS / "common.yml").read_text())
 
 
 def _quadlet_role_task(playbook: Path) -> dict[str, Any]:
@@ -92,7 +107,7 @@ def _play_vars(playbook: Path, context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot(app: str) -> dict[str, Any]:
-    module = importlib.import_module(f"strata.core.runbooks.services.install_{app}")
+    module = discovery.load(app_runbook.dotted_name(app))
     runner = _CapturingRunner()
     assert module.main(runner=runner) == 0
 
@@ -106,7 +121,7 @@ def _snapshot(app: str) -> dict[str, Any]:
     context = _play_vars(playbook, context)
 
     task = _quadlet_role_task(playbook)
-    role_vars = {
+    role_vars = _ROLE_DEFAULTS | {
         name: _render(value, context)
         for name, value in (task["vars"]).items()
         if name != "quadlet_content"

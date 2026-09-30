@@ -108,9 +108,14 @@ class AppSpec(_Strict):
     backup: AppBackup | None = None
 
     @property
+    def secrets_in_unit(self) -> list[AppSecret]:
+        """The secrets written into the Quadlet unit as environment variables."""
+        return [secret for secret in self.secrets if secret.env]
+
+    @property
     def unit_mode(self) -> str:
         """The mode of the Quadlet file: 0600 when a secret is written into it."""
-        return "0600" if any(secret.env for secret in self.secrets) else "0644"
+        return "0600" if self.secrets_in_unit else "0644"
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
