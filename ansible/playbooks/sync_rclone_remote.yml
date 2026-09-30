@@ -65,10 +65,12 @@
           import os
 
           conf_path = os.path.expanduser("~/.config/rclone/rclone.conf")
-          cfg = configparser.ConfigParser()
+          # interpolation=None: rclone values are literal, and the default
+          # parser raised on any '%', such as a URL-encoded WebDAV path.
+          cfg =configparser.ConfigParser(interpolation=None)
           cfg.read(conf_path)
 
-          new = configparser.ConfigParser()
+          new = configparser.ConfigParser(interpolation=None)
           new.read_string(os.environ["STANZA"])
           section = os.environ["REMOTE_NAME"]
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 
 class JsonHandler(Protocol):
@@ -60,29 +60,43 @@ class Request:
     args: dict[str, str] = field(default_factory=dict)  # `{name}` captures from the path
 
 
-def require(data: Mapping[str, Any], *keys: str) -> tuple[Any, ...]:
-    """Return the values of `keys` in `data`, or raise a 400 naming the ones needed.
+def require(data: Mapping[str, Any], *keys: str) -> tuple[str, ...]:
+    """Return the string values of `keys` in `data`, or raise a 400 naming the problem.
 
     A missing key and an empty value are the same refusal: none of the routes
-    has a meaningful empty answer.
+    has a meaningful empty answer. A value that is not a string is refused too,
+    since every caller hands it to an adapter expecting one, where a JSON number
+    or list would surface as a TypeError and a 500.
     """
     values = tuple(data.get(key) for key in keys)
     if not all(values):
         verb = "is" if len(keys) == 1 else "are"
         raise ApiError(400, f"{' and '.join(keys)} {verb} required")
-    return values
+    for key, value in zip(keys, values, strict=True):
+        if not isinstance(value, str):
+            raise ApiError(400, f"{key} must be a string")
+    return cast("tuple[str, ...]", values)
 
 
 def read_json_body(handler: JsonHandler) -> dict[str, Any]:
     """Parse the request body as a JSON object, or {} if there is none.
 
+    A malformed body or Content-Length is a 400 here, so the server needs no
+    catch-all for ValueError -- which would also have answered a bug in a route
+    body with a 400 and kept it out of the server log.
+
     A body that parses to anything but an object is refused here: every route
     reads it with `.get`, so a list or a bare scalar would otherwise surface as
     an AttributeError and a 500 for what is the client's mistake.
     """
-    length = int(handler.headers.get("Content-Length", 0) or 0)
-    raw = handler.rfile.read(length) if length else b""
-    body = json.loads(raw) if raw else {}
+    try:
+        length = int(handler.headers.get("Content-Length", 0) or 0)
+        raw = handler.rfile.read(length) if length > 0 else b""
+        # UnicodeDecodeError, which json.loads raises for bytes that are not
+        # UTF-8, is a ValueError too.
+        body = json.loads(raw) if raw else {}
+    except ValueError as exc:
+        raise ApiError(400, "request body is not valid JSON") from exc
     if not isinstance(body, dict):
         raise ApiError(400, "request body must be a JSON object")
     return body

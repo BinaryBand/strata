@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pwd
 import types
-from pathlib import Path
 from typing import assert_never
 
 from strata.adapters import guard_executor, prerequisites
@@ -97,7 +96,7 @@ def guard_status(  # noqa: PLR0911, PLR0912, C901
             remote_name = rclone.remote_name(requirement.remote_path)
             if not rclone.is_registered(remote_name, writable=requirement.writable):
                 return "missing"
-            return _status(ok=Path(rclone.resolve(requirement.remote_path)).exists())
+            return _status(ok=rclone.is_mounted(requirement.remote_path))
         case req.UpstreamRunbook():
             module = discovery.load(requirement.dotted_name)
             satisfied = check_result(module, target=target)

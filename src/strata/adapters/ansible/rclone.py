@@ -13,6 +13,8 @@ the point of use.
 """
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 from strata.adapters import proc
@@ -63,6 +65,18 @@ def list_writable_remotes() -> list[str]:
 def is_writable(name: str) -> bool:
     """True if *name* is mounted read-write rather than the default read-only."""
     return name in list_writable_remotes()
+
+
+def is_mounted(remote_path: str) -> bool:
+    """True if `remote_path`'s remote is mounted on this machine and the path exists under it.
+
+    Existence alone is not a mount: enable_rclone.yml creates the mountpoint
+    directory and it outlives the mount, so for a remote root an unmounted
+    remote read as mounted, and restic or Jellyfin then used the local disk
+    underneath it. The playbook checks `mountpoint -q` for the same reason.
+    """
+    root = mount_root(remote_name(remote_path))
+    return os.path.ismount(root) and Path(resolve(remote_path)).exists()
 
 
 def is_registered(name: str, *, writable: bool) -> bool:

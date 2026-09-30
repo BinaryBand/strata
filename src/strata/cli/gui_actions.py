@@ -20,7 +20,6 @@ from typing import Any
 
 from strata.adapters import guard_executor, guard_status, reachability
 from strata.adapters.ansible import host_vars, inventory, runner, secrets, vault_pass
-from strata.cli.dispatch import tag_rejection
 from strata.cli.gui_http import ApiError, Request, require
 from strata.core import discovery, guard, ports
 
@@ -92,8 +91,10 @@ def start_run(dotted_name: str, target: str | None, tags: list[str] | None) -> d
         if resolved is None:
             raise ApiError(400, f"unknown runbook {dotted_name!r}")
         module = discovery.load(resolved)
-        if (rejection := tag_rejection(module, tags)) is not None:
-            raise ApiError(400, rejection)
+        try:
+            tags = discovery.forwarded_tags(module, tags)
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
         state = RunState(run_id=uuid.uuid4().hex)
         _current_run = state
 
@@ -171,20 +172,26 @@ def post_secret(request: Request) -> dict[str, Any]:
     vault_key, value = require(request.body, "vault_key", "value")
     if not vault_pass.has_vault_password():
         raise ApiError(400, "set the vault password first")
-    secrets.set_secret(vault_key, value)
+    try:
+        secrets.set_secret(vault_key, value)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
     return {"ok": True}
 
 
 def post_device(request: Request) -> dict[str, Any]:
     """Handle `POST /api/devices`."""
     name, host = require(request.body, "name", "host")
-    device = inventory.add(
-        name,
-        host,
-        user=request.body.get("user", "root"),
-        connection=request.body.get("connection", "ssh"),
-        port=request.body.get("port"),
-    )
+    try:
+        device = inventory.add(
+            name,
+            host,
+            user=request.body.get("user", "root"),
+            connection=request.body.get("connection", "ssh"),
+            port=request.body.get("port"),
+        )
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
     return device.model_dump()
 
 
@@ -195,8 +202,8 @@ def post_run(request: Request) -> dict[str, Any]:
     here rather than reaching the executor as whatever JSON happened to hold. An
     unknown host is refused the way `_helpers.require_host` refuses one for the
     rclone commands; that helper raises `typer.Exit`, so the check is repeated
-    rather than called. Whether a tag is one this runbook knows is checked by
-    `start_run`, through the same `validate_tags` hook the CLI runs.
+    rather than called. Which tags this runbook receives, and whether it refuses
+    them, is decided in `start_run` by `discovery.forwarded_tags`, as for the CLI.
     """
     (dotted_name,) = require(request.body, "dotted_name")
     target = request.body.get("target")

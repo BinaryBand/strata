@@ -252,8 +252,6 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
             send_json(self, 200, route.handler(request))
         except ApiError as exc:
             send_json(self, exc.status, {"error": exc.message})
-        except ValueError as exc:  # malformed JSON, or a value an adapter refused
-            send_json(self, 400, {"error": str(exc)})
         except Exception:  # noqa: BLE001 -- the last line of defence: answer, do not drop the socket
             self.log_error(
                 "unhandled error in %s %s:\n%s", method, parsed.path, traceback.format_exc()

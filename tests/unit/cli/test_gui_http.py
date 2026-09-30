@@ -59,12 +59,12 @@ def test_send_json_writes_status_headers_and_body() -> None:
 
 
 def test_require_returns_the_values_in_order() -> None:
-    assert gui_http.require({"a": 1, "b": 2}, "b", "a") == (2, 1)
+    assert gui_http.require({"a": "1", "b": "2"}, "b", "a") == ("2", "1")
 
 
 def test_require_refuses_a_missing_or_empty_key_with_a_400() -> None:
     with pytest.raises(gui_http.ApiError) as excinfo:
-        gui_http.require({"a": 1, "b": ""}, "a", "b")
+        gui_http.require({"a": "1", "b": ""}, "a", "b")
     assert excinfo.value.status == 400
     assert excinfo.value.message == "a and b are required"
 
@@ -72,3 +72,23 @@ def test_require_refuses_a_missing_or_empty_key_with_a_400() -> None:
 def test_require_names_a_single_key_in_the_singular() -> None:
     with pytest.raises(gui_http.ApiError, match="value is required"):
         gui_http.require({}, "value")
+
+
+def test_require_refuses_a_value_that_is_not_a_string() -> None:
+    with pytest.raises(gui_http.ApiError) as excinfo:
+        gui_http.require({"value": 123}, "value")
+    assert (excinfo.value.status, excinfo.value.message) == (400, "value must be a string")
+
+
+@pytest.mark.parametrize("body", [b"{not json", b"\xff\xfe"])
+def test_read_json_body_refuses_malformed_json_with_a_400(body: bytes) -> None:
+    with pytest.raises(gui_http.ApiError) as excinfo:
+        gui_http.read_json_body(FakeHandler(body=body))
+    assert (excinfo.value.status, excinfo.value.message) == (400, "request body is not valid JSON")
+
+
+def test_read_json_body_refuses_a_bad_content_length_with_a_400() -> None:
+    handler = FakeHandler()
+    handler.headers = {"Content-Length": "abc"}
+    with pytest.raises(gui_http.ApiError):
+        gui_http.read_json_body(handler)

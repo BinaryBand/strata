@@ -293,3 +293,17 @@ def test_an_unexpected_failure_is_a_500_not_a_dropped_connection(
     monkeypatch.setattr(gui_server, "_ROUTES", (gui_server.Route("GET", "/api/boom", boom),))
     status, payload = _send(f"{served}/api/boom", "GET", token=_TOKEN)
     assert (status, payload) == (500, {"error": "internal error"})
+
+
+def test_a_value_error_in_a_route_is_a_logged_500_not_a_400(
+    served: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bug that raises ValueError is the server's fault, not the client's."""
+
+    def boom(_request: object) -> dict:
+        msg = "internal detail"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(gui_server, "_ROUTES", (gui_server.Route("GET", "/api/boom", boom),))
+    status, payload = _send(f"{served}/api/boom", "GET", token=_TOKEN)
+    assert (status, payload) == (500, {"error": "internal error"})

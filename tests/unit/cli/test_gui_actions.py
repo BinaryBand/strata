@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -225,18 +226,40 @@ def test_post_run_passes_a_known_target_and_good_tags_to_start_run(
     assert calls == [("fake", "rpi4", ["jellyfin"]), ("fake", None, None)]
 
 
+def _tagged_main(tags: list[str] | None = None, **_kwargs: object) -> int:  # noqa: ARG001 -- the parameter is what accepts_tags looks for
+    return 0
+
+
 def test_start_run_refuses_tags_the_runbook_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     def reject(tags: list[str] | None) -> None:
         msg = f"Unknown tag(s): {tags}"
         raise ValueError(msg)
 
-    _install_runbook(monkeypatch, validate_tags=reject)
+    _install_runbook(monkeypatch, _tagged_main, validate_tags=reject)
     monkeypatch.setattr(gui_actions.guard_executor, "execute", _refuse_to_start)
 
     with pytest.raises(ApiError) as excinfo:
         gui_actions.start_run("fake", None, ["nope"])
 
     assert (excinfo.value.status, excinfo.value.message) == (400, "Unknown tag(s): ['nope']")
+
+
+@pytest.mark.parametrize(("main", "forwarded"), [(_noop_main, None), (_tagged_main, ["a"])])
+def test_start_run_forwards_tags_only_to_a_runbook_that_takes_them(
+    monkeypatch: pytest.MonkeyPatch, main: Callable[..., int], forwarded: list[str] | None
+) -> None:
+    """A main() without `tags` failed with a TypeError after its guards had already run."""
+    seen: list[list[str] | None] = []
+
+    def record(_module: object, **kwargs: Any) -> int:
+        seen.append(kwargs["tags"])
+        return 0
+
+    _install_runbook(monkeypatch, main)
+    monkeypatch.setattr(gui_actions.guard_executor, "execute", record)
+
+    assert _finished(gui_actions.start_run("fake", None, ["a"])["run_id"]).status == "succeeded"
+    assert seen == [forwarded]
 
 
 def test_get_run_status_unknown_id() -> None:
@@ -291,6 +314,30 @@ def test_post_device_adds_it(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(inventory, "add", lambda *_a, **_kw: device)
     body = {"name": "rpi4", "host": "10.0.0.9", "user": "pi"}
     assert gui_actions.post_device(Request(body=body))["name"] == "rpi4"
+
+
+def test_post_device_refuses_an_invalid_field_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A bad port used to be written first, and every later inventory read failed on it."""
+    ini = tmp_path / "hosts.ini"
+    monkeypatch.setattr(inventory, "_INI_PATH", ini)
+
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_device(Request(body={"name": "rpi4", "host": "10.0.0.9", "port": "x"}))
+
+    assert excinfo.value.status == 400
+    assert excinfo.value.message.startswith("invalid device: port ")
+    assert not ini.exists()
+
+
+def test_post_secret_refuses_a_name_that_is_not_a_variable_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vault_pass, "has_vault_password", lambda: True)
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_secret(Request(body={"vault_key": "a\nb: c", "value": "x"}))
+    assert excinfo.value.status == 400
 
 
 def test_delete_device_unknown_is_404(monkeypatch: pytest.MonkeyPatch) -> None:

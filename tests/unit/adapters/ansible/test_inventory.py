@@ -342,3 +342,37 @@ def test_get_agrees_with_all_hosts_on_the_connection(ini_path: Path) -> None:
         found = inventory.get(name)
         assert found is not None
         assert found.connection == expected.connection
+
+
+def test_add_leaves_other_host_lines_byte_for_byte(ini_path: Path) -> None:
+    """A quoted value with spaces was cut at the first space and written back changed."""
+    jump = (
+        "jump ansible_host=10.0.0.5 "
+        "ansible_ssh_common_args='-o ProxyJump=bastion -o StrictHostKeyChecking=no'  # via bastion"
+    )
+    ini_path.write_text(f"[local]\nws ansible_connection=local\n\n[remote]\n{jump}\n")
+
+    inventory.add("nas", "10.0.0.9")
+
+    assert jump in ini_path.read_text().splitlines()
+
+
+def test_a_quoted_value_parses_as_one_token(ini_path: Path) -> None:
+    ini_path.write_text("[remote]\njump ansible_host=10.0.0.5 args='-o A -o B'\n")
+    inventory.add("jump", "10.0.0.6")
+
+    assert (
+        "jump ansible_host=10.0.0.6 ansible_user=root ansible_connection=ssh args='-o A -o B'"
+        in (ini_path.read_text())
+    )
+
+
+def test_add_refuses_a_name_another_group_already_holds(ini_path: Path) -> None:
+    """The duplicate made get() and Ansible disagree, and remove() could not delete it."""
+    before = "[local]\nws ansible_connection=local\n"
+    ini_path.write_text(before)
+
+    with pytest.raises(ValueError, match=r"already a host in \[local\]"):
+        inventory.add("ws", "10.0.0.7")
+
+    assert ini_path.read_text() == before

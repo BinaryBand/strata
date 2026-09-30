@@ -97,6 +97,35 @@ def test_remote_completion_empty_when_rclone_fails(monkeypatch: pytest.MonkeyPat
 # ── add_to_config() / remove_from_config() ────────────────────────────
 
 
+def _mounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mounted: set[str]) -> None:
+    """Put the mount base under tmp_path and decide which of its roots count as mounted."""
+    base = tmp_path / "mnt"
+    monkeypatch.setattr(remote_paths, "REMOTE_MOUNT_BASE", str(base))
+    monkeypatch.setattr(rclone.os.path, "ismount", lambda path: str(path) in mounted)
+
+
+def test_is_mounted_false_for_a_mountpoint_directory_left_behind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """enable_rclone.yml creates the directory and it outlives the mount."""
+    _mounts(monkeypatch, tmp_path, mounted=set())
+    (tmp_path / "mnt" / "pcloud").mkdir(parents=True)
+
+    assert rclone.is_mounted("pcloud:") is False
+
+
+def test_is_mounted_needs_the_mount_and_the_subpath(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "mnt" / "pcloud"
+    _mounts(monkeypatch, tmp_path, mounted={str(root)})
+    (root / "Media").mkdir(parents=True)
+
+    assert rclone.is_mounted("pcloud:") is True
+    assert rclone.is_mounted("pcloud:Media") is True
+    assert rclone.is_mounted("pcloud:Missing") is False
+
+
 def test_add_registers_the_remote() -> None:
     rclone.add_to_config("pcloud")
     assert rclone.list_remotes() == ["pcloud"]

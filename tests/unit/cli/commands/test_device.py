@@ -84,6 +84,16 @@ def test_add_is_an_upsert() -> None:
     assert devices[0].user == "pi"
 
 
+@pytest.mark.parametrize("name", ["two words", "x\n[local]", "#comment", "a=b"])
+def test_add_refuses_a_name_the_inventory_cannot_hold(ini_path: Path, name: str) -> None:
+    """hosts.ini is whitespace-separated key=value tokens; such a name broke the file."""
+    result = runner.invoke(app, ["add", name, "--host", "10.0.0.9"])
+
+    assert result.exit_code == 1
+    assert "invalid device: name" in result.output
+    assert ini_path.read_text() == _BASE_INI
+
+
 def test_add_requires_host() -> None:
     result = runner.invoke(app, ["add", "Rpi4"])
     assert result.exit_code != 0

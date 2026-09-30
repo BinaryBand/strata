@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sys
 from itertools import groupby
-from types import ModuleType
 
 import typer
 
@@ -18,7 +17,7 @@ from strata.cli._helpers import apply_hint
 from strata.cli.picker import pick_host
 from strata.cli.wiring import build_prompter, build_reporter
 from strata.core.discovery import (
-    accepts_tags,
+    forwarded_tags,
     import_failures,
     iter_runbooks,
     load,
@@ -69,9 +68,11 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
 
     module = load(resolved)
 
-    parsed_tags, tag_error = _preflight_tags(module, tags)
-    if tag_error is not None:
-        typer.echo(tag_error, err=True)
+    parsed_tags = [t.strip() for t in tags.split(",") if t.strip()] if tags is not None else None
+    try:
+        selected_tags = forwarded_tags(module, parsed_tags)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
         return 1
 
     # The composition root: guard_executor satisfies whatever the runbook
@@ -84,42 +85,10 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
     return guard_executor.execute(
         module,
         target=resolved_target,
-        tags=parsed_tags,
+        tags=selected_tags,
         reporter=build_reporter(),
         prompter=build_prompter(),
     )
-
-
-def _preflight_tags(module: ModuleType, tags: str | None) -> tuple[list[str] | None, str | None]:
-    """Parse a --tags string for this runbook, and reject a bad selection early.
-
-    Returns the parsed tags (None when the runbook takes none) and an error
-    message, or None when the selection is good.
-    """
-    parsed_tags: list[str] | None = None
-    if tags is not None and accepts_tags(module.main):
-        parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
-    return parsed_tags, tag_rejection(module, parsed_tags)
-
-
-def tag_rejection(module: ModuleType, tags: list[str] | None) -> str | None:
-    """Return why this runbook refuses `tags`, or None when it accepts them.
-
-    A runbook that can reject a selection outright says so with a module-level
-    `validate_tags`, checked ahead of the executor rather than left to
-    `main()`. By the time main() runs the guard chain has already been
-    satisfied -- and since a satisfied upstream stopped skipping its own
-    guards, that chain reconciles the diot account and the restic repository.
-    A typo should not cost a sudo play, nor surface as an uncaught ValueError.
-    """
-    validate = getattr(module, "validate_tags", None)
-    if validate is None:
-        return None
-    try:
-        validate(tags)
-    except ValueError as exc:
-        return str(exc)
-    return None
 
 
 def _report_import_failures() -> None:

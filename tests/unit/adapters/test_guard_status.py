@@ -86,10 +86,10 @@ def test_local_path_status(tmp_path: Path) -> None:
     assert guard_status.guard_status(missing, target=None) == "missing"
 
 
-def test_mount_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_mount_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rclone, "list_remotes", lambda: ["pcloud"])
     monkeypatch.setattr(rclone, "is_writable", lambda _name: True)
-    monkeypatch.setattr(rclone, "resolve", lambda _value: str(tmp_path))
+    monkeypatch.setattr(rclone, "is_mounted", lambda _value: True)
     requirement = req.Mount(remote_path="pcloud:Media", writable=True)
     assert guard_status.guard_status(requirement, target=None) == "satisfied"
 

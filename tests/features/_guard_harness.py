@@ -133,6 +133,10 @@ def _fake_rclone(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
         rclone, "is_remote_path", lambda value: ":" in value and not value.startswith("/")
     )
     monkeypatch.setattr(rclone, "resolve", lambda remote_path: _resolve(ctx, remote_path))
+    # Stubbed outright, not left to read the stubbed resolve: the real one also
+    # asks the kernel whether the mount root is mounted, which answers for
+    # whatever this machine has mounted rather than for the scenario.
+    monkeypatch.setattr(rclone, "is_mounted", lambda remote_path: remote_path in ctx["mounted"])
 
     def fake_add_to_config(name: str, *, writable: bool = False) -> None:
         ctx["rclone_added"].append({"name": name, "writable": writable})

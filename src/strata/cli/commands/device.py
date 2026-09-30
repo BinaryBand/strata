@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from strata.adapters.ansible import host_vars, inventory
-from strata.cli._helpers import not_found
+from strata.cli._helpers import fail, not_found
 
 app = typer.Typer(no_args_is_help=True, help="Manage remote Ansible inventory devices.")
 
@@ -24,7 +24,10 @@ def device_add(
     port: int | None = typer.Option(None, "--port", "-p", help="SSH port (ansible_port)."),
 ) -> None:
     """Add or update a remote device in the Ansible inventory."""
-    device = inventory.add(name, host, user=user, connection=connection, port=port)
+    try:
+        device = inventory.add(name, host, user=user, connection=connection, port=port)
+    except ValueError as exc:
+        fail(str(exc))
     typer.echo(f"Device {device.name!r} -> {device.host} ({device.connection})")
     typer.echo(f"Ensure SSH access is configured, then run playbooks with --target {device.name}")
 

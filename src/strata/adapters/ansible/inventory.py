@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterator
 from typing import cast
 
+from pydantic import ValidationError
+
 from strata.adapters import fs
 from strata.core import paths
 from strata.core.models import Device
@@ -31,7 +33,9 @@ _SECRETS_CHILDREN = "secrets:children"
 
 _HEADER_RE = re.compile(r"^\[([^\]]+)\]\s*$")
 _HOST_LINE_RE = re.compile(r"^(\S+)(?:\s+(.*))?$")
-_VAR_RE = re.compile(r"(\w+)\s*=\s*(\S*)")
+# A quoted value is one token, as Ansible's shlex-based parser reads it; `\S*`
+# alone cut `args='-o A -o B'` at the first space and wrote back another value.
+_VAR_RE = re.compile(r"""(\w+)\s*=\s*('[^']*'|"[^"]*"|\S*)""")
 
 # Lines before the first [section] header. Rendered back without a header;
 # keying them under "" made _render_section emit a literal "[]" line, so a
@@ -188,7 +192,10 @@ def _remote_block(existing: list[str], entries: list[dict[str, object]]) -> list
             continue
         name = str(parsed["name"])
         if name in by_name:
-            body.append(_build_host_line(by_name[name]))
+            # A host this call did not touch keeps its line verbatim, inline
+            # comment included; only the one being added or updated is rebuilt.
+            entry = by_name[name]
+            body.append(line if entry == parsed else _build_host_line(entry))
             emitted.add(name)
         # A host absent from entries was removed; drop its line.
     body.extend(_build_host_line(e) for name, e in by_name.items() if name not in emitted)
@@ -264,22 +271,43 @@ def add(
     """Add (or update) a remote device in the inventory.
 
     If *name* already exists in ``[remote]``, its fields are updated.
+
+    Raises ValueError, before anything is written, for a name a host in
+    another group already uses and for each invalid field. A port that is not
+    a number used to be written first and refused after, and every later read
+    of the file then failed on it.
     """
+    try:
+        device = Device(name=name, host=host, user=user, connection=connection, port=port)
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{error['loc'][0]} {error['msg'].removeprefix('Value error, ')}"
+            for error in exc.errors()
+        )
+        msg = f"invalid device: {problems}"
+        raise ValueError(msg) from exc
     text = _read()
-    entries = _group_entries(_parse_ini(text), _REMOTE_GROUP)
+    sections = _parse_ini(text)
+    for group, parsed in _host_entries(sections):
+        if group != _REMOTE_GROUP and parsed["name"] == device.name:
+            # A second line for the same host made get() and Ansible disagree
+            # about how to reach it, and remove() refused to delete it.
+            msg = f"{device.name!r} is already a host in [{group}]; edit hosts.ini to change it"
+            raise ValueError(msg)
+    entries = _group_entries(sections, _REMOTE_GROUP)
 
     new_entry: dict[str, object] = {
-        "name": name,
-        "host": host,
-        "user": user,
-        "connection": connection,
+        "name": device.name,
+        "host": device.host,
+        "user": device.user,
+        "connection": device.connection,
         _EXTRAS_KEY: {},
     }
-    if port is not None:
-        new_entry["port"] = str(port)
+    if device.port is not None:
+        new_entry["port"] = str(device.port)
 
     for i, e in enumerate(entries):
-        if e["name"] == name:
+        if e["name"] == device.name:
             # Updating the four modelled fields must not discard the ones
             # this module does not model -- re-running `device add` on a host
             # carrying ansible_become_exe would otherwise silently drop it.
@@ -290,13 +318,7 @@ def add(
         entries.append(new_entry)
 
     _write(_rewrite(text, entries))
-    return Device(
-        name=name,
-        host=host,
-        user=user,
-        connection=connection,
-        port=port,
-    )
+    return device
 
 
 def remove(name: str) -> bool:

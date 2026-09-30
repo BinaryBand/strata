@@ -23,7 +23,7 @@ def test_the_refusal_names_the_question_and_the_way_out() -> None:
         ports.NonInteractivePrompter().ask("  jellyfin admin password  ", hidden=True)
     message = str(excinfo.value)
     assert "'jellyfin admin password' needs an answer" in message
-    assert "strata config secret" in message
+    assert "run it once from the CLI" in message
 
 
 def test_non_interactive_prompter_drops_notices() -> None:

@@ -28,6 +28,8 @@ _BLOCK_INDENT = " " * 10
 # the id appended -- so encrypt() is deliberately called without one.
 _VAULT_ID = "default"
 
+_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 
 def prompt_password(prompter: ports.Prompter, message: str) -> str:
     """Ask (hidden) until the answer is non-empty, and return it.
@@ -159,8 +161,17 @@ def get_secret(name: str) -> str | None:
         raise RuntimeError(msg) from exc
 
 
-def require_value(name: str, value: str) -> None:
-    """Raise ValueError if `value` is empty, so a caller can refuse before prompting."""
+def check_entry(name: str, value: str) -> None:
+    """Raise ValueError unless `name` is a variable name and `value` is non-empty.
+
+    Separate from `set_secret` so a caller can refuse before prompting. `name`
+    becomes the start of a YAML line in the secrets file, so one holding a
+    newline, a colon or a space corrupted every secret stored beside it; an
+    Ansible variable name is the only kind a playbook could read anyway.
+    """
+    if not _VAR_NAME.fullmatch(name):
+        msg = f"secret name {name!r} must be a variable name: letters, digits and underscores"
+        raise ValueError(msg)
     if not value:
         msg = f"secret {name!r} cannot be empty"
         raise ValueError(msg)
@@ -176,7 +187,7 @@ def set_secret(name: str, value: str) -> None:
         name: Secret variable name to write.
         value: Plaintext to encrypt under that name.
     """
-    require_value(name, value)
+    check_entry(name, value)
     block = _encrypt(name, value) + "\n"
 
     content = SECRETS_FILE.read_text() if SECRETS_FILE.exists() else ""
@@ -207,6 +218,9 @@ def ensure_secret(secret: req.Secret, prompter: ports.Prompter) -> None:
     blank answer with no default, and `set_secret` refuses "" outright, so this
     loop is the interactive half of that rule, not the only defence.
 
+    With no operator to ask, a secret with a default or `generate` is stored
+    as if the question had been answered blank; any other refusal propagates.
+
     Takes the whole requirement rather than its fields: with a prompter beside
     them they would be one argument past what the linter allows. A caller with
     a different requirement kind converts it first, as `Storage.as_secret` does.
@@ -214,9 +228,16 @@ def ensure_secret(secret: req.Secret, prompter: ports.Prompter) -> None:
     if has_secret(secret.vault_key):
         return
     while True:
-        entry = prompter.ask(
-            secret.message, default=secret.default, hidden=secret.kind == "password"
-        ).strip()
+        try:
+            entry = prompter.ask(
+                secret.message, default=secret.default, hidden=secret.kind == "password"
+            ).strip()
+        except ports.PromptUnavailableError:
+            # Nobody to ask reads as a blank answer when a blank answer is
+            # good enough: a GUI run can still default or generate the value.
+            if not (secret.default or secret.generate):
+                raise
+            entry = secret.default or ""
         if entry:
             break
         if secret.generate:

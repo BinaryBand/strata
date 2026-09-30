@@ -129,9 +129,9 @@ def _ensure_mount(
     if needs_remount:
         rclone.add_to_config(remote_name, writable=writable)
 
-    # os.path.exists(resolved) describes the controller's mount state, so it can
-    # only stand in for a remote host's when they are the same machine.
-    mounted = is_controller(target) and Path(rclone.resolve(remote_path)).exists()
+    # is_mounted describes the controller's mount state, so it can only stand
+    # in for a remote host's when they are the same machine.
+    mounted = is_controller(target) and rclone.is_mounted(remote_path)
     if not needs_remount and mounted:
         return None
     return _play("playbooks/enable_rclone.yml", target=target)

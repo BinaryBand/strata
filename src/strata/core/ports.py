@@ -79,9 +79,11 @@ class NonInteractivePrompter:
 
     def ask(self, message: str, *, default: str | None = None, hidden: bool = False) -> str:  # noqa: ARG002 -- the Prompter signature
         """Raise: there is nobody to answer."""
+        # The same refusal serves a vault secret, the vault password and an
+        # rclone backend type, so it names the one fix that answers all three.
         msg = (
-            f"{message.strip()!r} needs an answer; "
-            "set it with `strata config secret` or run this from the CLI"
+            f"{message.strip()!r} needs an answer and this run has no terminal to ask on; "
+            "run it once from the CLI to answer it"
         )
         raise PromptUnavailableError(msg)
 

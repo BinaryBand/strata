@@ -73,10 +73,10 @@ def config_secret(
         value = typer.prompt(name, hide_input=True, confirmation_prompt=True)
 
     try:
-        # The empty check comes first so a bad value is refused before the
-        # operator is asked for a vault password. set_secret has no prompter and
+        # The entry is checked first so a bad name or an empty value is refused
+        # before the operator is asked for a vault password. set_secret has no prompter and
         # fails on a missing one, so the terminal is where they get asked.
-        secrets.require_value(name, value)
+        secrets.check_entry(name, value)
         secrets.ensure_vault_password(build_prompter())
         secrets.set_secret(name, value)
     except ValueError as exc:

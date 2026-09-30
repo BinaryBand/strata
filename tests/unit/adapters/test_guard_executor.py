@@ -181,14 +181,14 @@ def test_storage_local_path_missing_runs_playbook(
 
 @pytest.mark.usefixtures("_no_prompt")
 def test_storage_remote_path_already_mounted_skips_playbook(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(secrets, "get_secret", lambda _key: "pcloud:backups")
     monkeypatch.setattr(rclone, "is_remote_path", lambda _value: True)
     monkeypatch.setattr(rclone, "has_remote", lambda _name: True)
     monkeypatch.setattr(rclone, "list_remotes", lambda: ["pcloud"])
     monkeypatch.setattr(rclone, "is_writable", lambda _name: True)
-    monkeypatch.setattr(rclone, "resolve", lambda _value: str(tmp_path))
+    monkeypatch.setattr(rclone, "is_mounted", lambda _value: True)
 
     def fail_if_called(*_args: object, **_kwargs: object) -> int:
         msg = "run_playbook should not run when the mount is live"
@@ -201,7 +201,7 @@ def test_storage_remote_path_already_mounted_skips_playbook(
 
 @pytest.mark.usefixtures("_no_prompt")
 def test_storage_remote_path_unregistered_creates_and_registers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A remote unknown to rclone is created interactively, then auto-registered
     (writable, since require_writable=True) instead of raising -- and a remount
@@ -221,7 +221,7 @@ def test_storage_remote_path_unregistered_creates_and_registers(
         "add_to_config",
         lambda name, *, writable=False: registered.append((name, writable)),
     )
-    monkeypatch.setattr(rclone, "resolve", lambda _value: str(tmp_path / "mnt"))
+    monkeypatch.setattr(rclone, "is_mounted", lambda _value: False)
 
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(runner, "run_playbook", lambda *a, **k: calls.append((a, k)) or 0)
@@ -237,7 +237,7 @@ def test_storage_remote_path_unregistered_creates_and_registers(
 
 @pytest.mark.usefixtures("_no_prompt")
 def test_storage_remote_path_upgrades_read_only_to_writable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A remote already registered read-only is auto-upgraded to writable, and
     a remount is forced even though the (stale, read-only) mount already exists."""
@@ -252,7 +252,7 @@ def test_storage_remote_path_upgrades_read_only_to_writable(
         "add_to_config",
         lambda name, *, writable=False: registered.append((name, writable)),
     )
-    monkeypatch.setattr(rclone, "resolve", lambda _value: str(tmp_path))
+    monkeypatch.setattr(rclone, "is_mounted", lambda _value: True)
 
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(runner, "run_playbook", lambda *a, **k: calls.append((a, k)) or 0)

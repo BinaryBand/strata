@@ -23,6 +23,7 @@ import pytest
 from ansible.parsing.vault import AnsibleVaultError, VaultSecret
 
 from strata.adapters.ansible import secrets
+from strata.core import ports
 from strata.core import requirements as req
 from tests._fakes import FakePrompter
 
@@ -154,6 +155,26 @@ def test_ensure_secret_hands_the_default_to_the_prompter_and_accepts_it() -> Non
     assert secrets.get_secret("tailscale_auth_key") == "admin"
 
 
+def test_ensure_secret_generates_without_an_operator() -> None:
+    """A GUI run has nobody to ask, but a generated secret needs nobody."""
+    secrets.ensure_secret(_secret(generate=True), ports.NonInteractivePrompter())
+
+    assert secrets.get_secret("tailscale_auth_key")
+
+
+def test_ensure_secret_takes_the_default_without_an_operator() -> None:
+    secrets.ensure_secret(_secret(kind="text", default="admin"), ports.NonInteractivePrompter())
+
+    assert secrets.get_secret("tailscale_auth_key") == "admin"
+
+
+def test_ensure_secret_without_an_operator_refuses_a_value_only_they_know() -> None:
+    with pytest.raises(ports.PromptUnavailableError):
+        secrets.ensure_secret(_secret(), ports.NonInteractivePrompter())
+
+    assert secrets.has_secret("tailscale_auth_key") is False
+
+
 def test_ensure_secret_does_not_ask_when_the_key_is_already_stored() -> None:
     secrets.set_secret("tailscale_auth_key", "kept")
     prompter = FakePrompter()
@@ -182,6 +203,14 @@ def test_set_secret_refuses_an_empty_value() -> None:
     with pytest.raises(ValueError, match="cannot be empty"):
         secrets.set_secret("restic_password", "")
     assert secrets.has_secret("restic_password") is False
+
+
+@pytest.mark.parametrize("name", ["evil\nother", "a: b", "two words", "1st", ""])
+def test_set_secret_refuses_a_name_that_is_not_a_variable_name(name: str) -> None:
+    """The name starts a YAML line, so a newline in it corrupted every stored secret."""
+    with pytest.raises(ValueError, match="must be a variable name"):
+        secrets.set_secret(name, "v")
+    assert not secrets.SECRETS_FILE.exists()
 
 
 # ── has_secret() ──────────────────────────────────────────────────────

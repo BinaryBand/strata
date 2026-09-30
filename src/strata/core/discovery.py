@@ -49,6 +49,28 @@ def accepts_tags(main: Callable[..., object]) -> bool:
         return False
 
 
+def forwarded_tags(module: ModuleType, tags: list[str] | None) -> list[str] | None:
+    """Return the tags this runbook's main() is called with, or raise ValueError.
+
+    Tags reach only a main() that declares a `tags` parameter; any other runbook
+    gets None, since passing them would fail with a TypeError after the guard
+    chain had already run. Both entry points -- `strata runbook --tags` and the
+    GUI's `POST /api/run` -- go through here, so they cannot disagree.
+
+    A runbook that can reject a selection outright says so with a module-level
+    `validate_tags`, which raises the ValueError, and it is checked here rather
+    than left to main(). By the time main() runs the guard chain has already been
+    satisfied -- and since a satisfied upstream stopped skipping its own guards,
+    that chain reconciles the diot account and the restic repository. A typo
+    should not cost a sudo play.
+    """
+    selected = tags if accepts_tags(module.main) else None
+    validate = getattr(module, "validate_tags", None)
+    if validate is not None:
+        validate(selected)
+    return selected
+
+
 @dataclass(frozen=True)
 class ImportFailure:
     """A runbook module that could not be imported, and why."""
