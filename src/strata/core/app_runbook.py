@@ -41,8 +41,6 @@ def build(spec: AppSpec) -> ModuleType:
         return runner.run_playbook(PLAYBOOK, extravars=extravars, target=target)
 
     module_name = f"strata.core.runbooks.{dotted_name(spec.name)}"
-    main.__module__ = module_name
-    # `guard.requires` reads the module name off the function, so it is set first.
     # Each decorator prepends, so applying the list from the end gives the order written.
     runbook: _Main = main
     for declare in reversed(_guards(spec)):

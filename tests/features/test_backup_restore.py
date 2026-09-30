@@ -216,6 +216,14 @@ def fails_unknown_tag(ctx: dict[str, Any], tag: str) -> None:
     assert tag in ctx["stderr"]
 
 
+@then(parsers.parse('it fails naming "{text}"'))
+def fails_naming(ctx: dict[str, Any], text: str) -> None:
+    """A non-zero exit with `text` on stderr, caught by dispatch before any guard runs."""
+    assert ctx.get("error") is None, ctx["error"]
+    assert ctx["exit_code"] == 1
+    assert text in ctx["stderr"]
+
+
 @then("no playbook is run")
 def no_playbook_run(ctx: dict[str, Any]) -> None:
     assert ctx["playbooks"] == [], ctx["playbooks"]

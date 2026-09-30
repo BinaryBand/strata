@@ -22,8 +22,9 @@ its guard chain doesn't provide.
 from __future__ import annotations
 
 import inspect
+import itertools
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 import yaml
@@ -65,11 +66,39 @@ def _runbook_names() -> list[str]:
     """Dotted runbook names, e.g. 'services.install_jellyfin'.
 
     Walks discovery, so the runbooks built from ansible/apps/ are checked like
-    any other, and loading them populates `guard.requires_map()`. A runbook that
-    fails to load fails here rather than dropping out of every check below.
+    any other. A runbook that fails to load fails here rather than dropping out
+    of every check below.
     """
     assert not discovery.import_failures(), discovery.import_failures()
     return [info.dotted_name for info in discovery.iter_runbooks()]
+
+
+def _requires_map() -> dict[str, list[str]]:
+    """Every runbook's declared upstream runbooks, by dotted name."""
+    return {
+        name: [
+            r.dotted_name for r in guard.declared(module.main) if isinstance(r, req.UpstreamRunbook)
+        ]
+        for name, module in ((n, discovery.load(n)) for n in _runbook_names())
+    }
+
+
+def _overlapping(tag_paths: dict[str, str]) -> list[tuple[str, str]]:
+    """Every pair of tags whose backup paths contain one another.
+
+    Only a tag declared for two paths is refused at discovery, so nothing stops
+    two tags covering the same tree -- one rooted at a directory and another at
+    a subdirectory of it means every backup stores the inner tree twice, and
+    restoring the outer tag overwrites the inner one's content from its own copy.
+    """
+    return [
+        (tag, other_tag)
+        for (tag, path), (other_tag, other_path) in itertools.combinations(
+            sorted(tag_paths.items()), 2
+        )
+        if PurePosixPath(path).is_relative_to(other_path)
+        or PurePosixPath(other_path).is_relative_to(path)
+    ]
 
 
 def _playbook_for(runbook: str) -> Path | None:
@@ -195,8 +224,8 @@ def test_owned_paths_are_declared_after_the_guard_that_creates_the_owner() -> No
     a clean host. Nothing about the decorator API prevents this, so it is
     checked here rather than left to each author to remember.
     """
-    runbooks = _runbook_names()  # imports every runbook, populating requires_map
-    requires_map = guard.requires_map()
+    runbooks = _runbook_names()
+    requires_map = _requires_map()
     known_users = {user for runbook in runbooks for user in _direct_users(runbook)}
 
     violations: dict[str, list[str]] = {}
@@ -238,8 +267,7 @@ KNOWN_OVERLAPPING_BACKUP_TAGS: set[tuple[str, str]] = set()
 
 
 def test_no_backup_tag_covers_another_tags_path() -> None:
-    _runbook_names()  # imports every runbook, registering its backup_tag
-    overlaps = set(guard.overlapping_backup_paths())
+    overlaps = set(_overlapping(discovery.backup_paths()))
 
     unexpected = overlaps - KNOWN_OVERLAPPING_BACKUP_TAGS
     assert not unexpected, (
@@ -271,8 +299,8 @@ def test_every_runbook_points_at_a_playbook_that_exists() -> None:
 
 
 def test_every_referenced_tool_is_guarded() -> None:
-    runbooks = _runbook_names()  # imports every runbook, populating requires_map
-    requires_map = guard.requires_map()
+    runbooks = _runbook_names()
+    requires_map = _requires_map()
     unexpected_gaps: dict[str, set[str]] = {}
     stale_allowlist_entries: dict[str, set[str]] = {}
 

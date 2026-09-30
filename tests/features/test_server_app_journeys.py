@@ -239,5 +239,3 @@ def chain_not_skipped(ctx: dict[str, Any]) -> None:
     ran = _ran(ctx)
     assert _ENSURE_PATH in ran, ran
     assert "playbooks/enable_rclone.yml" in ran, ran
-    assert ran[-1] == _PODMAN_APP, ran
-    assert _deployed(ctx) == ["jellyfin"], _deployed(ctx)

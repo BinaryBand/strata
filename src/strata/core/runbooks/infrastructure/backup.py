@@ -1,8 +1,9 @@
 """Runbook: back up server app data to the Restic repository, tagged per app.
 
 Each app declares its own backup location, in its spec under ansible/apps/ (the
-`backup` block, which registers a @guard.backup_tag on its install runbook);
-this runbook discovers them by loading every runbook.  Scope can be narrowed with
+`backup` block, which puts a @guard.backup_tag on its install runbook); this
+runbook reads them off every runbook discovery finds, and refuses while one
+fails to load rather than leave that app's data out.  Scope can be narrowed with
 `strata runbook infrastructure.backup --tags baikal,jellyfin` or left unset to
 back up every app.
 """
@@ -21,9 +22,8 @@ _CONFIG_PATH = str(paths.INVENTORY_DIR)
 
 
 def _discover_backup_paths() -> dict[str, str]:
-    """Load every runbook so its backup_tag declarations register."""
-    discovery.iter_runbooks()
-    return guard.backup_paths()
+    """Return every declared tag -> path, or raise ValueError if one cannot be trusted."""
+    return discovery.backup_paths()
 
 
 def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:

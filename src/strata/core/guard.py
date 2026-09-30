@@ -13,20 +13,18 @@ wrapper claim to return the decorated function's type while actually being
 able to return an int exit code -- which is why every one of them carried a
 blanket `# type: ignore`. Declaring instead of doing removes all three.
 
-`backup_tag` already worked this way and is the model the rest now follow.
+`alias` and `backup_tag` are the two that record no requirement. They attach
+metadata to the function, read back by `alias_of` and `backup_tags_of`, and
+nothing is accumulated anywhere else: what a runbook declares is a property of
+the runbook, so discovery reads it off the runbooks it finds.
 """
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable
-from pathlib import PurePosixPath
 from typing import Literal
 
 from strata.core import requirements as req
-
-_backup_paths: dict[str, str] = {}
-_requires: dict[str, list[str]] = {}
 
 
 def _declare[F: Callable[..., object]](fn: F, requirement: req.Requirement) -> F:
@@ -165,67 +163,29 @@ def controller_only[F: Callable[..., object]](reason: str) -> Callable[[F], F]:
 
 def requires[F: Callable[..., object]](runbook_name: str) -> Callable[[F], F]:
     """Require another runbook to have run first, by dotted name."""
-
-    def decorator(fn: F) -> F:
-        caller = fn.__module__.removeprefix("strata.core.runbooks.")
-        _requires.setdefault(caller, []).append(runbook_name)
-        return _declare(fn, req.UpstreamRunbook(runbook_name))
-
-    return decorator
+    return _requirement(req.UpstreamRunbook(runbook_name))
 
 
-def requires_map() -> dict[str, list[str]]:
-    """Return a copy of every runbook -> [required runbook] mapping."""
-    return {caller: list(deps) for caller, deps in _requires.items()}
+_BACKUP_ATTR = "_backup_tags"
 
 
 def backup_tag[F: Callable[..., object]](tag: str, path: str) -> Callable[[F], F]:
     """Declare that `path` is backed up under restic tag `tag`.
 
-    Import-time registration only: infrastructure.backup discovers the full set
-    by loading every runbook, and --tags narrows which get backed up.
+    Metadata only, like `alias`: infrastructure.backup reads the tags off the
+    runbooks discovery finds, and --tags narrows which get backed up.
     """
 
     def decorator(fn: F) -> F:
-        existing = _backup_paths.get(tag)
-        if existing is not None and existing != path:
-            msg = (
-                f"Backup tag {tag!r} is already registered for {existing!r}, "
-                f"cannot re-register it for {path!r}."
-            )
-            raise ValueError(msg)
-        _backup_paths[tag] = path
+        setattr(fn, _BACKUP_ATTR, (*backup_tags_of(fn), (tag, path)))
         return fn
 
     return decorator
 
 
-def overlapping_backup_paths() -> list[tuple[str, str]]:
-    """Return every pair of tags whose backup paths contain one another.
-
-    Only duplicate *tags* are rejected outright, so nothing stops two tags
-    covering the same tree -- one tag rooted at a directory and another at a
-    subdirectory of it means every backup stores the inner tree twice, and
-    restoring the outer tag overwrites the inner one's content from its own
-    copy.
-
-    Reported rather than raised: these are registered at import time, so
-    raising here would make the whole runbook package unimportable and take
-    discovery down with it. tests/playbooks/test_guard_completeness.py turns this into
-    a suite failure, which is where a layout mistake belongs.
-    """
-    pairs: list[tuple[str, str]] = []
-    items = sorted(_backup_paths.items())
-    for (tag, path), (other_tag, other_path) in itertools.combinations(items, 2):
-        candidate, other = PurePosixPath(path), PurePosixPath(other_path)
-        if candidate.is_relative_to(other) or other.is_relative_to(candidate):
-            pairs.append((tag, other_tag))
-    return pairs
-
-
-def backup_paths() -> dict[str, str]:
-    """Return a copy of every tag -> path mapping declared via backup_tag()."""
-    return dict(_backup_paths)
+def backup_tags_of(fn: object) -> tuple[tuple[str, str], ...]:
+    """Return the (tag, path) pairs declared on `fn` via @backup_tag, in decorator order."""
+    return getattr(fn, _BACKUP_ATTR, ())
 
 
 _ALIAS_ATTR = "_mr_alias"

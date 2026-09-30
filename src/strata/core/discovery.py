@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import NamedTuple
 
 import strata.core.runbooks as _runbook_pkg
 from strata.core import app_runbook, app_specs, guard, paths
@@ -109,9 +110,8 @@ def _spec_runbooks(
     """Build a runbook module from each spec under `directory`, once per process.
 
     A spec that cannot be read or built is recorded as a failure like an
-    unimportable module, so one bad file does not take the others down. Building
-    registers the app's guards and backup tag, which is why it is cached rather
-    than repeated on every lookup.
+    unimportable module, so one bad file does not take the others down. Cached
+    so the YAML is read and validated once, not on every lookup.
     """
     modules: dict[str, ModuleType] = {}
     failures: list[ImportFailure] = []
@@ -124,17 +124,25 @@ def _spec_runbooks(
     return modules, tuple(failures)
 
 
-def _walk() -> tuple[list[RunbookInfo], list[ImportFailure]]:
+class _Walk(NamedTuple):
+    """Everything one walk of the runbooks found."""
+
+    runbooks: list[RunbookInfo]
+    failures: list[ImportFailure]
+    modules: dict[str, ModuleType]  # dotted name -> module, for each listed runbook
+
+
+def _walk() -> _Walk:
     """Import every runbook module, returning what worked and what did not."""
     pkg = _runbook_pkg
-    results: list[RunbookInfo] = []
+    modules: dict[str, ModuleType] = {}
     failures: list[ImportFailure] = []
     for _importer, modname, ispkg in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
         short = modname.removeprefix(pkg.__name__ + ".")
         if ispkg:
             continue
         try:
-            module = importlib.import_module(modname)
+            modules[short] = importlib.import_module(modname)
         except Exception as exc:  # noqa: BLE001
             # One unimportable runbook must not take `--list` down for all the
             # others, so the failure is recorded rather than raised -- but it
@@ -145,24 +153,20 @@ def _walk() -> tuple[list[RunbookInfo], list[ImportFailure]]:
             # after an imaginary naming problem instead of the real
             # ImportError. import_failures() surfaces these to the CLI.
             failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
-            continue
-
-        info = _info(short, module)
-        if info is not None:
-            results.append(info)
 
     spec_modules, spec_failures = _spec_runbooks(paths.APPS_DIR)
+    failures.extend(spec_failures)
     for short, module in spec_modules.items():
-        if any(r.dotted_name == short for r in results):
+        if short in modules:
+            # load() prefers the spec, so the listing does too.
             failures.append(
                 ImportFailure(short, "declared by both a runbook module and ansible/apps/")
             )
-            continue
-        info = _info(short, module)
-        if info is not None:
-            results.append(info)
-    failures.extend(spec_failures)
-    return sorted(results, key=lambda r: r.dotted_name), failures
+        modules[short] = module
+
+    infos = {short: info for short, module in modules.items() if (info := _info(short, module))}
+    runbooks = sorted(infos.values(), key=lambda r: r.dotted_name)
+    return _Walk(runbooks, failures, {short: modules[short] for short in infos})
 
 
 def load(dotted_name: str) -> ModuleType:
@@ -179,12 +183,34 @@ def load(dotted_name: str) -> ModuleType:
 
 def iter_runbooks() -> list[RunbookInfo]:
     """Walk the runbook package and return metadata for every runbook module."""
-    return _walk()[0]
+    return _walk().runbooks
 
 
 def import_failures() -> list[ImportFailure]:
     """Return the runbook modules that failed to import, with their errors."""
-    return _walk()[1]
+    return _walk().failures
+
+
+def backup_paths() -> dict[str, str]:
+    """Return every restic tag -> path the runbooks declare with @guard.backup_tag.
+
+    Refuses, with a ValueError, while any runbook fails to load: that runbook's
+    tags would be missing, and a backup that leaves an app's data out without
+    saying so is worse than one that does not run. It also refuses a tag
+    declared for two different paths.
+    """
+    walk = _walk()
+    if walk.failures:
+        listed = "; ".join(f"{f.dotted_name}: {f.error}" for f in walk.failures)
+        msg = f"Backup tags cannot be listed while a runbook fails to load ({listed})."
+        raise ValueError(msg)
+    tags: dict[str, str] = {}
+    for name, module in walk.modules.items():
+        for tag, path in guard.backup_tags_of(module.main):
+            if tags.setdefault(tag, path) != path:
+                msg = f"Backup tag {tag!r} is declared for {tags[tag]!r} and for {path!r} ({name})."
+                raise ValueError(msg)
+    return tags
 
 
 def resolve_name(name: str) -> str | None:

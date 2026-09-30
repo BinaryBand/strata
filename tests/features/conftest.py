@@ -8,11 +8,12 @@ inventory work happens. Feature-specific steps live alongside their
 
 from __future__ import annotations
 
+import importlib
 import shlex
 from typing import Any
 
 import pytest
-from pytest_bdd import parsers, then, when
+from pytest_bdd import given, parsers, then, when
 from typer.testing import CliRunner
 
 from strata.cli.main import app
@@ -37,6 +38,20 @@ def _isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> Non
 
 
 # ── shared step vocabulary ──────────────────────────────────────────────
+
+
+@given(parsers.parse('the runbook "{dotted}" fails to import'))
+def runbook_fails_import(monkeypatch: pytest.MonkeyPatch, dotted: str) -> None:
+    real_import = importlib.import_module
+    broken = f"strata.core.runbooks.{dotted}"
+
+    def flaky(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == broken:
+            msg = "simulated import failure"
+            raise ImportError(msg)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("strata.core.discovery.importlib.import_module", flaky)
 
 
 @when(parsers.parse('I run "strata {argstr}"'))

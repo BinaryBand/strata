@@ -9,7 +9,6 @@ resolution / --list run the real discovery walk over the actual runbook package.
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import Any
 
@@ -42,20 +41,6 @@ def _isolate_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ctx: dict
 
 
 # ── Given ─────────────────────────────────────────────────────────────────
-
-
-@given(parsers.parse('the runbook "{dotted}" fails to import'))
-def runbook_fails_import(monkeypatch: pytest.MonkeyPatch, dotted: str) -> None:
-    real_import = importlib.import_module
-    broken = f"strata.core.runbooks.{dotted}"
-
-    def flaky(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == broken:
-            msg = "simulated import failure"
-            raise ImportError(msg)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("strata.core.discovery.importlib.import_module", flaky)
 
 
 @given(parsers.parse('the picker will choose "{dotted}"'))

@@ -29,6 +29,14 @@ Feature: Back up and restore server-app data with restic
     Then it fails reporting the unknown tag "nosuchapp"
     And no playbook is run
 
+  # A runbook that cannot load has no backup tag to offer, so a backup that ran
+  # anyway would leave that app's data out without saying so.
+  Scenario: A runbook that fails to load blocks backup rather than leave its data out
+    Given the runbook "development.install_antigravity" fails to import
+    When I run "strata runbook infrastructure.backup --target localhost"
+    Then it fails naming "development.install_antigravity"
+    And no playbook is run
+
   Scenario: The repository is resolved inside the playbook, not passed in
     When I run "strata runbook infrastructure.backup --target localhost"
     Then no resolved repository path is passed as an extravar

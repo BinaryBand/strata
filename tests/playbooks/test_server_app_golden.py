@@ -96,7 +96,7 @@ def _snapshot(app: str) -> dict[str, Any]:
     return {
         "alias": guard.alias_of(module.main),
         "guards": [repr(r) for r in guard.declared(module.main)],
-        "backup": {tag: path for tag, path in guard.backup_paths().items() if tag == app},
+        "backup": dict(guard.backup_tags_of(module.main)),
         "role_vars": role_vars,
         "quadlet": _render(task["vars"]["quadlet_content"], context),
     }

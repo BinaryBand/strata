@@ -5,14 +5,10 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import pytest
-
 from strata.core import app_runbook, guard
 from strata.core import requirements as req
 from strata.core.models import AppSpec
 from tests._fakes import RecordingPlaybookRunner
-
-pytestmark = pytest.mark.usefixtures("isolated_guard_registries")
 
 _SPEC: dict[str, Any] = {
     "name": "demo",
@@ -43,7 +39,6 @@ def test_the_module_is_named_and_documented_like_a_runbook() -> None:
     assert module.__doc__ == (
         "Runbook: deploy Demo server as a rootless Podman container owned by diot."
     )
-    assert module.main.__module__ == module.__name__
     assert app_runbook.dotted_name("demo") == "services.install_demo"
 
 
@@ -66,11 +61,10 @@ def test_guards_run_in_the_order_the_host_needs() -> None:
     ]
 
 
-def test_alias_backup_tag_and_upstream_are_registered() -> None:
+def test_alias_and_backup_tag_are_declared_on_main() -> None:
     module = _build()
     assert guard.alias_of(module.main) == "install Demo"
-    assert guard.backup_paths() == {"demo": "/srv/demo"}
-    assert guard.requires_map() == {"services.install_demo": ["infrastructure.install_podman"]}
+    assert guard.backup_tags_of(module.main) == (("demo", "/srv/demo"),)
 
 
 def test_an_app_without_a_backup_or_mount_declares_neither() -> None:
@@ -78,7 +72,7 @@ def test_an_app_without_a_backup_or_mount_declares_neither() -> None:
     module = app_runbook.build(AppSpec.model_validate(spec))
     kinds = {type(r) for r in guard.declared(module.main)}
     assert kinds == {req.Prerequisite, req.UpstreamRunbook, req.LocalPath}
-    assert guard.backup_paths() == {}
+    assert guard.backup_tags_of(module.main) == ()
 
 
 def test_main_runs_the_generic_playbook_with_the_resolved_app() -> None:
