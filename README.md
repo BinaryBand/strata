@@ -12,7 +12,7 @@ The package is a three-layer scaffold, and an import-linter contract enforces it
 - `src/strata/core/` -- runbooks, models, guards, and the `Protocol` ports adapters satisfy. No I/O. `core/runbooks/` is grouped by category (`system/`, `package_managers/`, `development/`, `infrastructure/`, `services/`); each module exposes `main(target, *, runner)` and an optional `check()`, decorated with guards that *declare* requirements rather than satisfying them.
 - `src/strata/adapters/` -- everything that touches the outside world: `guard_executor.py` (satisfies what the guards declared, then calls `main()`), `ansible/` (runner, vault secrets, host_vars/group_vars, SSH keys, rclone, inventory), `proc.py`, `state.py`, `fs.py`.
 - `ansible/playbooks/` -- the actual playbooks. Paths resolve relative to `ansible/`, independent of where the runbook module lives. Sequences more than one playbook needs live in `ansible/roles/`.
-- `ansible/inventory/` -- `hosts.ini`, `host_vars/<host>.yml` (per-host plain variables, e.g. rclone synced remotes and published SSH keys) and `group_vars/all/managed.yml` (every-host rclone remotes and serves) are yours and gitignored, each with a `.example` template beside it; the CLI creates the variable files on first write. `group_vars/all/server_apps_defaults.yml` holds shared server-app defaults, and `group_vars/secrets/all.yml` the vault-encrypted secrets (gitignored).
+- `ansible/inventory/` -- `hosts.ini`, `host_vars/<host>.yml` (per-host plain variables, e.g. rclone synced remotes and a per-host restic repository) and `group_vars/all/managed.yml` (every-host rclone remotes and serves) are yours and gitignored, each with a `.example` template beside it; the CLI creates the variable files on first write. `group_vars/all/server_apps_defaults.yml` holds shared server-app defaults, and `group_vars/secrets/all.yml` the vault-encrypted secrets (gitignored).
 
 `docs/ARCHITECTURE.md` is the full structural reference -- the layer scaffold, the guard flow, the call chain from CLI to playbook, and the conventions a change is expected to hold to. `docs/LEDGER.md` records known asymmetries and refactor opportunities.
 
@@ -45,7 +45,7 @@ uv run strata config vault-password
 
 ## The `strata` CLI
 
-- `strata config var NAME [--value V]` -- set a plain variable in `group_vars/all/managed.yml`.
+- `strata config var NAME [--value V] [--target HOST]` -- set a plain variable in `group_vars/all/managed.yml`, or with `--target` in `host_vars/<host>.yml` for that host only, where it overrides the every-host value and the vault's (e.g. `restic_repository`).
 - `strata config secret NAME [--value V]` -- vault-encrypt a secret into `group_vars/secrets/all.yml`.
 - `strata config vault-password` -- store or reset the vault master password in the keychain.
 - `strata config key LABEL` -- generate an SSH keypair at `~/.ssh/<label>` and publish its public half as the `<label>_authorized_key` group var.
@@ -54,7 +54,7 @@ uv run strata config vault-password
 - `strata rclone sync add NAME` / `strata rclone sync list` / `strata rclone sync remove NAME` -- register a remote whose credentials `infrastructure.sync_rclone_remote` copies onto a target host.
 - `strata device add NAME --host ADDR` / `strata device list` / `strata device show NAME` / `strata device remove NAME` -- manage remote hosts in the `[remote]` group of `hosts.ini`, which `--target` then addresses.
 - `strata runbook NAME [--target HOST]` -- run a runbook, e.g. `strata runbook services.install_jellyfin`. Omit NAME on a terminal for a type-ahead picker over every runbook, matching anywhere in the name and showing each one-line summary alongside it; omit `--target` and you are asked which host, defaulting to the last one used so Enter reuses it. Ctrl-C aborts either. `strata runbook --list` browses them as plain text instead. Piped and scripted invocations never prompt: without NAME they error, and without `--target` they fall back to the stored target.
-- `strata gui [--port PORT] [--allow-origin ORIGIN]` -- serve the runbook catalog and action API on loopback for the Flutter app, which lives in its own repository. Prints the URL and the bearer token the mutating routes require. It serves no web app.
+- `strata gui [--port PORT] [--allow-origin ORIGIN] [--allow-host HOST]` -- serve the runbook catalog and action API on loopback for the Flutter app, which lives in its own repository. Prints the URL and the bearer token the mutating routes require. It serves no web app. A request whose `Host` is not loopback or a named origin's host is refused; name any other with `--allow-host`.
 
 ## Guards
 
@@ -83,7 +83,7 @@ These runbooks are simpler and independent of each other (no dependency chain), 
 - `infrastructure.enable_tailscale` -- join this host to the Tailscale tailnet for off-LAN reachability.
 - `infrastructure.enable_wireguard` -- route all of this host's traffic through a WireGuard VPN (any provider) while Tailscale keeps working. The prompted key belongs to one host at a time, and inbound router port-forwards to this host stop working while the tunnel is up.
 - `infrastructure.install_restic` -- initialize the restic repository that `backup`/`restore` use.
-- `infrastructure.backup` / `infrastructure.restore` -- snapshot each opted-in app's data under its own restic tag, and write the latest snapshot per tag back. Both accept `--tags` to narrow the set.
+- `infrastructure.backup` / `infrastructure.restore` -- snapshot each opted-in app's data under its own restic tag, and write the latest snapshot per tag back. Both accept `--tags` to narrow the set. Backup always includes the `config` tag (`ansible/inventory/`, vault included); restore brings it back only with `--tags config`, since it overwrites the live inventory and vault.
 - `infrastructure.sync_rclone_remote` -- copy registered rclone remote credentials onto a target host.
 
 ## Server apps
