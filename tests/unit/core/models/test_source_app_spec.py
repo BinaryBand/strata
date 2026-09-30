@@ -26,19 +26,8 @@ def test_the_manifest_is_keyed_by_schema_not_version() -> None:
     assert "version" not in SourceAppSpec.model_json_schema()["properties"]
 
 
-@pytest.mark.parametrize(
-    ("secrets", "mode"),
-    [
-        ([{"name": "demo_key", "prompt": "Key", "env": "DEMO_KEY"}], "0600"),
-        ([{"name": "demo_key", "prompt": "Key", "file": "/srv/demo/config/key"}], "0644"),
-        ([], "0644"),
-    ],
-    ids=["written-to-the-unit", "kept-in-a-file", "none"],
-)
-def test_unit_is_private_only_when_a_secret_is_written_into_it(
-    secrets: list[dict[str, Any]], mode: str
-) -> None:
-    assert SourceAppSpec.model_validate(_manifest(secrets=secrets)).unit_mode == mode
+def test_the_app_lives_under_srv_by_name() -> None:
+    assert SourceAppSpec.model_validate(_manifest()).root == "/srv/demo"
 
 
 @pytest.mark.parametrize(

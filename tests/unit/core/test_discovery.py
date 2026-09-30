@@ -16,7 +16,7 @@ from types import ModuleType
 import pytest
 
 from strata.core import discovery, guard, paths
-from tests._fakes import fail_import, write_project
+from tests._fakes import fail_import, register_projects, write_project
 
 # A runbook that must exist for the dependency chain documented in docs/ARCHITECTURE.md
 # to work at all; if it is renamed these tests should be updated deliberately.
@@ -260,12 +260,8 @@ def test_a_spec_that_repeats_a_runbook_module_is_reported(
 # ── runbooks built from registered projects ───────────────────────────
 
 
-def _register(projects_file: Path, *directories: Path) -> None:
-    projects_file.write_text("projects:\n" + "".join(f"  - {d}\n" for d in directories))
-
-
 def test_a_registered_project_is_listed_and_loadable(tmp_path: Path, projects_file: Path) -> None:
-    _register(projects_file, write_project(tmp_path / "demo"))
+    register_projects(projects_file, write_project(tmp_path / "demo"))
 
     info = next(r for r in discovery.iter_runbooks() if r.dotted_name == "services.install_demo")
     assert (info.alias, info.category) == ("install Demo", "services")
@@ -274,7 +270,7 @@ def test_a_registered_project_is_listed_and_loadable(tmp_path: Path, projects_fi
 
 
 def test_a_project_backup_tag_reaches_the_backup_tags(tmp_path: Path, projects_file: Path) -> None:
-    _register(projects_file, write_project(tmp_path / "demo"))
+    register_projects(projects_file, write_project(tmp_path / "demo"))
     modules, failures = discovery.runbook_modules()
     assert failures == []
     assert guard.backup_tags_of(modules["services.install_demo"].main) == (
@@ -288,7 +284,7 @@ def test_a_project_with_a_bad_manifest_is_reported_and_the_others_still_load(
     broken = tmp_path / "broken"
     broken.mkdir()
     (broken / "strata.app.yml").write_text("name: broken\n")
-    _register(projects_file, broken, write_project(tmp_path / "demo"))
+    register_projects(projects_file, broken, write_project(tmp_path / "demo"))
 
     failures = {f.dotted_name: f.error for f in discovery.import_failures()}
     assert "ProjectError" in failures[str(broken)]
@@ -306,7 +302,7 @@ def test_a_project_that_repeats_an_app_spec_is_reported(
     tmp_path: Path, projects_file: Path, apps_dir: Path
 ) -> None:
     _copy_spec(apps_dir, "baikal")
-    _register(projects_file, write_project(tmp_path / "baikal", name="baikal"))
+    register_projects(projects_file, write_project(tmp_path / "baikal", name="baikal"))
 
     failures = {f.dotted_name: f.error for f in discovery.import_failures()}
     assert "declared by both" in failures["services.install_baikal"]

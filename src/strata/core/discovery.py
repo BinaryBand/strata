@@ -170,13 +170,18 @@ def _declared() -> tuple[dict[str, ModuleType], list[ImportFailure]]:
         _project_runbooks(paths.PROJECTS_FILE),
     ):
         failures.extend(errors)
-        for short, module in built.items():
-            if short in modules:
-                failures.append(
-                    ImportFailure(short, "declared by both ansible/apps/ and a project")
-                )
-            modules[short] = module
+        _merge(modules, failures, built)
     return modules, failures
+
+
+def _merge(
+    into: dict[str, ModuleType], failures: list[ImportFailure], built: dict[str, ModuleType]
+) -> None:
+    """Add `built` to `into`; on a name clash the later wins and the clash is recorded."""
+    for short, module in built.items():
+        if short in into:
+            failures.append(ImportFailure(short, "declared by both, and only the later one runs"))
+        into[short] = module
 
 
 class _Walk(NamedTuple):
@@ -211,13 +216,8 @@ def _walk() -> _Walk:
 
     declared, declared_failures = _declared()
     failures.extend(declared_failures)
-    for short, module in declared.items():
-        if short in modules:
-            # load() prefers the declaration, so the listing does too.
-            failures.append(
-                ImportFailure(short, "declared by both a runbook module and a declaration")
-            )
-        modules[short] = module
+    # load() prefers a declaration over a module of the same name, so the listing does too.
+    _merge(modules, failures, declared)
 
     infos = {short: info for short, module in modules.items() if (info := _info(short, module))}
     runbooks = sorted(infos.values(), key=lambda r: r.dotted_name)

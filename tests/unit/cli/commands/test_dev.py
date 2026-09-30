@@ -10,7 +10,6 @@ from typer.testing import CliRunner
 
 from strata.cli.commands import dev
 from strata.cli.main import app
-from strata.core.models import AppSpec, SourceAppSpec
 
 runner = CliRunner()
 
@@ -28,9 +27,6 @@ def test_dev_schema_writes_a_schema_for_each_declaration(
     monkeypatch.setattr(dev, "_VSCODE_DIR", tmp_path)
     result = runner.invoke(app, ["dev", "schema"])
     assert result.exit_code == 0
-    for name, model in (
-        ("app_spec_schema.json", AppSpec),
-        ("source_app_schema.json", SourceAppSpec),
-    ):
+    for name, model in dev._SCHEMAS.items():
         assert str(tmp_path / name) in result.output
         assert json.loads((tmp_path / name).read_text()) == model.model_json_schema()

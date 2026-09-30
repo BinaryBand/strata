@@ -11,9 +11,11 @@
 - name: Deploy an external project as a systemd user service of diot
   hosts: all
   become: true
+  # Nothing below reads a gathered fact; the implicit setup task cost ~2s a play.
+  gather_facts: false
 
   vars:
-    app_root: "/srv/{{ source_app.name | default('') }}"
+    app_root: "{{ source_app.root | default('') }}"
 
   tasks:
     - name: Require the project extravar
@@ -121,6 +123,23 @@
             state: touch
             mode: "0640"
 
+        # Only a new release can push an old one out of the newest three.
+        - name: Find the releases on disk
+          ansible.builtin.find:
+            paths: "{{ app_root }}/releases"
+            file_type: directory
+          register: source_releases
+
+        - name: Prune all but the three newest releases
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: >-
+            {{ (source_releases.files | sort(attribute='mtime', reverse=true))[3:]
+               | rejectattr('path', 'equalto', app_root ~ '/releases/' ~ source_head.stdout) | list }}
+          loop_control:
+            label: "{{ item.path | basename }}"
+
       always:
         - name: Remove the archive from the controller
           delegate_to: localhost
@@ -138,22 +157,6 @@
         owner: "{{ diot_user }}"
         group: "{{ source_app.name }}"
       notify: "Restart {{ source_app.name }}"
-
-    - name: Find the releases on disk
-      ansible.builtin.find:
-        paths: "{{ app_root }}/releases"
-        file_type: directory
-      register: source_releases
-
-    - name: Prune all but the three newest releases
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: >-
-        {{ (source_releases.files | sort(attribute='mtime', reverse=true))[3:]
-           | rejectattr('path', 'equalto', app_root ~ '/releases/' ~ source_head.stdout) | list }}
-      loop_control:
-        label: "{{ item.path | basename }}"
 
     - name: Write the secret files
       ansible.builtin.copy:
@@ -174,8 +177,9 @@
       vars:
         service_user: "{{ diot_user }}"
         service_name: "{{ source_app.name }}"
-        service_mode: "{{ source_app.unit_mode }}"
-        service_no_log: "{{ source_app.no_log }}"
+        # A secret written into the unit makes it private and keeps its task out of the log.
+        service_mode: "{{ '0600' if source_app.secret_env | length > 0 else '0644' }}"
+        service_no_log: "{{ source_app.secret_env | length > 0 }}"
         service_extra_notify: ["Restart {{ source_app.name }}"]
         service_content: "{{ lookup('ansible.builtin.template', 'source_app.service.j2') }}"
 

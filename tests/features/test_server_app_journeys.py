@@ -32,7 +32,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from strata.adapters import guard_executor
 from strata.cli import dispatch
 from strata.core.models import Device
-from tests._fakes import write_project
+from tests._fakes import register_projects, write_project
 
 scenarios("server_app_journeys.feature")
 
@@ -136,8 +136,7 @@ def nothing_installed(ctx: dict[str, Any]) -> None:
 @given(parsers.parse('a project "{name}" is registered'))
 def project_registered(name: str, tmp_path: Path, projects_file: Path) -> None:
     """A checkout with a manifest and no secrets, so no prompt is left unanswered."""
-    project = write_project(tmp_path / name, name=name, secrets=[])
-    projects_file.write_text(f"projects:\n  - {project}\n")
+    register_projects(projects_file, write_project(tmp_path / name, name=name, secrets=[]))
 
 
 @given("the diot user and Podman are installed")

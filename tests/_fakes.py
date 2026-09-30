@@ -60,6 +60,11 @@ def write_project(directory: Path, **overrides: Any) -> Path:
     return directory
 
 
+def register_projects(file: Path, *directories: Path) -> None:
+    """Write `directories` to the project list at `file`, as ansible/projects.yml holds them."""
+    file.write_text("projects:\n" + "".join(f"  - {d}\n" for d in directories))
+
+
 class FakePrompter:
     """Records every question and answers from a script, satisfying `ports.Prompter`.
 

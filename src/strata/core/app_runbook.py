@@ -15,27 +15,26 @@ from types import ModuleType
 
 from strata.core import guard
 from strata.core.models import AppSpec
-from strata.core.ports import PlaybookRunner
 from strata.core.remote_paths import resolve
-from strata.core.runbook_module import Guard, assemble, secret_guards, state_guards
+from strata.core.runbook_module import (
+    Guard,
+    assemble,
+    leading_guards,
+    secret_guards,
+    state_guards,
+)
 
 PLAYBOOK = "playbooks/install_podman_app.yml"
 
 
 def build(spec: AppSpec) -> ModuleType:
     """Return the runbook module for `spec`, its guards and backup tag declared."""
-    extravars = {"podman_app": _payload(spec)}
-
-    def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
-        """Deploy the container and its Quadlet unit."""
-        return runner.run_playbook(PLAYBOOK, extravars=extravars, target=target)
-
     return assemble(
         spec.name,
         f"Runbook: deploy {spec.description} as a rootless Podman container owned by diot.",
-        main,
         _guards(spec),
         PLAYBOOK,
+        {"podman_app": _payload(spec)},
     )
 
 
@@ -45,11 +44,8 @@ def _guards(spec: AppSpec) -> list[Guard]:
     A directory's owner is created by an earlier guard, so the paths follow the
     user and podman guards.
     """
-    guards: list[Guard] = [guard.alias(spec.alias)]
-    if spec.backup:
-        guards.append(guard.backup_tag(spec.backup.tag, spec.backup.path))
-    guards += [
-        guard.prerequisite("sudo_password"),
+    guards = [
+        *leading_guards(spec.alias, spec.backup),
         guard.requires("infrastructure.install_podman"),
     ]
     guards += state_guards(spec.name, spec.dirs)

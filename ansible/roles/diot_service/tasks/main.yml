@@ -35,11 +35,11 @@
   become_user: "{{ service_user }}"
   vars:
     service_home: "{{ ansible_facts.getent_passwd[service_user][4] }}"
-  # systemd --user is reached over service_user's lingering runtime dir;
+  # systemd --user is reached over the diot lingering runtime dir;
   # without XDG_RUNTIME_DIR the user-scoped systemd_service tasks below
   # cannot connect.
   environment:
-    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
   block:
     - name: Ensure the user unit directory exists
       ansible.builtin.file:
@@ -61,7 +61,7 @@
 - name: Reload the user systemd manager
   become_user: "{{ service_user }}"
   environment:
-    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
   ansible.builtin.systemd_service:
     scope: user
     daemon_reload: true
@@ -72,7 +72,7 @@
 - name: "Ensure {{ service_name }} is running and starts at boot"
   become_user: "{{ service_user }}"
   environment:
-    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+    XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
   ansible.builtin.systemd_service:
     name: "{{ service_name }}.service"
     scope: user

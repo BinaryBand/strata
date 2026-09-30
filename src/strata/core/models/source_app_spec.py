@@ -88,9 +88,9 @@ class SourceAppSpec(Strict):
         return [secret for secret in self.secrets if secret.env]
 
     @property
-    def unit_mode(self) -> str:
-        """The mode of the unit file: 0600 when a secret is written into it."""
-        return "0600" if self.secrets_in_unit else "0644"
+    def root(self) -> str:
+        """Where the app lives on the host: its releases and the `current` link."""
+        return f"/srv/{self.name}"
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
@@ -100,7 +100,7 @@ class SourceAppSpec(Strict):
         require_unique("secrets.name", [s.name for s in self.secrets])
         envs = [s.env for s in self.secrets if s.env] + list(self.run.env)
         require_unique("env (secrets included)", envs)
-        reserved = (f"/srv/{self.name}/releases", f"/srv/{self.name}/current")
+        reserved = (f"{self.root}/releases", f"{self.root}/current")
         for path in dirs:
             if path.startswith(reserved):
                 msg = f"dir {path} is inside a release; state must live outside the releases"

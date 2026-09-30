@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/srv/{{ source_app.name }}/current
+WorkingDirectory={{ source_app.root }}/current
 {% for name, value in source_app.env.items() %}
 Environment="{{ name }}={{ value }}"
 {% endfor %}

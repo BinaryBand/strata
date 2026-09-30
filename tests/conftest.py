@@ -24,11 +24,12 @@ def _no_registered_projects(tmp_path_factory: pytest.TempPathFactory) -> Iterato
         yield
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def projects_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A project list that does not exist yet, private to the test.
 
-    A test that wants registered projects writes them to the path this returns.
+    Opt-in, like `apps_dir`: a test that wants registered projects writes them
+    to the path this returns.
     """
     file = tmp_path / "projects.yml"
     monkeypatch.setattr(paths, "PROJECTS_FILE", file)

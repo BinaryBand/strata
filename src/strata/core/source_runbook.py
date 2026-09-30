@@ -16,8 +16,14 @@ from types import ModuleType
 from strata.core import guard
 from strata.core.models import SourceAppSpec
 from strata.core.models.source_app_spec import Toolchain
-from strata.core.ports import PlaybookRunner
-from strata.core.runbook_module import Guard, assemble, secret_guards, state_guards
+from strata.core.runbook_module import (
+    OWNER,
+    Guard,
+    assemble,
+    leading_guards,
+    secret_guards,
+    state_guards,
+)
 
 PLAYBOOK = "playbooks/install_source_app.yml"
 
@@ -27,19 +33,13 @@ TOOLCHAIN_RUNBOOKS: dict[Toolchain, str] = {"uv": "infrastructure.install_uv"}
 
 def build(spec: SourceAppSpec, project_dir: Path) -> ModuleType:
     """Return the runbook module for the project at `project_dir`, its guards declared."""
-    extravars = {"source_app": _payload(spec, project_dir)}
-
-    def main(target: str | None = None, *, runner: PlaybookRunner) -> int:
-        """Ship the project's committed HEAD, build it and run it as a service."""
-        return runner.run_playbook(PLAYBOOK, extravars=extravars, target=target)
-
     return assemble(
         spec.name,
         f"Runbook: deploy {spec.description} from its own repository "
         "as a systemd user service owned by diot.",
-        main,
         _guards(spec),
         PLAYBOOK,
+        {"source_app": _payload(spec, project_dir)},
     )
 
 
@@ -49,12 +49,9 @@ def _guards(spec: SourceAppSpec) -> list[Guard]:
     A directory's owner is created by the user guard, so the paths follow it.
     The toolchain runbook runs before the play that builds with it.
     """
-    guards: list[Guard] = [guard.alias(spec.alias)]
-    if spec.backup:
-        guards.append(guard.backup_tag(spec.backup.tag, spec.backup.path))
-    guards += [
-        guard.prerequisite("sudo_password"),
-        guard.user("diot", "playbooks/create_diot_user.yml"),
+    guards = [
+        *leading_guards(spec.alias, spec.backup),
+        guard.user(OWNER, "playbooks/create_diot_user.yml"),
         guard.requires(TOOLCHAIN_RUNBOOKS[spec.toolchain]),
     ]
     guards += state_guards(spec.name, spec.dirs)
@@ -65,6 +62,7 @@ def _payload(spec: SourceAppSpec, project_dir: Path) -> dict[str, object]:
     """The project as the playbook reads it."""
     return {
         "name": spec.name,
+        "root": spec.root,
         "description": spec.description,
         "project_dir": str(project_dir),
         "build": spec.build,
@@ -72,6 +70,4 @@ def _payload(spec: SourceAppSpec, project_dir: Path) -> dict[str, object]:
         "env": dict(spec.run.env),
         "secret_env": [{"name": s.name, "env": s.env} for s in spec.secrets_in_unit],
         "secret_files": [{"name": s.name, "path": s.file} for s in spec.secrets if s.file],
-        "unit_mode": spec.unit_mode,
-        "no_log": bool(spec.secrets_in_unit),
     }
