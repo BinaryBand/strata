@@ -18,6 +18,8 @@ from strata.core import remote_paths
         "my-remote:x",
         "my_remote:x",
         "R2:bucket",
+        "b2.backup:restic",
+        "my+remote:x",
     ],
 )
 def test_is_remote_path_true(path: str) -> None:
@@ -32,7 +34,8 @@ def test_is_remote_path_true(path: str) -> None:
         "",
         ":no-remote-name",
         "has space:sub",
-        "has.dot:sub",
+        "./relative:sub",
+        "-flag:sub",
         "/mnt/rclone/pcloud/Media",
     ],
 )

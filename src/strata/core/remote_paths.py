@@ -12,7 +12,12 @@ import re
 
 REMOTE_MOUNT_BASE = "/mnt/rclone"
 
-_REMOTE_PATH_RE = re.compile(r"^([A-Za-z0-9_-]+):(.*)$")
+# rclone's remote-name rule -- letters, digits and `_ - . + @` -- less the space
+# it also allows, and not opening with `-` or `.`, so `./dir:x` stays a local
+# path. A dotted name such as `b2.backup` used to read as a local path, and a
+# storage guard then created that directory instead of reaching the remote.
+# group_vars/all/restic.yml repeats this pattern for the Ansible side.
+_REMOTE_PATH_RE = re.compile(r"^([A-Za-z0-9_+@][A-Za-z0-9_.+@-]*):(.*)$")
 
 
 def is_remote_path(path: str) -> bool:
