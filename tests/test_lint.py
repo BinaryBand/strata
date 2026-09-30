@@ -29,9 +29,9 @@ MIRROR_EXEMPT = {"__main__.py", "ports.py"}
 #   declared guard chain against the tools its playbook actually shells out to,
 #   and test_discovery imports all of them. A per-runbook file would restate
 #   the same two assertions 21 times.
-# models/: single-field pydantic declarations. A test per model would assert
-#   the field list back at itself; the one model with behaviour
-#   (ServerAppsDefaults) is covered by test_server_apps_ports.
+# models/: pydantic declarations. A test per model would assert the field list
+#   back at itself; the one model with behaviour (AppSpec) is covered by
+#   tests/unit/core/models/test_app_spec.py.
 MIRROR_EXEMPT_DIRS = {"runbooks", "models"}
 # Console scripts (ruff, ty, vulture, lint-imports) live alongside whatever
 # interpreter is running pytest. Resolving them here instead of relying on a

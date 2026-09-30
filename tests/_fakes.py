@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import pytest
 
 from strata.adapters.ansible import secrets
 from strata.core.models import Device
+
+
+class RecordingPlaybookRunner:
+    """Records each `run_playbook` call instead of running Ansible (`ports.PlaybookRunner`)."""
+
+    def __init__(self, rc: int = 0) -> None:
+        self.rc = rc
+        self.calls: list[tuple[str, dict[str, Any], str | None]] = []
+
+    def run_playbook(
+        self,
+        playbook: str,
+        extravars: Mapping[str, Any] | None = None,
+        target: str | None = None,
+    ) -> int:
+        self.calls.append((playbook, dict(extravars or {}), target))
+        return self.rc
 
 
 class FakePrompter:

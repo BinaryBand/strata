@@ -1,16 +1,13 @@
 """Golden snapshots of what each server app deploys, independent of how it is declared.
 
-Baikal, Jellyfin and MinIO are three runbooks plus three playbooks today. The
-behaviour that matters to the host is narrower than that source: which guards
-run in which order, which backup tag covers which path, and the Quadlet unit the
-role writes. This module pins exactly those, so the refactor that derives the
-apps from a declarative spec can be checked against the values the operator's
-machines already run.
+The behaviour that matters to the host is narrower than the source that declares
+it: which guards run in which order, which backup tag covers which path, and the
+Quadlet unit the role writes. This module pins exactly those, so a change to a
+spec or to the unit template shows up as a deliberate edit to a snapshot.
 
-Nothing here names a playbook or an extravar, because those are what the
-refactor changes. The Quadlet is rendered the way Ansible would render it: the
-play's own vars, the extravars the runbook hands over, and the group_vars
-defaults, through Jinja with undefined names as errors.
+The Quadlet is rendered the way Ansible would render it: the extravars the
+runbook hands the generic playbook, the group_vars, and the playbook's own role
+vars and template, through Jinja with undefined names as errors.
 
 Regenerate a snapshot only for a change meant to alter the deployed unit:
 
@@ -28,38 +25,17 @@ import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
 
-from strata.core import app_runbook, discovery, guard
+from strata.core import app_runbook, discovery, guard, paths
 from strata.core import requirements as req
-from tests.playbooks._ansible import ANSIBLE_DIR, PLAYBOOKS_DIR, iter_tasks
+from tests._fakes import RecordingPlaybookRunner
+from tests.playbooks._ansible import PLAYBOOKS_DIR, iter_tasks
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
-GROUP_VARS = ANSIBLE_DIR / "inventory" / "group_vars" / "all"
 TEMPLATES_DIR = PLAYBOOKS_DIR / "templates"
 APPS = ("baikal", "jellyfin", "minio")
 
-# What the role writes when a caller leaves a var out. The snapshot records the
-# effective value, so a play that states its default explicitly is not a change.
-_ROLE_DEFAULTS: dict[str, object] = {"quadlet_mode": "0644", "quadlet_no_log": False}
 # Ansible turns a templated "True"/"False" back into a bool.
 _BOOLS = {"True": True, "False": False}
-
-
-class _CapturingRunner:
-    """A `PlaybookRunner` that records the call instead of running Ansible."""
-
-    def __init__(self) -> None:
-        self.playbook = ""
-        self.extravars: dict[str, object] = {}
-
-    def run_playbook(
-        self,
-        playbook: str,
-        extravars: dict[str, object] | None = None,
-        target: str | None = None,  # noqa: ARG002
-    ) -> int:
-        self.playbook = playbook
-        self.extravars = dict(extravars or {})
-        return 0
 
 
 def _render(value: object, context: dict[str, Any]) -> object:
@@ -84,7 +60,7 @@ def _lookup(env: Environment, kind: str, name: str, context: dict[str, Any]) -> 
 
 
 def _group_vars() -> dict[str, Any]:
-    return yaml.safe_load((GROUP_VARS / "common.yml").read_text())
+    return yaml.safe_load((paths.GROUP_VARS_DIR / "all" / "common.yml").read_text())
 
 
 def _quadlet_role_task(playbook: Path) -> dict[str, Any]:
@@ -97,18 +73,9 @@ def _quadlet_role_task(playbook: Path) -> dict[str, Any]:
     return tasks[0]
 
 
-def _play_vars(playbook: Path, context: dict[str, Any]) -> dict[str, Any]:
-    """The play's `vars:` rendered in order, each able to read the ones before it."""
-    rendered = dict(context)
-    for play in yaml.safe_load(playbook.read_text()):
-        for name, value in (play.get("vars") or {}).items():
-            rendered[name] = _render(value, rendered)
-    return rendered
-
-
 def _snapshot(app: str) -> dict[str, Any]:
     module = discovery.load(app_runbook.dotted_name(app))
-    runner = _CapturingRunner()
+    runner = RecordingPlaybookRunner()
     assert module.main(runner=runner) == 0
 
     secrets = {
@@ -116,12 +83,12 @@ def _snapshot(app: str) -> dict[str, Any]:
         for r in guard.declared(module.main)
         if isinstance(r, req.Secret)
     }
-    context = {**_group_vars(), **secrets, **runner.extravars}
-    playbook = PLAYBOOKS_DIR / Path(runner.playbook).name
-    context = _play_vars(playbook, context)
+    playbook_name, extravars, _target = runner.calls[0]
+    context = {**_group_vars(), **secrets, **extravars}
+    playbook = PLAYBOOKS_DIR / Path(playbook_name).name
 
     task = _quadlet_role_task(playbook)
-    role_vars = _ROLE_DEFAULTS | {
+    role_vars = {
         name: _render(value, context)
         for name, value in (task["vars"]).items()
         if name != "quadlet_content"

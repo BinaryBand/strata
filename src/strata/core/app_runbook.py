@@ -20,7 +20,6 @@ from strata.core.ports import PlaybookRunner
 from strata.core.remote_paths import resolve
 
 PLAYBOOK = "playbooks/install_podman_app.yml"
-PACKAGE = "strata.core.runbooks"
 
 _OWNER = "diot"
 
@@ -41,7 +40,7 @@ def build(spec: AppSpec) -> ModuleType:
         """Deploy the container and its Quadlet unit."""
         return runner.run_playbook(PLAYBOOK, extravars=extravars, target=target)
 
-    module_name = f"{PACKAGE}.{dotted_name(spec.name)}"
+    module_name = f"strata.core.runbooks.{dotted_name(spec.name)}"
     main.__module__ = module_name
     # `guard.requires` reads the module name off the function, so it is set first.
     # Each decorator prepends, so applying the list from the end gives the order written.
@@ -81,18 +80,15 @@ def _guards(spec: AppSpec) -> list[_Guard]:
 
 def _payload(spec: AppSpec) -> dict[str, object]:
     """The app as the playbook's template reads it."""
-    volumes = [{"host": v.host, "container": v.container, "options": "Z"} for v in spec.volumes]
-    mounted = None
+    mount = None
     if spec.mount:
-        mounted = resolve(spec.mount.remote)
-        volumes.append({"host": mounted, "container": spec.mount.container, "options": "ro"})
+        mount = {"host": resolve(spec.mount.remote), "container": spec.mount.container}
     return {
         "name": spec.name,
-        "group": spec.name,
         "description": spec.description,
         "image": spec.image,
-        "volumes": volumes,
-        "requires_mounts_for": mounted,
+        "volumes": [{"host": v.host, "container": v.container} for v in spec.volumes],
+        "mount": mount,
         "ports": [{"host": p.host, "container": p.container} for p in spec.ports],
         "env": dict(spec.env),
         "secret_env": [{"name": s.name, "env": s.env} for s in spec.secrets_in_unit],

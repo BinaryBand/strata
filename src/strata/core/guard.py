@@ -183,7 +183,7 @@ def backup_tag[F: Callable[..., object]](tag: str, path: str) -> Callable[[F], F
     """Declare that `path` is backed up under restic tag `tag`.
 
     Import-time registration only: infrastructure.backup discovers the full set
-    by importing every services runbook, and --tags narrows which get backed up.
+    by loading every runbook, and --tags narrows which get backed up.
     """
 
     def decorator(fn: F) -> F:

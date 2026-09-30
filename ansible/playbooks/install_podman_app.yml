@@ -24,7 +24,7 @@
         name: podman_quadlet_service
       vars:
         quadlet_user: "{{ diot_user }}"
-        quadlet_group: "{{ podman_app.group }}"
+        quadlet_group: "{{ podman_app.name }}"
         quadlet_name: "{{ podman_app.name }}"
         quadlet_mode: "{{ podman_app.unit_mode }}"
         quadlet_no_log: "{{ podman_app.no_log }}"

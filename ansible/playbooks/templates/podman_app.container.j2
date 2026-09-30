@@ -1,14 +1,17 @@
 [Unit]
 Description={{ podman_app.description }}
-{% if podman_app.requires_mounts_for %}
-RequiresMountsFor={{ podman_app.requires_mounts_for }}
+{% if podman_app.mount %}
+RequiresMountsFor={{ podman_app.mount.host }}
 {% endif %}
 
 [Container]
 Image={{ podman_app.image }}
 {% for volume in podman_app.volumes %}
-Volume={{ volume.host }}:{{ volume.container }}:{{ volume.options }}
+Volume={{ volume.host }}:{{ volume.container }}:Z
 {% endfor %}
+{% if podman_app.mount %}
+Volume={{ podman_app.mount.host }}:{{ podman_app.mount.container }}:ro
+{% endif %}
 {% for name, value in podman_app.env.items() %}
 Environment={{ name }}={{ value }}
 {% endfor %}

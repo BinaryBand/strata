@@ -15,7 +15,7 @@ from types import ModuleType
 
 import pytest
 
-from strata.core import discovery, guard, paths
+from strata.core import discovery, paths
 
 # A runbook that must exist for the dependency chain documented in docs/ARCHITECTURE.md
 # to work at all; if it is renamed these tests should be updated deliberately.
@@ -216,20 +216,22 @@ def test_load_returns_the_module_built_from_the_spec() -> None:
     assert discovery.load(_KNOWN_DOTTED) is module
 
 
+_SHIPPED_APPS = paths.APPS_DIR
+
+
 @pytest.fixture
 def apps_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A private ansible/apps/, with the guard registries the builder writes to isolated."""
+    """A private ansible/apps/, for tests that also use `isolated_guard_registries`."""
     monkeypatch.setattr(paths, "APPS_DIR", tmp_path)
-    monkeypatch.setattr(guard, "_requires", {})
-    monkeypatch.setattr(guard, "_backup_paths", {})
     return tmp_path
 
 
 def _copy_spec(apps_dir: Path, name: str, *, as_name: str | None = None) -> None:
-    source = (paths.PROJECT_ROOT / "ansible" / "apps" / f"{name}.yml").read_text()
+    source = (_SHIPPED_APPS / f"{name}.yml").read_text()
     (apps_dir / f"{as_name or name}.yml").write_text(source)
 
 
+@pytest.mark.usefixtures("isolated_guard_registries")
 def test_a_bad_spec_is_reported_and_the_others_still_load(apps_dir: Path) -> None:
     _copy_spec(apps_dir, "baikal")
     (apps_dir / "broken.yml").write_text("name: broken\n")
@@ -242,6 +244,7 @@ def test_a_bad_spec_is_reported_and_the_others_still_load(apps_dir: Path) -> Non
     assert "broken.yml" in failures["services.install_broken"]
 
 
+@pytest.mark.usefixtures("isolated_guard_registries")
 def test_a_spec_that_repeats_a_runbook_module_is_reported(
     apps_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

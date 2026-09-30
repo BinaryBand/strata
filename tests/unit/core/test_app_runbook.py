@@ -10,6 +10,9 @@ import pytest
 from strata.core import app_runbook, guard
 from strata.core import requirements as req
 from strata.core.models import AppSpec
+from tests._fakes import RecordingPlaybookRunner
+
+pytestmark = pytest.mark.usefixtures("isolated_guard_registries")
 
 _SPEC: dict[str, Any] = {
     "name": "demo",
@@ -28,24 +31,6 @@ _SPEC: dict[str, Any] = {
     ],
     "backup": {"tag": "demo", "path": "/srv/demo"},
 }
-
-
-class _Runner:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any], str | None]] = []
-
-    def run_playbook(
-        self, playbook: str, extravars: dict[str, Any] | None = None, target: str | None = None
-    ) -> int:
-        self.calls.append((playbook, dict(extravars or {}), target))
-        return 7
-
-
-@pytest.fixture(autouse=True)
-def _isolated_registries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Building registers a backup tag and an upstream; keep both out of other tests."""
-    monkeypatch.setattr(guard, "_requires", {})
-    monkeypatch.setattr(guard, "_backup_paths", {})
 
 
 def _build(**overrides: Any) -> Any:
@@ -98,21 +83,17 @@ def test_an_app_without_a_backup_or_mount_declares_neither() -> None:
 
 def test_main_runs_the_generic_playbook_with_the_resolved_app() -> None:
     module = _build()
-    runner = _Runner()
+    runner = RecordingPlaybookRunner(rc=7)
     assert module.main("nas", runner=runner) == 7
     ((playbook, extravars, target),) = runner.calls
     assert (playbook, target) == (app_runbook.PLAYBOOK, "nas")
     assert module.PLAYBOOK == app_runbook.PLAYBOOK
     assert extravars["podman_app"] == {
         "name": "demo",
-        "group": "demo",
         "description": "Demo server",
         "image": "docker.io/demo/demo:1",
-        "volumes": [
-            {"host": "/srv/demo", "container": "/data", "options": "Z"},
-            {"host": "/mnt/rclone/pcloud/Media", "container": "/media", "options": "ro"},
-        ],
-        "requires_mounts_for": "/mnt/rclone/pcloud/Media",
+        "volumes": [{"host": "/srv/demo", "container": "/data"}],
+        "mount": {"host": "/mnt/rclone/pcloud/Media", "container": "/media"},
         "ports": [{"host": 8000, "container": 80}],
         "env": {"MODE": "prod"},
         "secret_env": [{"name": "demo_user", "env": "USER"}],
@@ -124,7 +105,7 @@ def test_main_runs_the_generic_playbook_with_the_resolved_app() -> None:
 
 def test_a_unit_holding_no_secret_is_public_and_logged() -> None:
     module = _build(secrets=[{"name": "demo_note", "prompt": "Note"}])
-    runner = _Runner()
+    runner = RecordingPlaybookRunner(rc=7)
     module.main(runner=runner)
     app = runner.calls[0][1]["podman_app"]
     assert (app["unit_mode"], app["no_log"], app["secret_env"]) == ("0644", False, [])
