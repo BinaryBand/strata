@@ -19,7 +19,8 @@ import pytest
 import typer
 from pytest_bdd import given, parsers, scenarios, then
 
-from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
+from strata.adapters.ansible import group_vars, keys, vault_pass
+from tests._fakes import fake_vault
 
 scenarios("config.feature")
 
@@ -40,13 +41,9 @@ def _isolate_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ctx: dict[s
     ctx["keychain"] = keychain
 
     # Secret: boundary-fake so no ansible-vault subprocess / real keychain is hit.
-    secret_store: dict[str, str] = {}
-    monkeypatch.setattr(secrets, "set_secret", secret_store.__setitem__)
-    monkeypatch.setattr(secrets, "has_secret", secret_store.__contains__)
     # `config secret` asks for a missing vault password first, which the
     # scenarios here do not exercise; `config vault-password` has its own.
-    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
-    ctx["secrets"] = secret_store
+    ctx["secrets"] = fake_vault(monkeypatch)
 
     # Prompt spy: record kwargs, then delegate to the real prompt (reads stdin).
     real_prompt = typer.prompt

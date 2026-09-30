@@ -81,12 +81,8 @@ def read_json_body(handler: JsonHandler) -> dict[str, Any]:
     an AttributeError and a 500 for what is the client's mistake.
     """
     length = int(handler.headers.get("Content-Length", 0) or 0)
-    if length == 0:
-        return {}
-    raw = handler.rfile.read(length)
-    if not raw:
-        return {}
-    body = json.loads(raw)
+    raw = handler.rfile.read(length) if length else b""
+    body = json.loads(raw) if raw else {}
     if not isinstance(body, dict):
         raise ApiError(400, "request body must be a JSON object")
     return body

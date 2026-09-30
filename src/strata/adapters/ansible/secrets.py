@@ -48,10 +48,7 @@ def ensure_vault_password(prompter: ports.Prompter) -> None:
 
     Every ansible-vault call needs it, so a caller that is about to encrypt
     calls this first -- `set_secret` does not, since it has no prompter and
-    `_vault()` already fails with the command that fixes it. It used to be
-    reached via a @guard.prerequisite decorator on set_secret; guards are
-    declarative now and only apply to runbooks, so an adapter that needs this
-    has to ask for it directly.
+    `_vault()` already fails with the command that fixes it.
     """
     if not vault_pass.has_vault_password():
         vault_pass.set_vault_password(
@@ -202,13 +199,12 @@ def ensure_secret(secret: req.Secret, prompter: ports.Prompter) -> None:
     answer, so prompt strings should not repeat it by hand.
 
     An empty answer is re-asked rather than stored. `ask` returns "" on a
-    blank answer with no default, so pressing Enter yielded "" -- which
-    `set_secret` refuses outright, so this loop is the interactive half of that
-    rule, not the only defence.
+    blank answer with no default, and `set_secret` refuses "" outright, so this
+    loop is the interactive half of that rule, not the only defence.
 
     Takes the whole requirement rather than its fields: with a prompter beside
-    them they were one argument past what the linter allows, and both callers
-    already hold exactly these five values.
+    them they would be one argument past what the linter allows. A caller with
+    a different requirement kind converts it first, as `Storage.as_secret` does.
     """
     if has_secret(secret.vault_key):
         return

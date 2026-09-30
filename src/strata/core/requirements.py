@@ -76,6 +76,20 @@ class Storage:
     mode: str | None
     require_writable: bool
 
+    def as_secret(self) -> Secret:
+        """Return the plain-text `Secret` that asks the operator for this location.
+
+        The location is prompted for like any other vault value; only what is
+        done with the answer differs, and that is the executor's business.
+        """
+        return Secret(
+            vault_key=self.vault_key,
+            message=self.message,
+            kind="text",
+            default=self.default,
+            generate=False,
+        )
+
 
 @dataclass(frozen=True)
 class UpstreamRunbook:

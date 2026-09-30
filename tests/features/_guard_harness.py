@@ -23,10 +23,10 @@ from typing import Any
 import pytest
 
 from strata.adapters import guard_executor
-from strata.adapters.ansible import inventory, rclone, runner, secrets
+from strata.adapters.ansible import inventory, rclone, runner
 from strata.cli import dispatch
 from strata.core import discovery
-from tests._fakes import FakePrompter
+from tests._fakes import FakePrompter, fake_vault
 
 Runbook = Callable[..., int]
 
@@ -66,11 +66,7 @@ def isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None
 
 def _fake_secrets(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     """An in-memory vault standing in for the ansible-vault secrets file."""
-    monkeypatch.setattr(secrets, "has_secret", lambda key: key in ctx["vault"])
-    monkeypatch.setattr(secrets, "get_secret", ctx["vault"].get)
-    monkeypatch.setattr(secrets, "set_secret", ctx["vault"].__setitem__)
-    # The vault password lives in the OS keychain, which no scenario is about.
-    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
+    fake_vault(monkeypatch, ctx["vault"])
 
 
 class _HarnessPrompter(FakePrompter):

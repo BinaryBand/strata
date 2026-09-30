@@ -14,6 +14,7 @@ from typing import Annotated
 
 import typer
 
+from strata.cli._helpers import fail
 from strata.cli.commands import config as config_cmds
 from strata.cli.commands import dev as dev_cmds
 from strata.cli.commands import device as device_cmds
@@ -76,11 +77,7 @@ def runbook(
         # and CI fall through to the error below unchanged.
         name = pick_runbook()
     if name is None:
-        typer.echo(
-            "Missing argument 'NAME'. Run with --list to browse available runbooks.",
-            err=True,
-        )
-        raise typer.Exit(1)
+        fail("Missing argument 'NAME'. Run with --list to browse available runbooks.")
 
     rc = run_runbook(name, target=target, tags=tags)
     raise typer.Exit(rc)

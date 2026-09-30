@@ -157,16 +157,7 @@ def _ensure_user(playbook: str, *, target: str | None) -> int | None:
 def _ensure_storage(
     requirement: req.Storage, *, target: str | None, prompter: ports.Prompter
 ) -> int | None:
-    secrets.ensure_secret(
-        req.Secret(
-            vault_key=requirement.vault_key,
-            message=requirement.message,
-            kind="text",
-            default=requirement.default,
-            generate=False,
-        ),
-        prompter,
-    )
+    secrets.ensure_secret(requirement.as_secret(), prompter)
     value = secrets.get_secret(requirement.vault_key)
     if not value:
         # This used to say "was just set but could not be read back", which

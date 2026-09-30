@@ -13,6 +13,7 @@ the point of use.
 """
 
 import json
+from typing import Any
 
 from strata.adapters import proc
 from strata.adapters.ansible import group_vars, host_vars
@@ -175,6 +176,21 @@ def remove_synced_remote(host: str, name: str) -> bool:
     return True
 
 
+def _config_json(subcommand: str) -> dict[str, Any] | list[Any] | None:
+    """Run `rclone config <subcommand>` and return its parsed JSON, or None on any failure.
+
+    A non-zero exit and output that is not JSON read the same to both callers,
+    which fall back to "nothing known" rather than blocking on a broken rclone.
+    """
+    result = proc.run(["rclone", "config", subcommand], capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
 def _remotes() -> dict[str, dict[str, str]]:
     """Return every remote rclone knows, as `{name: {option: value}}`.
 
@@ -186,24 +202,13 @@ def _remotes() -> dict[str, dict[str, str]]:
     The dump includes every remote's credentials; they stay in this process's
     memory, as `config show` already put one remote's there.
     """
-    result = proc.run(["rclone", "config", "dump"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return {}
-    try:
-        dumped = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
+    dumped = _config_json("dump")
     return dumped if isinstance(dumped, dict) else {}
 
 
 def remote_completion() -> list[str]:
     """Return remote names known to rclone, for Typer autocompletion."""
     return list(_remotes())
-
-
-def remote_type(name: str) -> str | None:
-    """Return the backend type of an existing rclone remote (e.g. 'pcloud'), or None."""
-    return _remotes().get(name, {}).get("type")
 
 
 def _known_backend_types() -> set[str]:
@@ -214,12 +219,8 @@ def _known_backend_types() -> set[str]:
     command-line usage dump. Empty on any failure (e.g. rclone too old to
     support `config providers`) so validation is skipped rather than blocking.
     """
-    result = proc.run(["rclone", "config", "providers"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return set()
-    try:
-        providers = json.loads(result.stdout)
-    except json.JSONDecodeError:
+    providers = _config_json("providers")
+    if not isinstance(providers, list):
         return set()
     return {p["Name"] for p in providers if p.get("Name")}
 

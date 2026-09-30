@@ -17,8 +17,7 @@ def not_found(noun: str, key: object) -> NoReturn:
     Annotated NoReturn so callers do not need an `assert x is not None` after
     it purely to re-narrow a type the checker cannot otherwise see is settled.
     """
-    typer.echo(f"{noun} {key!r} not found.", err=True)
-    raise typer.Exit(1)
+    fail(f"{noun} {key!r} not found.")
 
 
 def fail(message: str) -> NoReturn:
@@ -35,12 +34,10 @@ def require_remote(name: str) -> None:
     name.
     """
     if not rclone.has_remote(name):
-        typer.echo(
+        fail(
             f"Remote {name!r} not found in rclone config. "
-            f"Authorize it first: rclone config create {name} <type>",
-            err=True,
+            f"Authorize it first: rclone config create {name} <type>"
         )
-        raise typer.Exit(1)
 
 
 def require_host(name: str) -> None:
@@ -55,8 +52,7 @@ def require_host(name: str) -> None:
     """
     if inventory.get(name) is None:
         known = ", ".join(sorted(d.name for d in inventory.all_hosts())) or "none registered"
-        typer.echo(f"Host {name!r} is not in the inventory. Known hosts: {known}.", err=True)
-        raise typer.Exit(1)
+        fail(f"Host {name!r} is not in the inventory. Known hosts: {known}.")
 
 
 def apply_hint(runbook: str, *, target: str | None = None) -> str:

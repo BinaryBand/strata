@@ -69,7 +69,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRclone:
     return fake
 
 
-# ── has_remote() / remote_completion() / remote_type() ────────────────
+# ── has_remote() / remote_completion() ─────────────────────────────────
 
 
 def test_has_remote_true_for_a_configured_remote(fake: FakeRclone) -> None:
@@ -81,7 +81,7 @@ def test_has_remote_false_for_an_unknown_remote(fake: FakeRclone) -> None:  # no
     assert rclone.has_remote("nope") is False
 
 
-def test_remote_completion_strips_the_trailing_colon(fake: FakeRclone) -> None:
+def test_remote_completion_lists_the_configured_remotes(fake: FakeRclone) -> None:
     fake.remotes["backup"] = "s3"
     assert rclone.remote_completion() == ["pcloud", "backup"]
 
@@ -92,23 +92,6 @@ def test_remote_completion_empty_when_rclone_fails(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(rclone.proc, "run", failing)
     assert rclone.remote_completion() == []
-
-
-@pytest.mark.usefixtures("fake")
-def test_remote_type_returns_the_backend() -> None:
-    assert rclone.remote_type("pcloud") == "pcloud"
-
-
-def test_remote_type_none_for_unknown_remote(fake: FakeRclone) -> None:  # noqa: ARG001
-    assert rclone.remote_type("nope") is None
-
-
-def test_remote_type_none_when_config_has_no_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_type(argv, **kwargs) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
-        return subprocess.CompletedProcess(list(argv), 0, stdout='{"x": {"token": "y"}}', stderr="")
-
-    monkeypatch.setattr(rclone.proc, "run", no_type)
-    assert rclone.remote_type("x") is None
 
 
 # ── add_to_config() / remove_from_config() ────────────────────────────

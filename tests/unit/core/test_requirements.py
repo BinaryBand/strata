@@ -78,3 +78,24 @@ def test_frozen_requirements_are_hashable() -> None:
         requirements.UpstreamRunbook(dotted_name="infrastructure.install_podman"),
     }
     assert len(reqs) == 1
+
+
+def test_a_storage_requirement_is_asked_for_as_plain_text() -> None:
+    """A vaulted location is prompted for like any secret, but never hidden or generated."""
+    storage = requirements.Storage(
+        vault_key="backup_dir",
+        message="Where do backups go?",
+        default="/srv/backups",
+        owner=None,
+        group=None,
+        mode=None,
+        require_writable=True,
+    )
+
+    assert storage.as_secret() == requirements.Secret(
+        vault_key="backup_dir",
+        message="Where do backups go?",
+        kind="text",
+        default="/srv/backups",
+        generate=False,
+    )

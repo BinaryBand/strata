@@ -188,9 +188,12 @@ def post_device(request: Request) -> dict[str, Any]:
 def post_run(request: Request) -> dict[str, Any]:
     """Handle `POST /api/run`.
 
-    `target` and `tags` come straight off the wire, so they are checked here the
-    way the CLI checks them (`_helpers.require_host` refuses an unknown host),
-    rather than reaching the executor as whatever JSON happened to hold.
+    `target` and `tags` come straight off the wire, so their shapes are checked
+    here rather than reaching the executor as whatever JSON happened to hold. An
+    unknown host is refused the way `_helpers.require_host` refuses one for the
+    rclone commands; that helper raises `typer.Exit`, so the check is repeated
+    rather than called. Whether a tag is one this runbook knows is not checked:
+    that is `validate_tags`, which only the CLI's `run_runbook` runs up front.
     """
     (dotted_name,) = require(request.body, "dotted_name")
     target = request.body.get("target")

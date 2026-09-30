@@ -24,8 +24,7 @@ from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
 from strata.core import discovery, guard, ports
 from strata.core import requirements as req
-from strata.core.models import Device
-from tests._fakes import FakePrompter
+from tests._fakes import FakePrompter, fake_vault, remote_device
 
 _ME = pwd.getpwuid(os.getuid()).pw_name
 _MY_GROUP = grp.getgrgid(os.getgid()).gr_name
@@ -379,10 +378,6 @@ def test_a_satisfied_upstream_still_has_its_own_guards_satisfied(
 # ── controller_only ────────────────────────────────────────────────────────
 
 
-def _remote_device(name: str) -> Device:
-    return Device(name=name, host="10.0.0.9", user="root", connection="ssh")
-
-
 def test_controller_only_allows_the_controller(monkeypatch: pytest.MonkeyPatch) -> None:
     """target=None is the controller, so the runbook runs normally."""
     monkeypatch.setattr(runner, "run_playbook", lambda *_a, **_kw: 0)
@@ -396,7 +391,7 @@ def test_controller_only_refuses_a_remote_target(monkeypatch: pytest.MonkeyPatch
     The runner now fails that, but only after ansible has been started; the
     guard refuses before any playbook runs, and can say why.
     """
-    monkeypatch.setattr(inventory, "get", _remote_device)
+    monkeypatch.setattr(inventory, "get", remote_device)
     ran: list[str] = []
     monkeypatch.setattr(runner, "run_playbook", lambda *_a, **_kw: ran.append("playbook") or 0)
 
@@ -407,7 +402,7 @@ def test_controller_only_refuses_a_remote_target(monkeypatch: pytest.MonkeyPatch
 
 
 def test_controller_only_reports_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(inventory, "get", _remote_device)
+    monkeypatch.setattr(inventory, "get", remote_device)
     messages: list[str] = []
 
     class Reporter:
@@ -445,13 +440,7 @@ def test_no_target_at_all_is_still_the_controller() -> None:
 
 @pytest.fixture
 def vault(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """An in-memory vault, with the keychain's vault password already present."""
-    store: dict[str, str] = {}
-    monkeypatch.setattr(secrets, "has_secret", store.__contains__)
-    monkeypatch.setattr(secrets, "get_secret", store.get)
-    monkeypatch.setattr(secrets, "set_secret", store.__setitem__)
-    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
-    return store
+    return fake_vault(monkeypatch)
 
 
 def test_a_secret_guard_asks_the_prompter_it_was_given(vault: dict[str, str]) -> None:

@@ -7,10 +7,9 @@ strata.core.runbooks.services.  Scope can be narrowed with
 back up every app.
 """
 
-import importlib
 import pkgutil
 
-from strata.core import guard, paths
+from strata.core import discovery, guard, paths
 from strata.core.ports import PlaybookRunner
 from strata.core.runbooks import services
 
@@ -25,7 +24,7 @@ _CONFIG_PATH = str(paths.INVENTORY_DIR)
 def _discover_backup_paths() -> dict[str, str]:
     """Import every services runbook so its backup_tag declarations register."""
     for module in pkgutil.iter_modules(services.__path__):
-        importlib.import_module(f"{services.__name__}.{module.name}")
+        discovery.load(f"services.{module.name}")
     return guard.backup_paths()
 
 

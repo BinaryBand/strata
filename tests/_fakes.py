@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
+from strata.adapters.ansible import secrets
+from strata.core.models import Device
+
 
 class FakePrompter:
     """Records every question and answers from a script, satisfying `ports.Prompter`.
@@ -23,3 +28,24 @@ class FakePrompter:
 
     def tell(self, message: str) -> None:
         self.told.append(message)
+
+
+def remote_device(name: str) -> Device:
+    """A registered ssh host that is not the controller, whatever it is called."""
+    return Device(name=name, host="10.0.0.9", user="root", connection="ssh")
+
+
+def fake_vault(
+    monkeypatch: pytest.MonkeyPatch, store: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Back the secrets adapter with an in-memory `store`, and return it.
+
+    The vault password lives in the OS keychain, which no caller of this is
+    about to test, so asking for a missing one is a no-op here.
+    """
+    vault = {} if store is None else store
+    monkeypatch.setattr(secrets, "has_secret", vault.__contains__)
+    monkeypatch.setattr(secrets, "get_secret", vault.get)
+    monkeypatch.setattr(secrets, "set_secret", vault.__setitem__)
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
+    return vault

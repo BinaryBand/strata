@@ -16,7 +16,7 @@ from strata.adapters import fs
 from strata.core import paths
 from strata.core.models import Device
 
-_INI_PATH = paths.INVENTORY_DIR / "hosts.ini"
+_INI_PATH = paths.HOSTS_INI
 
 _REMOTE_GROUP = "remote"
 _LOCAL_GROUP = "local"
@@ -134,20 +134,22 @@ def _write(text: str) -> None:
     fs.write_text(_INI_PATH, text)
 
 
-def _host_entries(sections: dict[str, list[str]]) -> Iterator[tuple[str, dict[str, object]]]:
-    """Yield ``(group, parsed)`` for every host line in a section that holds hosts.
+def _holds_hosts(group: str) -> bool:
+    """Report whether a section can hold host lines.
 
-    Only a plain ``[group]`` holds hosts. ``[x:children]`` lists group names and
+    Only a plain ``[group]`` does. ``[x:children]`` lists group names and
     ``[x:vars]`` lists ``key=value`` pairs; both look like host lines to
     _parse_host_line, so ``get()`` used to return a group name or a variable
     assignment as a device, and require_host then accepted it as a target.
     """
-    for group, lines in sections.items():
-        if group == _PREAMBLE or ":" in group:
-            continue
-        for line in lines:
-            parsed = _parse_host_line(line)
-            if parsed:
+    return group != _PREAMBLE and ":" not in group
+
+
+def _host_entries(sections: dict[str, list[str]]) -> Iterator[tuple[str, dict[str, object]]]:
+    """Yield ``(group, parsed)`` for every host line in a section that holds hosts."""
+    for group in filter(_holds_hosts, sections):
+        for line in sections[group]:
+            if parsed := _parse_host_line(line):
                 yield group, parsed
 
 
@@ -161,12 +163,9 @@ def _group_entries(sections: dict[str, list[str]], group: str) -> list[dict[str,
     original group through untouched, leaving the same host in two groups
     with only the four modelled variables in one of them.
     """
-    return [parsed for name, parsed in _host_entries(sections) if name == group]
-
-
-def _entries_from_sections(text: str, group: str = _REMOTE_GROUP) -> list[dict[str, object]]:
-    """Parse `text` and return the host entries in `group` (see _group_entries)."""
-    return _group_entries(_parse_ini(text), group)
+    if not _holds_hosts(group):
+        return []
+    return [parsed for line in sections.get(group, ()) if (parsed := _parse_host_line(line))]
 
 
 def _remote_block(existing: list[str], entries: list[dict[str, object]]) -> list[str]:
@@ -267,7 +266,7 @@ def add(
     If *name* already exists in ``[remote]``, its fields are updated.
     """
     text = _read()
-    entries: list[dict[str, object]] = _entries_from_sections(text)
+    entries = _group_entries(_parse_ini(text), _REMOTE_GROUP)
 
     new_entry: dict[str, object] = {
         "name": name,
@@ -346,7 +345,7 @@ def _device_from(parsed: dict[str, object], *, group: str) -> Device:
 
 def list_all() -> list[Device]:
     """Return all remote devices from the ``[remote]`` group."""
-    entries = _entries_from_sections(_read(), group=_REMOTE_GROUP)
+    entries = _group_entries(_parse_ini(_read()), _REMOTE_GROUP)
     return [_device_from(e, group=_REMOTE_GROUP) for e in entries]
 
 

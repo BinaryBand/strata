@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
@@ -19,6 +20,7 @@ from strata.cli import gui_actions
 from strata.cli.gui_http import ApiError, Request
 from strata.core import discovery, guard
 from strata.core.models import Device
+from tests._fakes import remote_device
 
 # ── runbook_status / get_runbook_status ─────────────────────────────────
 
@@ -55,11 +57,7 @@ def test_runbook_status_does_not_answer_installed_for_a_remote_target(
     fake_module.__dict__["check"] = lambda: True
     monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
     monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: fake_module)
-    monkeypatch.setattr(
-        inventory,
-        "get",
-        lambda name: Device(name=name, host="10.0.0.9", user="root", connection="ssh"),
-    )
+    monkeypatch.setattr(inventory, "get", remote_device)
 
     payload = gui_actions.runbook_status("fake", "rpi4")
 
@@ -92,23 +90,38 @@ def _fake_execute(_module: object, **kwargs: Any) -> int:
     return 0
 
 
-def test_start_run_then_poll_until_done(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_module = ModuleType("fake_runbook")
-    fake_module.__dict__["main"] = lambda **_: 0
+def _noop_main(**_kwargs: object) -> int:
+    return 0
+
+
+def _install_runbook(
+    monkeypatch: pytest.MonkeyPatch, main: Callable[..., int] = _noop_main
+) -> None:
+    """Make the runbook name `fake` resolve to a stub module whose main() is `main`."""
+    module = ModuleType("fake_runbook")
+    module.__dict__["main"] = main
     monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
-    monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: fake_module)
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: module)
     monkeypatch.setattr(gui_actions.runner, "set_reporter", lambda _r: None)
-    monkeypatch.setattr(gui_actions.guard_executor, "execute", _fake_execute)
 
-    run_id = gui_actions.start_run("fake", None, None)["run_id"]
 
+def _finished(run_id: str) -> gui_actions.RunState:
+    """Poll until the run stops running (or two seconds pass), and return its state."""
     deadline = time.monotonic() + 2
     state = gui_actions.get_run(run_id)
     while state is not None and state.status == "running" and time.monotonic() < deadline:
         time.sleep(0.01)
         state = gui_actions.get_run(run_id)
-
     assert state is not None
+    return state
+
+
+def test_start_run_then_poll_until_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_runbook(monkeypatch)
+    monkeypatch.setattr(gui_actions.guard_executor, "execute", _fake_execute)
+
+    state = _finished(gui_actions.start_run("fake", None, None)["run_id"])
+
     assert state.status == "succeeded"
     assert state.exit_code == 0
     assert "done" in state.lines
@@ -123,32 +136,17 @@ def test_a_run_with_a_missing_secret_fails_instead_of_prompting(
     that refuses; the poller then reads the failure off the run's own lines.
     """
 
-    def main(target: str | None = None) -> int:  # noqa: ARG001
-        return 0
-
-    fake_module = ModuleType("fake_runbook")
-    fake_module.__dict__["main"] = guard.secret("tailscale_auth_key", prompt="key")(main)
-    monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
-    monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: fake_module)
-    monkeypatch.setattr(gui_actions.runner, "set_reporter", lambda _r: None)
+    _install_runbook(monkeypatch, guard.secret("tailscale_auth_key", prompt="key")(_noop_main))
     monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
 
-    run_id = gui_actions.start_run("fake", None, None)["run_id"]
+    state = _finished(gui_actions.start_run("fake", None, None)["run_id"])
 
-    deadline = time.monotonic() + 2
-    state = gui_actions.get_run(run_id)
-    while state is not None and state.status == "running" and time.monotonic() < deadline:
-        time.sleep(0.01)
-        state = gui_actions.get_run(run_id)
-
-    assert state is not None
     assert state.status == "failed"
     assert state.exit_code == 1
     assert any("needs an answer" in line for line in state.lines)
 
 
 def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_module = ModuleType("fake_runbook")
     started = threading.Event()
     finish = threading.Event()
 
@@ -157,10 +155,7 @@ def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.Monk
         finish.wait(timeout=2)
         return 0
 
-    fake_module.__dict__["main"] = lambda **_: 0
-    monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
-    monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: fake_module)
-    monkeypatch.setattr(gui_actions.runner, "set_reporter", lambda _r: None)
+    _install_runbook(monkeypatch)
     monkeypatch.setattr(gui_actions.guard_executor, "execute", slow_execute)
 
     gui_actions.start_run("fake", None, None)
@@ -173,38 +168,39 @@ def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.Monk
     finish.set()
 
 
-def _known_host(name: str) -> Device:
-    return Device(name=name, host="10.0.0.9", user="root", connection="ssh")
+def _refuse_to_start(*_args: object) -> dict[str, Any]:
+    pytest.fail("start_run must not be reached with an invalid request")
+
+
+def _refusal(body: dict[str, Any]) -> tuple[int, str]:
+    """Post `body` for the runbook `fake` and return the (status, message) it is refused with."""
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_run(Request(body={"dotted_name": "fake", **body}))
+    return excinfo.value.status, excinfo.value.message
 
 
 @pytest.mark.parametrize("target", [5, "", ["rpi4"]])
 def test_post_run_refuses_a_target_that_is_not_a_host_name(
     monkeypatch: pytest.MonkeyPatch, target: object
 ) -> None:
-    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(inventory, "get", remote_device)
     monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
-    with pytest.raises(ApiError) as excinfo:
-        gui_actions.post_run(Request(body={"dotted_name": "fake", "target": target}))
-    assert (excinfo.value.status, excinfo.value.message) == (400, "target must be a host name")
+    assert _refusal({"target": target}) == (400, "target must be a host name")
 
 
 def test_post_run_refuses_an_unknown_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(inventory, "get", lambda _name: None)
     monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
-    with pytest.raises(ApiError) as excinfo:
-        gui_actions.post_run(Request(body={"dotted_name": "fake", "target": "ghost"}))
-    assert (excinfo.value.status, excinfo.value.message) == (400, "unknown host 'ghost'")
+    assert _refusal({"target": "ghost"}) == (400, "unknown host 'ghost'")
 
 
 @pytest.mark.parametrize("tags", ["a,b", ["a", 1], {"a": "b"}, 7])
 def test_post_run_refuses_tags_that_are_not_a_list_of_strings(
     monkeypatch: pytest.MonkeyPatch, tags: object
 ) -> None:
-    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(inventory, "get", remote_device)
     monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
-    with pytest.raises(ApiError) as excinfo:
-        gui_actions.post_run(Request(body={"dotted_name": "fake", "tags": tags}))
-    assert (excinfo.value.status, excinfo.value.message) == (400, "tags must be a list of strings")
+    assert _refusal({"tags": tags}) == (400, "tags must be a list of strings")
 
 
 def test_post_run_passes_a_known_target_and_good_tags_to_start_run(
@@ -216,17 +212,13 @@ def test_post_run_passes_a_known_target_and_good_tags_to_start_run(
         calls.append((dotted_name, target, tags))
         return {"run_id": "r1"}
 
-    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(inventory, "get", remote_device)
     monkeypatch.setattr(gui_actions, "start_run", record)
 
     body = {"dotted_name": "fake", "target": "rpi4", "tags": ["jellyfin"]}
     assert gui_actions.post_run(Request(body=body)) == {"run_id": "r1"}
     assert gui_actions.post_run(Request(body={"dotted_name": "fake"})) == {"run_id": "r1"}
     assert calls == [("fake", "rpi4", ["jellyfin"]), ("fake", None, None)]
-
-
-def _refuse_to_start(*_args: object) -> dict[str, Any]:
-    pytest.fail("start_run must not be reached with an invalid request")
 
 
 def test_get_run_status_unknown_id() -> None:

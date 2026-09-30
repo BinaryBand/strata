@@ -23,7 +23,7 @@ _VAULT_PASS = ANSIBLE_DIR / "vault_pass.py"
 # transparently redirect every run_playbook() call -- including the ones
 # guard.* decorators make internally, which have no inventory kwarg of
 # their own -- at a disposable test inventory instead of the real one.
-_DEFAULT_INVENTORY = paths.INVENTORY_DIR / "hosts.ini"
+_DEFAULT_INVENTORY = paths.HOSTS_INI
 # ansible-runner treats private_data_dir as persistent job state: it reads
 # env/extravars, env/cmdline, env/envvars from here as *base* extravars for
 # every run, merged under whatever this call passes explicitly. Since this

@@ -19,19 +19,15 @@ from strata.adapters import guard_status
 from strata.adapters.ansible import inventory, rclone, secrets, vault_pass
 from strata.core import discovery
 from strata.core import requirements as req
-from strata.core.models import Device
+from tests._fakes import remote_device
 
 _ME = pwd.getpwuid(os.getuid()).pw_name
-
-
-def _remote_device(name: str) -> Device:
-    return Device(name=name, host="10.0.0.9", user="root", connection="ssh")
 
 
 def test_controller_only_status(monkeypatch: pytest.MonkeyPatch) -> None:
     requirement = req.ControllerOnly(reason="desktop app")
     assert guard_status.guard_status(requirement, target=None) == "satisfied"
-    monkeypatch.setattr(inventory, "get", _remote_device)
+    monkeypatch.setattr(inventory, "get", remote_device)
     assert guard_status.guard_status(requirement, target="rpi4") == "missing"
 
 
@@ -73,7 +69,7 @@ def test_system_user_status(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_system_user_status_unknown_off_controller(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(inventory, "get", _remote_device)
+    monkeypatch.setattr(inventory, "get", remote_device)
     requirement = req.SystemUser(username=_ME, playbook="playbooks/create_diot_user.yml")
     assert guard_status.guard_status(requirement, target="rpi4") == "unknown"
 
@@ -134,5 +130,5 @@ def test_check_result_is_none_off_the_controller(monkeypatch: pytest.MonkeyPatch
     """A check() reads this machine, so it is not an answer about a remote host."""
     fake_module = ModuleType("fake_runbook")
     fake_module.__dict__["check"] = lambda: True
-    monkeypatch.setattr(inventory, "get", _remote_device)
+    monkeypatch.setattr(inventory, "get", remote_device)
     assert guard_status.check_result(fake_module, target="rpi4") is None
