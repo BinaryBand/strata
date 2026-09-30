@@ -143,8 +143,9 @@ def run_runbook_with_tags(ctx: dict[str, Any], name: str, tags: str, target: str
 
 @when("I run a backup and a restore with the same tags")
 def run_both(ctx: dict[str, Any]) -> None:
-    _dispatch(ctx, "infrastructure.backup", target="localhost", tags="jellyfin")
-    _dispatch(ctx, "infrastructure.restore", target="localhost", tags="jellyfin")
+    # config is named: backup always takes it, restore only when asked.
+    _dispatch(ctx, "infrastructure.backup", target="localhost", tags="config,jellyfin")
+    _dispatch(ctx, "infrastructure.restore", target="localhost", tags="config,jellyfin")
 
 
 def _dispatch(ctx: dict[str, Any], name: str, *, target: str, tags: str | None) -> None:
@@ -189,6 +190,11 @@ def paths_include(ctx: dict[str, Any], tag: str, path: str) -> None:
 @then(parsers.parse('the backup paths include the "{tag}" tag pointing at ansible/inventory'))
 def paths_include_config(ctx: dict[str, Any], tag: str) -> None:
     assert _last_paths(ctx).get(tag) == str(paths.INVENTORY_DIR)
+
+
+@then(parsers.parse('the backup paths leave out the "{tag}" tag'))
+def paths_leave_out(ctx: dict[str, Any], tag: str) -> None:
+    assert tag not in _last_paths(ctx)
 
 
 @then(parsers.parse('the backup paths cover exactly "{expected}"'))

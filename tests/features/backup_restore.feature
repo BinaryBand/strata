@@ -37,10 +37,19 @@ Feature: Back up and restore server-app data with restic
     When I run "strata runbook infrastructure.restore --target localhost"
     Then restore.yml is run
     And the backup paths include "jellyfin" at "/srv/jellyfin/config"
-    And the backup paths include the "config" tag pointing at ansible/inventory
+
+  # Restoring config overwrites the live inventory and vault with the
+  # snapshot's, undoing every device and secret added since, so it is opt-in.
+  Scenario: Restore leaves the operator config alone unless it is named
+    When I run "strata runbook infrastructure.restore --target localhost"
+    Then the backup paths leave out the "config" tag
 
   Scenario: Restore can be narrowed to a subset of tags
     When I run "strata runbook infrastructure.restore --tags jellyfin --target localhost"
+    Then the backup paths cover exactly "jellyfin"
+
+  Scenario: Restore brings back the operator config when it is named
+    When I run "strata runbook infrastructure.restore --tags config,jellyfin --target localhost"
     Then the backup paths cover exactly "config, jellyfin"
 
   Scenario: Backing up a remote host targets that host, not the controller
@@ -48,14 +57,14 @@ Feature: Back up and restore server-app data with restic
     When I run "strata runbook infrastructure.backup --target nas"
     Then backup.yml is run against "nas"
 
-  # The runbook always passes the config tag, whatever the target. backup.yml
+  # Backup always passes the config tag, whatever the target. backup.yml
   # then stats the path and skips the tag where it is absent -- which is every
   # host but the controller, since ansible/inventory lives in the operator's
   # own checkout. The skip is the playbook's decision, not the runbook's, so
   # only the half the runbook owns is asserted here.
   Scenario: The config tag is still offered for a remote host
     Given the target is a remote ssh host
-    When I run "strata runbook infrastructure.restore --target nas"
+    When I run "strata runbook infrastructure.backup --target nas"
     Then the backup paths include the "config" tag pointing at ansible/inventory
 
   Scenario: Backup and restore select the same paths for the same tags

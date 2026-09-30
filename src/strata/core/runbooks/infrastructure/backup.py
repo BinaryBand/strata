@@ -15,8 +15,10 @@ from strata.core.runbooks import services
 
 # Operator-owned repo config: host_vars, group_vars (including the vaulted
 # secrets), and hosts.ini. Always backed up under a static tag, as root rather
-# than diot. The path only exists on the controller (ansible_connection=local);
-# the playbook skips the tag on hosts where it's absent.
+# than diot, but restored only when named: it overwrites the live inventory and
+# vault, undoing every device and secret added since the snapshot. The path
+# only exists on the controller (ansible_connection=local); the playbook skips
+# the tag on hosts where it's absent.
 _CONFIG_TAG = "config"
 _CONFIG_PATH = str(paths.INVENTORY_DIR)
 
@@ -28,12 +30,13 @@ def _discover_backup_paths() -> dict[str, str]:
     return guard.backup_paths()
 
 
-def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:
-    """Resolve a --tags selection (or None for everything) to tag -> path.
+def selected_backup_paths(tags: list[str] | None, *, always_config: bool) -> dict[str, str]:
+    """Resolve a --tags selection (or None for every app) to tag -> path.
 
     Shared with infrastructure.restore, which writes snapshots back into the
-    same per-app paths this runbook reads them from.  The static config tag is
-    always included, whatever the selection.
+    same per-app paths this runbook reads them from. The static config tag is
+    included when named, and whatever the selection when `always_config` --
+    which backup passes and restore does not.
     """
     backup_paths = _discover_backup_paths()
     selected = tags or sorted(backup_paths)
@@ -42,7 +45,8 @@ def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:
         msg = f"Unknown backup tag(s): {unknown}. Known: {sorted(backup_paths)}"
         raise ValueError(msg)
     chosen = {tag: backup_paths[tag] for tag in selected if tag != _CONFIG_TAG}
-    chosen[_CONFIG_TAG] = _CONFIG_PATH
+    if always_config or _CONFIG_TAG in selected:
+        chosen[_CONFIG_TAG] = _CONFIG_PATH
     return chosen
 
 
@@ -55,7 +59,7 @@ def validate_tags(tags: list[str] | None) -> None:
     guards, that chain reconciles the diot account and the restic repository.
     A typo should not cost a sudo play.
     """
-    selected_backup_paths(tags)
+    selected_backup_paths(tags, always_config=True)
 
 
 @guard.alias("back up app data")
@@ -82,6 +86,6 @@ def main(
     # default plus host_vars override), so no repository path is passed here.
     return runner.run_playbook(
         "playbooks/backup.yml",
-        extravars={"backup_paths": selected_backup_paths(tags)},
+        extravars={"backup_paths": selected_backup_paths(tags, always_config=True)},
         target=target,
     )
