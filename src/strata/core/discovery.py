@@ -13,6 +13,7 @@ import inspect
 import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import ModuleType
 
 import strata.core.runbooks as _runbook_pkg
 from strata.core import guard
@@ -28,6 +29,11 @@ class RunbookInfo:
     docstring_first_line: str  # first line of the module docstring
     accepts_tags: bool  # True if main() has a ``tags`` parameter
     alias: str | None = None  # human-friendly display name from @guard.alias, or None
+
+    @property
+    def summary(self) -> str:
+        """One-line description, without the 'Runbook:' prefix every module repeats."""
+        return self.docstring_first_line.removeprefix("Runbook:").strip()
 
 
 def accepts_tags(main: Callable[..., object]) -> bool:
@@ -98,6 +104,11 @@ def _walk() -> tuple[list[RunbookInfo], list[ImportFailure]]:
             )
         )
     return sorted(results, key=lambda r: r.dotted_name), failures
+
+
+def load(dotted_name: str) -> ModuleType:
+    """Import the runbook module named `dotted_name`, relative to the runbook package."""
+    return importlib.import_module(f"{_runbook_pkg.__name__}.{dotted_name}")
 
 
 def iter_runbooks() -> list[RunbookInfo]:

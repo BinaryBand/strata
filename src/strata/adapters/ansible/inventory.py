@@ -9,6 +9,7 @@ preserving comments and the ``[all]`` section untouched.
 """
 
 import re
+from collections.abc import Iterator
 from typing import cast
 
 from strata.adapters import fs
@@ -71,20 +72,10 @@ def _parse_ini(text: str) -> dict[str, list[str]]:
     return sections
 
 
-def _strip_comment(text: str) -> str:
-    """Drop an inline ``#`` comment from the variable portion of a host line.
-
-    Without this, _VAR_RE happily matched inside the comment, so
-    ``h1 ansible_host=1.2.3.4  # was ansible_user=old`` parsed a commented-out
-    value as live configuration -- and then wrote it back as real config.
-    """
-    return text.split("#", 1)[0]
-
-
 def _parse_host_line(line: str) -> dict[str, object] | None:
     """Parse a host definition line into a dict.
 
-    Returns None for blank, comment, and child-group lines.
+    Returns None for blank and comment lines.
 
     Args:
         line: A single raw line from an inventory section.
@@ -95,7 +86,7 @@ def _parse_host_line(line: str) -> dict[str, object] | None:
         source order; or None if the line defines no host.
     """
     stripped = line.strip()
-    if not stripped or stripped.startswith(("#", ":children")):
+    if not stripped or stripped.startswith("#"):
         return None
     # A bare hostname with no variables is valid inventory. The old pattern
     # required whitespace, so such a host parsed as None: invisible to get()
@@ -105,7 +96,10 @@ def _parse_host_line(line: str) -> dict[str, object] | None:
         return None
     result: dict[str, object] = {"name": m.group(1)}
     extras: dict[str, str] = {}
-    for vm in _VAR_RE.finditer(_strip_comment(m.group(2) or "")):
+    # Drop an inline ``#`` comment first: _VAR_RE would otherwise match inside it,
+    # so ``h1 ansible_host=1.2.3.4  # was ansible_user=old`` parsed a commented-out
+    # value as live configuration and then wrote it back as real config.
+    for vm in _VAR_RE.finditer((m.group(2) or "").split("#", 1)[0]):
         var, value = vm.group(1), vm.group(2)
         key = _VAR_TO_KEY.get(var)
         if key is None:
@@ -140,6 +134,36 @@ def _write(text: str) -> None:
     fs.write_text(_INI_PATH, text)
 
 
+def _host_entries(sections: dict[str, list[str]]) -> Iterator[tuple[str, dict[str, object]]]:
+    """Yield ``(group, parsed)`` for every host line in a section that holds hosts.
+
+    Only a plain ``[group]`` holds hosts. ``[x:children]`` lists group names and
+    ``[x:vars]`` lists ``key=value`` pairs; both look like host lines to
+    _parse_host_line, so ``get()`` used to return a group name or a variable
+    assignment as a device, and require_host then accepted it as a target.
+    """
+    for group, lines in sections.items():
+        if group == _PREAMBLE or ":" in group:
+            continue
+        for line in lines:
+            parsed = _parse_host_line(line)
+            if parsed:
+                yield group, parsed
+
+
+def _group_entries(sections: dict[str, list[str]], group: str) -> list[dict[str, object]]:
+    """Extract host entries from one section of parsed INI text.
+
+    Scoped to a single group on purpose. This used to sweep every section
+    that was not explicitly preserved, so hosts in an operator-defined group
+    like ``[servers]`` were collected as entries and then written into
+    ``[remote]`` by _rewrite -- while _render_section also passed their
+    original group through untouched, leaving the same host in two groups
+    with only the four modelled variables in one of them.
+    """
+    return [parsed for name, parsed in _host_entries(sections) if name == group]
+
+
 def _entries_from_sections(text: str, group: str = _REMOTE_GROUP) -> list[dict[str, object]]:
     """Extract host entries from one section of parsed INI text.
 
@@ -150,13 +174,7 @@ def _entries_from_sections(text: str, group: str = _REMOTE_GROUP) -> list[dict[s
     original group through untouched, leaving the same host in two groups
     with only the four modelled variables in one of them.
     """
-    sections = _parse_ini(text)
-    entries: list[dict[str, object]] = []
-    for line in sections.get(group, []):
-        parsed = _parse_host_line(line)
-        if parsed:
-            entries.append(parsed)
-    return entries
+    return _group_entries(_parse_ini(text), group)
 
 
 def _remote_block(existing: list[str], entries: list[dict[str, object]]) -> list[str]:
@@ -295,11 +313,11 @@ def remove(name: str) -> bool:
     # One read, reused. Reading three times meant the membership check and
     # the text that got rewritten were different snapshots of the file.
     text = _read()
-    local_names = {e["name"] for e in _entries_from_sections(text, group=_LOCAL_GROUP)}
-    if name in local_names:
+    sections = _parse_ini(text)
+    if any(e["name"] == name for e in _group_entries(sections, _LOCAL_GROUP)):
         return False
 
-    entries = _entries_from_sections(text)
+    entries = _group_entries(sections, _REMOTE_GROUP)
     new_entries = [e for e in entries if e["name"] != name]
     if len(new_entries) == len(entries):
         return False
@@ -362,12 +380,7 @@ def get(name: str) -> Device | None:
     ``[remote]`` line with no explicit ansible_connection is reported as
     ``ssh`` rather than ``local``. See _device_from.
     """
-    sections = _parse_ini(_read())
-    for sec_name, lines in sections.items():
-        if sec_name in {_PREAMBLE, _SECRETS_CHILDREN}:
-            continue
-        for line in lines:
-            parsed = _parse_host_line(line)
-            if parsed and parsed["name"] == name:
-                return _device_from(parsed, group=sec_name)
+    for group, parsed in _host_entries(_parse_ini(_read())):
+        if parsed["name"] == name:
+            return _device_from(parsed, group=group)
     return None

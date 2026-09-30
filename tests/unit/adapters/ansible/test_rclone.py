@@ -19,7 +19,7 @@ from strata.core import remote_paths
 
 
 class FakeRclone:
-    """Answers `rclone listremotes|config show|config providers|config create`."""
+    """Answers `rclone config dump|config providers|config create`."""
 
     def __init__(self, remotes: dict[str, str] | None = None) -> None:
         self.remotes: dict[str, str] = dict(remotes or {})
@@ -27,24 +27,18 @@ class FakeRclone:
         self.calls: list[list[str]] = []
         self.create_succeeds = True
 
-    def __call__(self, argv, **kwargs) -> subprocess.CompletedProcess[str]:  # noqa: ARG002, PLR0911
+    def __call__(self, argv, **kwargs) -> subprocess.CompletedProcess[str]:  # noqa: ARG002
         argv = list(argv)
         self.calls.append(argv)
         rest = argv[1:]
-        if rest == ["listremotes"]:
-            out = "".join(f"{n}:\n" for n in self.remotes)
-            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+        if rest == ["config", "dump"]:
+            dumped = {n: {"type": t, "token": "xxx"} for n, t in self.remotes.items()}
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(dumped), stderr="")
         if rest[:2] == ["config", "providers"]:
             if self.providers is None:
                 return subprocess.CompletedProcess(argv, 1, stdout="", stderr="unsupported")
             body = json.dumps([{"Name": n} for n in self.providers])
             return subprocess.CompletedProcess(argv, 0, stdout=body, stderr="")
-        if rest[:2] == ["config", "show"]:
-            name = rest[2]
-            if name not in self.remotes:
-                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="not found")
-            out = f"[{name}]\ntype = {self.remotes[name]}\ntoken = xxx\n"
-            return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
         if rest[:2] == ["config", "create"]:
             name, backend = rest[2], rest[3]
             if not self.create_succeeds:
@@ -79,7 +73,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRclone:
 
 def test_has_remote_true_for_a_configured_remote(fake: FakeRclone) -> None:
     assert rclone.has_remote("pcloud") is True
-    assert fake.calls == [["rclone", "listremotes"]]
+    assert fake.calls == [["rclone", "config", "dump"]]
 
 
 def test_has_remote_false_for_an_unknown_remote(fake: FakeRclone) -> None:  # noqa: ARG001
@@ -110,7 +104,7 @@ def test_remote_type_none_for_unknown_remote(fake: FakeRclone) -> None:  # noqa:
 
 def test_remote_type_none_when_config_has_no_type(monkeypatch: pytest.MonkeyPatch) -> None:
     def no_type(argv, **kwargs) -> subprocess.CompletedProcess[str]:  # noqa: ARG001
-        return subprocess.CompletedProcess(list(argv), 0, stdout="[x]\ntoken = y\n", stderr="")
+        return subprocess.CompletedProcess(list(argv), 0, stdout='{"x": {"token": "y"}}', stderr="")
 
     monkeypatch.setattr(rclone.proc, "run", no_type)
     assert rclone.remote_type("x") is None
@@ -381,7 +375,7 @@ def test_prompt_create_remote_is_a_noop_when_configured(
 ) -> None:
     _answers(monkeypatch, [])
     rclone.prompt_create_remote("pcloud")
-    assert fake.calls == [["rclone", "listremotes"]]
+    assert fake.calls == [["rclone", "config", "dump"]]
 
 
 def test_prompt_create_remote_creates_a_missing_remote(
@@ -459,11 +453,33 @@ def test_has_remote_does_not_match_a_suffix(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         rclone.proc,
         "run",
-        lambda *_a, **_kw: subprocess.CompletedProcess([], 0, stdout="pcloud:\n", stderr=""),
+        lambda *_a, **_kw: subprocess.CompletedProcess(
+            [], 0, stdout='{"pcloud": {"type": "pcloud"}}', stderr=""
+        ),
     )
 
     assert rclone.has_remote("pcloud") is True
     assert rclone.has_remote("cloud") is False
+
+
+@pytest.mark.parametrize("stdout", ["not json", "[]", '"pcloud"'])
+def test_has_remote_is_false_when_the_dump_is_not_a_json_object(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    monkeypatch.setattr(
+        rclone.proc,
+        "run",
+        lambda *_a, **_kw: subprocess.CompletedProcess([], 0, stdout=stdout, stderr=""),
+    )
+
+    assert rclone.has_remote("pcloud") is False
+    assert rclone.remote_completion() == []
+
+
+def test_guess_default_backend_type_reads_the_config_once(fake: FakeRclone) -> None:
+    fake.remotes = {"backup": "s3"}
+    rclone._guess_default_backend_type("new")
+    assert fake.calls == [["rclone", "config", "dump"]]
 
 
 def test_has_remote_is_false_when_rclone_fails(monkeypatch: pytest.MonkeyPatch) -> None:

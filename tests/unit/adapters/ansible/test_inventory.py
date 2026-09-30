@@ -152,6 +152,23 @@ def test_get_remote_host() -> None:
     assert device.user == "pi"
 
 
+def test_get_ignores_children_and_vars_sections(ini_path: Path) -> None:
+    """A group name or a key=value line is not a host, whatever section it is in."""
+    ini_path.write_text(
+        "[local]\n"
+        "workstation ansible_host=127.0.0.1 ansible_connection=local\n"
+        "\n"
+        "[servers:children]\n"
+        "web\n"
+        "\n"
+        "[all:vars]\n"
+        "ansible_user=root\n"
+    )
+    assert inventory.get("web") is None
+    assert inventory.get("ansible_user=root") is None
+    assert [d.name for d in inventory.all_hosts()] == ["workstation"]
+
+
 @pytest.mark.usefixtures("base_ini")
 def test_get_nonexistent_returns_none() -> None:
     assert inventory.get("NoSuchDevice") is None

@@ -29,57 +29,59 @@ has: it is a presentation-layer server with no domain logic of its own.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import http.server
-import importlib
+import re
+import traceback
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, assert_never
 from urllib.parse import parse_qs, urlsplit
 
 from strata.adapters import gui_token
-from strata.adapters.ansible import inventory, vault_pass
+from strata.adapters.ansible import inventory
 from strata.cli import gui_actions
-from strata.cli.gui_http import read_json_body, send_json
+from strata.cli.gui_http import ApiError, Request, read_json_body, send_json
 from strata.core import discovery, guard
 from strata.core import requirements as req
 
-_DATA_ROUTE = "/api/gui-data"
 
+def _capitalize_first(text: str) -> str:
+    """Upper-case the first character only; `str.capitalize` would lowercase the rest.
 
-def _description(docstring_first_line: str) -> str:
-    """Strip the "Runbook: " convention prefix and capitalize, for display.
-
-    Every runbook module docstring reads "Runbook: <lowercase sentence>." by
-    convention (enforced by nothing but habit); the GUI wants a sentence on
-    its own, matching how the mockup this ships from phrased it.
+    Runbook summaries read "<lowercase sentence>." by convention (enforced by
+    nothing but habit); the GUI wants a sentence on its own, matching how the
+    mockup this ships from phrased it.
     """
-    text = docstring_first_line.removeprefix("Runbook:").strip()
-    return text[:1].upper() + text[1:] if text else text
+    return text[:1].upper() + text[1:]
 
 
-def _prerequisite_label(r: req.Prerequisite) -> str:
-    return "Sudo password" if r.name == "sudo_password" else f"Prerequisite: {r.name}"
-
-
-_GUARD_LABELERS: dict[type, Callable[[Any], str]] = {
-    req.Prerequisite: _prerequisite_label,
-    req.Secret: lambda r: f"Secret: {r.vault_key}",
-    req.SystemUser: lambda r: f"System user: {r.username}",
-    req.LocalPath: lambda r: f"Path: {r.path}",
-    req.Mount: lambda r: f"Mount: {r.remote_path}",
-    req.Storage: lambda r: f"Storage: {r.vault_key}",
-    req.UpstreamRunbook: lambda r: f"Requires {r.dotted_name}",
-    req.ControllerOnly: lambda r: r.reason[:1].upper() + r.reason[1:],
-}
-
-
-def _guard_label(r: req.Requirement) -> str:
+def _guard_label(r: req.Requirement) -> str:  # noqa: PLR0911, C901 -- one arm per Requirement variant
     """Human-readable label for one declared requirement.
 
     Mirrors the phrasing guard_executor's prompts and reporter use, so a GUI
     consuming this can show the same vocabulary an operator sees on the CLI.
+    `assert_never` makes the type checker fail when a Requirement variant has
+    no label, rather than the GUI silently rendering its class name.
     """
-    labeler = _GUARD_LABELERS.get(type(r))
-    return labeler(r) if labeler else type(r).__name__
+    match r:
+        case req.Prerequisite():
+            return "Sudo password" if r.name == "sudo_password" else f"Prerequisite: {r.name}"
+        case req.Secret():
+            return f"Secret: {r.vault_key}"
+        case req.SystemUser():
+            return f"System user: {r.username}"
+        case req.LocalPath():
+            return f"Path: {r.path}"
+        case req.Mount():
+            return f"Mount: {r.remote_path}"
+        case req.Storage():
+            return f"Storage: {r.vault_key}"
+        case req.UpstreamRunbook():
+            return f"Requires {r.dotted_name}"
+        case req.ControllerOnly():
+            return _capitalize_first(r.reason)
+        case _:
+            assert_never(r)
 
 
 def build_gui_data() -> dict[str, Any]:
@@ -91,7 +93,7 @@ def build_gui_data() -> dict[str, Any]:
     """
     runbooks = []
     for info in discovery.iter_runbooks():
-        module = importlib.import_module(f"strata.core.runbooks.{info.dotted_name}")
+        module = discovery.load(info.dotted_name)
         declared = guard.declared(module.main)
         guards = [{"type": type(r).__name__, "label": _guard_label(r)} for r in declared]
         runbooks.append(
@@ -100,7 +102,7 @@ def build_gui_data() -> dict[str, Any]:
                 "leaf": info.leaf,
                 "category": info.category,
                 "alias": info.alias,
-                "description": _description(info.docstring_first_line),
+                "description": _capitalize_first(info.summary),
                 "accepts_tags": info.accepts_tags,
                 "has_check": hasattr(module, "check"),
                 "guards": guards,
@@ -116,21 +118,41 @@ def build_gui_data() -> dict[str, Any]:
     return {"runbooks": runbooks, "import_failures": import_failures, "devices": devices}
 
 
-def _match(parts: list[str], pattern: tuple[str | None, ...]) -> bool:
-    """Report whether `parts` (a path split on "/") matches `pattern`.
+@dataclasses.dataclass(frozen=True)
+class Route:
+    """One API route: where it is, what runs, and whether it needs the token."""
 
-    `None` in `pattern` matches any single segment -- a tiny path-template
-    matcher so a route's segment count never appears as a bare magic number
-    at the call site.
-    """
-    return len(parts) == len(pattern) and all(
-        expected is None or actual == expected
-        for actual, expected in zip(parts, pattern, strict=True)
-    )
+    method: str
+    template: str  # a path with `{name}` segments captured into `Request.args`
+    handler: Callable[[Request], dict[str, Any]]
+    needs_token: bool = True  # a route is closed unless it says otherwise
+    pattern: re.Pattern[str] = dataclasses.field(init=False)  # the template, as an anchored regex
+
+    def __post_init__(self) -> None:
+        """Compile the template once: one named group per `{name}`."""
+        regex = "^" + re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", self.template) + "$"
+        object.__setattr__(self, "pattern", re.compile(regex))
 
 
-_RUN_STATUS = ("api", "run", None)
-_DEVICE = ("api", "devices", None)
+def _get_gui_data(_request: Request) -> dict[str, Any]:
+    return build_gui_data()
+
+
+# The read routes are open (the snapshot and the readiness probes leak nothing
+# that running a playbook would); the run-status poll and every mutating route
+# need the bearer token. docs/ARCHITECTURE.md carries the same table.
+_ROUTES = (
+    Route("GET", "/api/gui-data", _get_gui_data, needs_token=False),
+    Route("GET", "/api/runbook-status", gui_actions.get_runbook_status, needs_token=False),
+    Route("GET", "/api/vault-status", gui_actions.get_vault_status, needs_token=False),
+    Route("GET", "/api/reachable", gui_actions.get_reachable, needs_token=False),
+    Route("GET", "/api/run/{run_id}", gui_actions.get_run_status),
+    Route("POST", "/api/run", gui_actions.post_run),
+    Route("POST", "/api/devices", gui_actions.post_device),
+    Route("DELETE", "/api/devices/{name}", gui_actions.delete_device),
+    Route("POST", "/api/secrets", gui_actions.post_secret),
+    Route("POST", "/api/vault-password", gui_actions.post_vault_password),
+)
 
 
 def _allowed_origin(origin: str, extra: frozenset[str]) -> str | None:
@@ -164,10 +186,9 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
     def end_headers(self) -> None:
         """Add the CORS headers to every response, then close the header block.
 
-        Done here rather than at each call site because the action routes in
-        `gui_actions.py` write their own responses through `send_json`, and a
-        response missing these is one the browser discards before the app
-        sees it.
+        Done here rather than at each call site because every response goes
+        through `send_json`, and one missing these is one the browser discards
+        before the app sees it.
         """
         origin = self.headers.get("Origin")
         allowed = _allowed_origin(origin, self._allow_origins) if origin else None
@@ -179,12 +200,6 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         return self.headers.get("Authorization") == f"Bearer {self._token}"
 
-    def _unauthorized(self) -> None:
-        send_json(self, 401, {"error": "missing or invalid access token"})
-
-    def _not_found(self) -> None:
-        send_json(self, 404, {"error": "not found"})
-
     def do_OPTIONS(self) -> None:
         """Answer the preflight the Authorization header and JSON bodies trigger."""
         self.send_response(204)
@@ -195,47 +210,55 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        """Serve the read routes; only the run-status route needs the token."""
-        parsed = urlsplit(self.path)
-        parts = parsed.path.strip("/").split("/")
-
-        if parsed.path == _DATA_ROUTE:
-            send_json(self, 200, build_gui_data())
-        elif parsed.path == "/api/runbook-status":
-            gui_actions.get_runbook_status(self, parse_qs(parsed.query))
-        elif parsed.path == "/api/vault-status":
-            send_json(self, 200, {"has_vault_password": vault_pass.has_vault_password()})
-        elif parsed.path == "/api/reachable":
-            gui_actions.get_reachable(self, parse_qs(parsed.query))
-        elif _match(parts, _RUN_STATUS):
-            if self._authorized():
-                gui_actions.get_run_status(self, parts[2])
-            else:
-                self._unauthorized()
-        else:
-            self._not_found()
+        """Serve a GET route."""
+        self._dispatch("GET")
 
     def do_POST(self) -> None:
-        """Handle the mutating routes; all require the access token."""
-        if not self._authorized():
-            self._unauthorized()
-            return
-        route = gui_actions.POST_ROUTES.get(self.path)
-        if route is None:
-            self._not_found()
-            return
-        route(self, read_json_body(self))
+        """Serve a POST route."""
+        self._dispatch("POST")
 
     def do_DELETE(self) -> None:
-        """Handle `DELETE /api/devices/<name>`; requires the access token."""
-        if not self._authorized():
-            self._unauthorized()
+        """Serve a DELETE route."""
+        self._dispatch("DELETE")
+
+    def _dispatch(self, method: str) -> None:
+        """Match the request to a route, check the token once, run it, send the result.
+
+        An unknown mutating request is refused with 401 before 404, so an
+        unauthenticated caller cannot probe which paths exist; an unknown GET
+        is just a 404, since there is nothing behind it to hide. Anything a
+        route body raises becomes a JSON response: without this the exception
+        unwound out of the handler and the socket closed with nothing sent.
+        """
+        parsed = urlsplit(self.path)
+        matches = (
+            (route, found)
+            for route in _ROUTES
+            if route.method == method and (found := route.pattern.match(parsed.path))
+        )
+        route, found = next(matches, (None, None))
+        if (route.needs_token if route else method != "GET") and not self._authorized():
+            send_json(self, 401, {"error": "missing or invalid access token"})
             return
-        parts = urlsplit(self.path).path.strip("/").split("/")
-        if _match(parts, _DEVICE):
-            gui_actions.delete_device(self, parts[2])
-        else:
-            self._not_found()
+        if route is None or found is None:
+            send_json(self, 404, {"error": "not found"})
+            return
+        try:
+            request = Request(
+                body=read_json_body(self) if method != "GET" else {},
+                query={key: values[0] for key, values in parse_qs(parsed.query).items()},
+                args=found.groupdict(),
+            )
+            send_json(self, 200, route.handler(request))
+        except ApiError as exc:
+            send_json(self, exc.status, {"error": exc.message})
+        except ValueError as exc:  # malformed JSON, or a value an adapter refused
+            send_json(self, 400, {"error": str(exc)})
+        except Exception:  # noqa: BLE001 -- the last line of defence: answer, do not drop the socket
+            self.log_error(
+                "unhandled error in %s %s:\n%s", method, parsed.path, traceback.format_exc()
+            )
+            send_json(self, 500, {"error": "internal error"})
 
 
 def _request_handler(

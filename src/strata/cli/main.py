@@ -14,7 +14,6 @@ from typing import Annotated
 
 import typer
 
-from strata.cli import gui_server
 from strata.cli.commands import config as config_cmds
 from strata.cli.commands import dev as dev_cmds
 from strata.cli.commands import device as device_cmds
@@ -122,6 +121,9 @@ def gui(
     box. Name that device's origin with --allow-origin so the browser there
     doesn't discard the responses.
     """
+    # Deferred: gui_server pulls in the whole guard/vault stack, which no other command needs.
+    from strata.cli import gui_server  # noqa: PLC0415
+
     try:
         gui_server.serve(
             port=port,

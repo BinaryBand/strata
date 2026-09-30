@@ -3,8 +3,9 @@
 import getpass
 import re
 import textwrap
+from typing import Protocol
 
-from ansible.parsing.vault import AnsibleVaultError, VaultLib, VaultSecret
+import click
 
 from strata.adapters import fs
 from strata.adapters.ansible import vault_pass
@@ -29,6 +30,20 @@ _BLOCK_INDENT = " " * 10
 _VAULT_ID = "default"
 
 
+def prompt_password(message: str) -> str:
+    """Prompt (hidden) until the answer is non-empty, and return it.
+
+    An empty vault or sudo password was accepted and stored, and since
+    has_secret() and has_vault_password() only check that the entry exists,
+    nothing ever asked again.
+    """
+    while True:
+        value = getpass.getpass(message)
+        if value:
+            return value
+        click.echo("A password cannot be empty.", err=True)
+
+
 def ensure_vault_password() -> None:
     """Prompt for and store the vault password in the OS keychain if absent.
 
@@ -38,17 +53,39 @@ def ensure_vault_password() -> None:
     adapter that needs this has to ask for it directly.
     """
     if not vault_pass.has_vault_password():
-        password = getpass.getpass("vault password (will be stored in keychain): ")
-        vault_pass.set_vault_password(password)
+        vault_pass.set_vault_password(
+            prompt_password("vault password (will be stored in keychain): ")
+        )
 
 
-def _vault() -> VaultLib:
+class _Vault(Protocol):
+    """The slice of `ansible.parsing.vault.VaultLib` this module uses."""
+
+    def encrypt(self, plaintext: str, /) -> bytes:
+        """Return `plaintext` as vault text."""
+        ...
+
+    def decrypt(self, vaulttext: str, /) -> bytes:
+        """Return the plaintext of `vaulttext`."""
+        ...
+
+
+def _vault() -> _Vault:
     """Build a VaultLib bound to the vault password held in the OS keychain.
+
+    ansible.parsing.vault is imported here rather than at module top: it costs
+    ~90 ms, and only a call that actually encrypts or decrypts needs it --
+    `has_secret` is a regex over the file, so the sudo-password prerequisite and
+    every `strata --help` never pay it. A future ansible-core that moves
+    VaultLib therefore fails at first use instead of at import; the pinned
+    tests in tests/unit/adapters/ansible/test_secrets.py exercise the real one.
 
     Callers that write have already been through ensure_vault_password(); a
     reader has not, so a missing password has to fail with something that says
     what to do about it rather than an ansible-internal error.
     """
+    from ansible.parsing.vault import VaultLib, VaultSecret  # noqa: PLC0415 -- see above
+
     password = vault_pass.get_vault_password()
     if password is None:
         msg = "No vault password in the OS keychain. Run: strata config vault-password"
@@ -113,6 +150,8 @@ def get_secret(name: str) -> str | None:
     if not match:
         return None
 
+    from ansible.parsing.vault import AnsibleVaultError  # noqa: PLC0415 -- see _vault()
+
     ciphertext = "\n".join(line.strip() for line in match.group(1).splitlines()) + "\n"
     try:
         return _vault().decrypt(ciphertext).decode()
@@ -131,6 +170,9 @@ def set_secret(name: str, value: str) -> None:
         name: Secret variable name to write.
         value: Plaintext to encrypt under that name.
     """
+    if not value:
+        msg = f"secret {name!r} cannot be empty"
+        raise ValueError(msg)
     ensure_vault_password()
     block = _encrypt(name, value) + "\n"
 

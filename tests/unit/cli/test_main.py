@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from strata.cli import main
+from strata.cli import gui_server, main
 from strata.cli.main import app
 from strata.core.discovery import resolve_name
 
@@ -27,9 +27,10 @@ def test_runbook_list_shows_categories() -> None:
     assert "install_jellyfin" in result.output
 
 
-def test_runbook_list_shows_docstrings() -> None:
+def test_runbook_list_shows_summaries_without_the_prefix() -> None:
     result = runner.invoke(app, ["runbook", "--list"])
-    assert "Runbook:" in result.output
+    assert "deploy Jellyfin" in result.output
+    assert "Runbook:" not in result.output
 
 
 # -- bare-leaf resolution ------------------------------------------------
@@ -138,7 +139,7 @@ def test_old_rclone_unserve_fails() -> None:
 def gui_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     """Record gui_server.serve's kwargs instead of starting a real server."""
     calls: list[dict] = []
-    monkeypatch.setattr(main.gui_server, "serve", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(gui_server, "serve", lambda **kwargs: calls.append(kwargs))
     return calls
 
 
@@ -168,7 +169,7 @@ def test_gui_reports_a_taken_port_without_a_traceback(monkeypatch: pytest.Monkey
     def _in_use(**_kwargs: object) -> None:
         raise OSError(98, "Address already in use")
 
-    monkeypatch.setattr(main.gui_server, "serve", _in_use)
+    monkeypatch.setattr(gui_server, "serve", _in_use)
     result = runner.invoke(app, ["gui", "--port", "9000"])
     assert result.exit_code == 1
     assert "9000" in result.output

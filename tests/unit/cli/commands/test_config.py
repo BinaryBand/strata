@@ -81,6 +81,27 @@ def test_vault_password_stores_given_value(monkeypatch: pytest.MonkeyPatch) -> N
     assert "Vault password stored in keychain." in result.output
 
 
+def _refuse_empty(*_a: object, **_kw: object) -> None:
+    msg = "value cannot be empty"
+    raise ValueError(msg)
+
+
+def test_vault_password_rejects_an_empty_value_with_exit_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vault_pass, "set_vault_password", _refuse_empty)
+    result = runner.invoke(app, ["vault-password", "--value", ""])
+    assert result.exit_code == 1
+    assert "cannot be empty" in result.output
+
+
+def test_secret_rejects_an_empty_value_with_exit_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(secrets, "set_secret", _refuse_empty)
+    result = runner.invoke(app, ["secret", "jellyfin_api_key", "--value", ""])
+    assert result.exit_code == 1
+    assert "cannot be empty" in result.output
+
+
 def test_vault_password_prompts_with_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
     stored: list[str] = []
     monkeypatch.setattr(vault_pass, "set_vault_password", stored.append)

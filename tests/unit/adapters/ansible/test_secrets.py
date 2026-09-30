@@ -17,12 +17,13 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import ansible.parsing.vault as ansible_vault
 import pytest
 from ansible.parsing.vault import AnsibleVaultError, VaultSecret
 
 from strata.adapters.ansible import secrets
 
-_REAL_VAULTLIB = secrets.VaultLib
+_REAL_VAULTLIB = ansible_vault.VaultLib
 
 
 def _fake_vaulttext(value: str) -> bytes:
@@ -67,7 +68,7 @@ def secrets_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def fake_vault(monkeypatch: pytest.MonkeyPatch) -> type[FakeVaultLib]:
     FakeVaultLib.constructions = []
-    monkeypatch.setattr(secrets, "VaultLib", FakeVaultLib)
+    monkeypatch.setattr(ansible_vault, "VaultLib", FakeVaultLib)
     return FakeVaultLib
 
 
@@ -95,6 +96,18 @@ def test_ensure_vault_password_prompts_and_stores_when_absent(
 
     secrets.ensure_vault_password()
     assert stored == ["hunter2"]
+
+
+def test_prompt_password_reprompts_until_non_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter(["", "hunter2"])
+    monkeypatch.setattr(secrets.getpass, "getpass", lambda _prompt: next(answers))
+    assert secrets.prompt_password("pw: ") == "hunter2"
+
+
+def test_set_secret_refuses_an_empty_value() -> None:
+    with pytest.raises(ValueError, match="cannot be empty"):
+        secrets.set_secret("restic_password", "")
+    assert secrets.has_secret("restic_password") is False
 
 
 # ── has_secret() ──────────────────────────────────────────────────────
@@ -244,7 +257,7 @@ def test_get_secret_raises_naming_the_key_when_decryption_fails(
         vault.fail = True
         return vault
 
-    monkeypatch.setattr(secrets, "VaultLib", failing_vault)
+    monkeypatch.setattr(ansible_vault, "VaultLib", failing_vault)
 
     with pytest.raises(RuntimeError) as excinfo:
         secrets.get_secret("restic_password")
@@ -277,7 +290,7 @@ def test_the_written_block_matches_what_ansible_vault_cli_produces(
     a vault_id to encrypt() would emit a 1.2 header with the id appended), and
     an 80-column body.
     """
-    monkeypatch.setattr(secrets, "VaultLib", _REAL_VAULTLIB)
+    monkeypatch.setattr(ansible_vault, "VaultLib", _REAL_VAULTLIB)
     secrets.set_secret("restic_password", "s3cret")
 
     lines = secrets_file.read_text().splitlines()
@@ -296,7 +309,7 @@ def test_a_block_written_by_the_ansible_vault_cli_still_decrypts(
     rot against a vault format change -- what it pins is that a block in the
     CLI's exact layout, which is what is on disk today, round-trips.
     """
-    monkeypatch.setattr(secrets, "VaultLib", _REAL_VAULTLIB)
+    monkeypatch.setattr(ansible_vault, "VaultLib", _REAL_VAULTLIB)
     vault = _REAL_VAULTLIB(secrets=[("default", VaultSecret(b"keychain-pw"))])
     vaulttext = vault.encrypt("legacy-value").decode()
 

@@ -25,7 +25,7 @@ _CONFIG_PATH = str(paths.INVENTORY_DIR)
 def _discover_backup_paths() -> dict[str, str]:
     """Import every services runbook so its backup_tag declarations register."""
     for module in pkgutil.iter_modules(services.__path__):
-        importlib.import_module(f"strata.core.runbooks.services.{module.name}")
+        importlib.import_module(f"{services.__name__}.{module.name}")
     return guard.backup_paths()
 
 

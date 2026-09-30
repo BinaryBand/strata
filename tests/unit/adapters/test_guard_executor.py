@@ -22,7 +22,7 @@ import pytest
 
 from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
-from strata.core import guard, ports
+from strata.core import discovery, guard, ports
 from strata.core import requirements as req
 from strata.core.models import Device
 
@@ -360,7 +360,7 @@ def test_a_satisfied_upstream_still_has_its_own_guards_satisfied(
 
     upstream = _stub_module(guard.user("diot", "playbooks/create_diot_user.yml")(upstream_main))
     upstream.__dict__["check"] = lambda: True
-    monkeypatch.setattr(guard_executor.importlib, "import_module", lambda _name: upstream)
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _name: upstream)
     monkeypatch.setattr(runner, "run_playbook", lambda *a, **_kw: ran.append(a[0]) or 0)
 
     exit_code = _execute(guard.requires("infrastructure.install_podman"))

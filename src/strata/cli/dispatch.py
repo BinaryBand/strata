@@ -7,14 +7,12 @@ every group back into one file.
 
 from __future__ import annotations
 
-import importlib
 import sys
 from itertools import groupby
 from types import ModuleType
 
 import typer
 
-from strata.adapters import guard_executor
 from strata.adapters import state as config
 from strata.cli._helpers import apply_hint
 from strata.cli.picker import pick_host
@@ -23,6 +21,7 @@ from strata.core.discovery import (
     accepts_tags,
     import_failures,
     iter_runbooks,
+    load,
     resolve_name,
     suggest,
 )
@@ -68,7 +67,7 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
         _report_import_failures()
         return 1
 
-    module = importlib.import_module(f"strata.core.runbooks.{resolved}")
+    module = load(resolved)
 
     parsed_tags, tag_error = _preflight_tags(module, tags)
     if tag_error is not None:
@@ -78,6 +77,10 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
     # The composition root: guard_executor satisfies whatever the runbook
     # declared, then calls its main(). Runbooks no longer provision anything
     # themselves.
+    # Deferred: guard_executor pulls in the guard/vault stack, which --help,
+    # --list and completion never run.
+    from strata.adapters import guard_executor  # noqa: PLC0415
+
     return guard_executor.execute(
         module, target=resolved_target, tags=parsed_tags, reporter=build_reporter()
     )
@@ -147,5 +150,5 @@ def show_runbook_list() -> None:
             # `strata runbook`, since resolution is by dotted/leaf not alias),
             # then the one-line summary.
             label = rb.alias or rb.leaf
-            typer.echo(f"  {label:<26}{rb.leaf:<30}{rb.docstring_first_line}")
+            typer.echo(f"  {label:<26}{rb.leaf:<30}{rb.summary}")
     _report_import_failures()

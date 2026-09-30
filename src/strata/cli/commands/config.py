@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
+from strata.cli._helpers import fail
 from strata.core import paths
 
 _SECRETS_FILE = secrets.SECRETS_FILE.relative_to(paths.PROJECT_ROOT)
@@ -49,7 +50,10 @@ def config_vault_password(
     if value is None:
         value = typer.prompt("Vault password", hide_input=True, confirmation_prompt=True)
 
-    vault_pass.set_vault_password(value)
+    try:
+        vault_pass.set_vault_password(value)
+    except ValueError as exc:
+        fail(str(exc))
     typer.echo("Vault password stored in keychain.")
 
 
@@ -67,7 +71,10 @@ def config_secret(
     if value is None:
         value = typer.prompt(name, hide_input=True, confirmation_prompt=True)
 
-    secrets.set_secret(name, value)
+    try:
+        secrets.set_secret(name, value)
+    except ValueError as exc:
+        fail(str(exc))
     typer.echo(f"Encrypted and stored {name!r} in {_SECRETS_FILE}")
 
 

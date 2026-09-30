@@ -16,7 +16,6 @@ not one function among many to audit.
 
 from __future__ import annotations
 
-import importlib
 import pwd
 import types
 from pathlib import Path
@@ -24,7 +23,7 @@ from typing import assert_never
 
 from strata.adapters import guard_executor, prerequisites
 from strata.adapters.ansible import rclone, secrets
-from strata.core import ports
+from strata.core import discovery, ports
 from strata.core import requirements as req
 
 
@@ -100,7 +99,7 @@ def guard_status(  # noqa: PLR0911, PLR0912, C901
                 return "missing"
             return _status(ok=Path(rclone.resolve(requirement.remote_path)).exists())
         case req.UpstreamRunbook():
-            module = importlib.import_module(f"strata.core.runbooks.{requirement.dotted_name}")
+            module = discovery.load(requirement.dotted_name)
             satisfied = check_result(module, target=target)
             if satisfied is None:
                 return "unknown"

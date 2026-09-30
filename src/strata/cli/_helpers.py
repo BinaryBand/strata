@@ -21,6 +21,12 @@ def not_found(noun: str, key: object) -> NoReturn:
     raise typer.Exit(1)
 
 
+def fail(message: str) -> NoReturn:
+    """Echo `message` to stderr and abort."""
+    typer.echo(message, err=True)
+    raise typer.Exit(1)
+
+
 def require_remote(name: str) -> None:
     """Abort unless `name` is a remote rclone already knows about.
 

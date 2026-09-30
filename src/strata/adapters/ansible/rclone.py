@@ -13,7 +13,6 @@ the point of use.
 """
 
 import json
-import re
 
 import click
 
@@ -48,7 +47,7 @@ def has_remote(name: str) -> bool:
     a name rclone had never heard of, which then failed at mount time. The
     exit status matters too; ignoring it read an rclone failure as "absent".
     """
-    return name in remote_completion()
+    return name in _remotes()
 
 
 def list_remotes() -> list[str]:
@@ -177,21 +176,35 @@ def remove_synced_remote(host: str, name: str) -> bool:
     return True
 
 
+def _remotes() -> dict[str, dict[str, str]]:
+    """Return every remote rclone knows, as `{name: {option: value}}`.
+
+    One `rclone config dump` answers "which remotes exist" and "what type is
+    each", which used to be a `listremotes` parse plus a `config show` regex per
+    remote. `{}` on any failure -- a non-zero exit or output that is not a JSON
+    object -- so a broken rclone reads as "no remotes", as it did before.
+
+    The dump includes every remote's credentials; they stay in this process's
+    memory, as `config show` already put one remote's there.
+    """
+    result = proc.run(["rclone", "config", "dump"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return {}
+    try:
+        dumped = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return dumped if isinstance(dumped, dict) else {}
+
+
 def remote_completion() -> list[str]:
     """Return remote names known to rclone, for Typer autocompletion."""
-    result = proc.run(["rclone", "listremotes"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return []
-    return [r.rstrip(":") for r in result.stdout.splitlines()]
+    return list(_remotes())
 
 
 def remote_type(name: str) -> str | None:
     """Return the backend type of an existing rclone remote (e.g. 'pcloud'), or None."""
-    result = proc.run(["rclone", "config", "show", name], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    match = re.search(r"(?m)^type\s*=\s*(\S+)", result.stdout)
-    return match.group(1) if match else None
+    return _remotes().get(name, {}).get("type")
 
 
 def _known_backend_types() -> set[str]:
@@ -221,11 +234,11 @@ def _guess_default_backend_type(name: str) -> str | None:
     remote if there's exactly one, since multiple existing remotes
     (e.g. `pcloud`) give no unambiguous default.
     """
-    existing = _without(remote_completion(), name)
+    existing = {n: options for n, options in _remotes().items() if n != name}
     if "pcloud" in existing:
-        return remote_type("pcloud")
+        return existing["pcloud"].get("type")
     if len(existing) == 1:
-        return remote_type(existing[0])
+        return next(iter(existing.values())).get("type")
     return None
 
 

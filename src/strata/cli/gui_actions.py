@@ -5,25 +5,26 @@ of one route, doing no more than the equivalent CLI path already does --
 `post_device` is `inventory.add`, `post_secret` is `secrets.set_secret`,
 `start_run` is `guard_executor.execute` in a thread. Kept separate from
 `gui_server.py` to keep that module's job to serving and routing alone.
+
+A route body takes a `Request` and returns the JSON payload for a 200. It
+refuses a request by raising `ApiError`; `gui_server` turns that, and any
+other failure, into the response.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import threading
 import uuid
-from collections.abc import Callable
 from typing import Any
 
 from strata.adapters import guard_executor, guard_status, reachability
 from strata.adapters.ansible import host_vars, inventory, runner, secrets, vault_pass
-from strata.cli.gui_http import JsonHandler
-from strata.cli.gui_http import send_json as _send_json
+from strata.cli.gui_http import ApiError, Request, require
 from strata.core import discovery, guard
 
 
-def runbook_status(dotted_name: str, target: str | None) -> tuple[int, dict[str, Any]]:
+def runbook_status(dotted_name: str, target: str | None) -> dict[str, Any]:
     """Read-only readiness for one runbook: per-guard status plus check(), if any.
 
     Never prompts or mutates. Every guard's status comes from
@@ -35,14 +36,14 @@ def runbook_status(dotted_name: str, target: str | None) -> tuple[int, dict[str,
     """
     resolved = discovery.resolve_name(dotted_name)
     if resolved is None:
-        return 404, {"error": f"unknown runbook {dotted_name!r}"}
-    module = importlib.import_module(f"strata.core.runbooks.{resolved}")
+        raise ApiError(404, f"unknown runbook {dotted_name!r}")
+    module = discovery.load(resolved)
     guards = [
         {"type": type(r).__name__, "status": guard_status.guard_status(r, target=target)}
         for r in guard.declared(module.main)
     ]
     installed = guard_status.check_result(module, target=target)
-    return 200, {"dotted_name": resolved, "guards": guards, "installed": installed}
+    return {"dotted_name": resolved, "guards": guards, "installed": installed}
 
 
 @dataclasses.dataclass
@@ -75,9 +76,7 @@ _run_lock = threading.Lock()
 _current_run: RunState | None = None
 
 
-def start_run(
-    dotted_name: str, target: str | None, tags: list[str] | None
-) -> tuple[int, dict[str, Any]]:
+def start_run(dotted_name: str, target: str | None, tags: list[str] | None) -> dict[str, Any]:
     """Start a runbook in a background thread, refusing a second concurrent run.
 
     Only one run is tracked at a time -- a documented limitation, not an
@@ -87,11 +86,11 @@ def start_run(
     global _current_run  # noqa: PLW0603 -- the single in-flight run *is* the state being guarded
     with _run_lock:
         if _current_run is not None and _current_run.status == "running":
-            return 409, {"error": "a run is already in progress"}
+            raise ApiError(409, "a run is already in progress")
         resolved = discovery.resolve_name(dotted_name)
         if resolved is None:
-            return 400, {"error": f"unknown runbook {dotted_name!r}"}
-        module = importlib.import_module(f"strata.core.runbooks.{resolved}")
+            raise ApiError(400, f"unknown runbook {dotted_name!r}")
+        module = discovery.load(resolved)
         state = RunState(run_id=uuid.uuid4().hex)
         _current_run = state
 
@@ -106,7 +105,7 @@ def start_run(
             state.exit_code = exit_code
 
         threading.Thread(target=_run, daemon=True).start()
-        return 200, {"run_id": state.run_id}
+        return {"run_id": state.run_id}
 
 
 def get_run(run_id: str) -> RunState | None:
@@ -116,113 +115,77 @@ def get_run(run_id: str) -> RunState | None:
     return None
 
 
-def _query_param(query: dict[str, list[str]], key: str, default: str | None = None) -> str | None:
-    """Return the first value for `key` in a parsed query string, or `default`."""
-    return (query.get(key) or [default])[0]
-
-
-def get_runbook_status(handler: JsonHandler, query: dict[str, list[str]]) -> None:
+def get_runbook_status(request: Request) -> dict[str, Any]:
     """Handle `GET /api/runbook-status`."""
-    dotted_name = _query_param(query, "dotted_name")
-    if dotted_name is None:
-        _send_json(handler, 400, {"error": "dotted_name is required"})
-        return
-    target = _query_param(query, "target")
-    status, payload = runbook_status(dotted_name, target)
-    _send_json(handler, status, payload)
+    (dotted_name,) = require(request.query, "dotted_name")
+    return runbook_status(dotted_name, request.query.get("target"))
 
 
-def get_reachable(handler: JsonHandler, query: dict[str, list[str]]) -> None:
+def get_vault_status(_request: Request) -> dict[str, Any]:
+    """Handle `GET /api/vault-status`."""
+    return {"has_vault_password": vault_pass.has_vault_password()}
+
+
+def get_reachable(request: Request) -> dict[str, Any]:
     """Handle `GET /api/reachable?host=&port=`.
 
     Takes a bare host/port rather than a registered device name so the
     Machines screen can test reachability *before* adding one -- the point
     of testing first.
     """
-    host = _query_param(query, "host")
-    if not host:
-        _send_json(handler, 400, {"error": "host is required"})
-        return
-    port_str = _query_param(query, "port", "22")
-    port = int(port_str) if port_str and port_str.isdigit() else 22
-    reachable = reachability.tcp_reachable(host, port)
-    _send_json(handler, 200, {"reachable": reachable})
+    (host,) = require(request.query, "host")
+    port_str = request.query.get("port", "22")
+    port = int(port_str) if port_str.isdigit() else 22
+    return {"reachable": reachability.tcp_reachable(host, port)}
 
 
-def get_run_status(handler: JsonHandler, run_id: str) -> None:
+def get_run_status(request: Request) -> dict[str, Any]:
     """Handle `GET /api/run/<run_id>`."""
-    state = get_run(run_id)
+    state = get_run(request.args["run_id"])
     if state is None:
-        _send_json(handler, 404, {"error": "unknown run id"})
-        return
-    _send_json(
-        handler,
-        200,
-        {"status": state.status, "exit_code": state.exit_code, "lines": list(state.lines)},
-    )
+        raise ApiError(404, "unknown run id")
+    return {"status": state.status, "exit_code": state.exit_code, "lines": list(state.lines)}
 
 
-def post_vault_password(handler: JsonHandler, body: dict[str, Any]) -> None:
+def post_vault_password(request: Request) -> dict[str, Any]:
     """Handle `POST /api/vault-password`."""
-    value = body.get("value")
-    if not value:
-        _send_json(handler, 400, {"error": "value is required"})
-        return
+    (value,) = require(request.body, "value")
     vault_pass.set_vault_password(value)
-    _send_json(handler, 200, {"ok": True})
+    return {"ok": True}
 
 
-def post_secret(handler: JsonHandler, body: dict[str, Any]) -> None:
+def post_secret(request: Request) -> dict[str, Any]:
     """Handle `POST /api/secrets`."""
-    vault_key, value = body.get("vault_key"), body.get("value")
-    if not vault_key or not value:
-        _send_json(handler, 400, {"error": "vault_key and value are required"})
-        return
+    vault_key, value = require(request.body, "vault_key", "value")
     if not vault_pass.has_vault_password():
-        _send_json(handler, 400, {"error": "set the vault password first"})
-        return
+        raise ApiError(400, "set the vault password first")
     secrets.set_secret(vault_key, value)
-    _send_json(handler, 200, {"ok": True})
+    return {"ok": True}
 
 
-def post_device(handler: JsonHandler, body: dict[str, Any]) -> None:
+def post_device(request: Request) -> dict[str, Any]:
     """Handle `POST /api/devices`."""
-    name, host = body.get("name"), body.get("host")
-    if not name or not host:
-        _send_json(handler, 400, {"error": "name and host are required"})
-        return
+    name, host = require(request.body, "name", "host")
     device = inventory.add(
         name,
         host,
-        user=body.get("user", "root"),
-        connection=body.get("connection", "ssh"),
-        port=body.get("port"),
+        user=request.body.get("user", "root"),
+        connection=request.body.get("connection", "ssh"),
+        port=request.body.get("port"),
     )
-    _send_json(handler, 200, device.model_dump())
+    return device.model_dump()
 
 
-def post_run(handler: JsonHandler, body: dict[str, Any]) -> None:
+def post_run(request: Request) -> dict[str, Any]:
     """Handle `POST /api/run`."""
-    dotted_name = body.get("dotted_name")
-    if not dotted_name:
-        _send_json(handler, 400, {"error": "dotted_name is required"})
-        return
-    status, payload = start_run(dotted_name, body.get("target"), body.get("tags"))
-    _send_json(handler, status, payload)
+    (dotted_name,) = require(request.body, "dotted_name")
+    return start_run(dotted_name, request.body.get("target"), request.body.get("tags"))
 
 
-def delete_device(handler: JsonHandler, name: str) -> None:
+def delete_device(request: Request) -> dict[str, Any]:
     """Handle `DELETE /api/devices/<name>`."""
+    name = request.args["name"]
     if not inventory.remove(name):
-        _send_json(handler, 404, {"error": "unknown device"})
-        return
+        raise ApiError(404, "unknown device")
     host_vars.discard(name)
-    _send_json(handler, 200, {"ok": True})
-
-
-POST_ROUTES: dict[str, Callable[[JsonHandler, dict[str, Any]], None]] = {
-    "/api/vault-password": post_vault_password,
-    "/api/secrets": post_secret,
-    "/api/devices": post_device,
-    "/api/run": post_run,
-}
+    return {"ok": True}

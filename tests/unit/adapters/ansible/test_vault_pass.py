@@ -75,3 +75,9 @@ def test_the_shell_script_reads_the_same_keychain_entry() -> None:
     text = script.read_text()
     assert vault_pass._SERVICE in text
     assert vault_pass._ACCOUNT in text
+
+
+def test_set_vault_password_refuses_an_empty_value(fake_keyring: FakeKeyring) -> None:
+    with pytest.raises(ValueError, match="cannot be empty"):
+        vault_pass.set_vault_password("")
+    assert fake_keyring.store == {}

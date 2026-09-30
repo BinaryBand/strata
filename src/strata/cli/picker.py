@@ -4,16 +4,17 @@ Its own module rather than more helpers in dispatch.py so that questionary --
 the only prompt_toolkit dependency in the project -- has exactly one import
 site, and so tests have exactly one seam (`_autocomplete`) to replace instead
 of driving a real terminal.
+
+questionary is imported inside the two seams, not at module top: it drags in
+prompt_toolkit (~45 ms), and only a run that actually renders a prompt needs it.
 """
 
 from __future__ import annotations
 
 import sys
 
-import questionary
-
 from strata.adapters.ansible import inventory
-from strata.core.discovery import RunbookInfo, iter_runbooks
+from strata.core.discovery import iter_runbooks
 
 
 def _autocomplete(message: str, choices: list[str], meta: dict[str, str]) -> str | None:
@@ -23,6 +24,8 @@ def _autocomplete(message: str, choices: list[str], meta: dict[str, str]) -> str
     prompt_toolkit. ``ask()`` returns None on Ctrl-C/Esc. ``validate`` keeps the
     free-text field honest -- only a known dotted name submits.
     """
+    import questionary  # noqa: PLC0415 -- deferred, see the module docstring
+
     answer = questionary.autocomplete(
         message,
         choices=choices,
@@ -33,19 +36,17 @@ def _autocomplete(message: str, choices: list[str], meta: dict[str, str]) -> str
     return None if answer is None else str(answer)
 
 
-def _select(message: str, choices: list[questionary.Choice], default: str | None) -> str | None:
-    """Render a select prompt and return the chosen value, or None if aborted.
+def _select(message: str, choices: list[tuple[str, str]], default: str | None) -> str | None:
+    """Render a select prompt over `(title, value)` pairs; return the value, or None if aborted.
 
     A second seam over questionary -- the host picker is a short arrow-key list,
     not type-ahead. Tests monkeypatch this. ``ask()`` returns None on Ctrl-C/Esc.
     """
-    answer = questionary.select(message, choices=choices, default=default).ask()
+    import questionary  # noqa: PLC0415 -- deferred, see the module docstring
+
+    options = [questionary.Choice(title=title, value=value) for title, value in choices]
+    answer = questionary.select(message, choices=options, default=default).ask()
     return None if answer is None else str(answer)
-
-
-def _summary(runbook: RunbookInfo) -> str:
-    """One-line description, without the 'Runbook:' prefix every module repeats."""
-    return runbook.docstring_first_line.removeprefix("Runbook:").strip()
 
 
 def pick_host(default: str | None = None) -> str | None:
@@ -61,7 +62,7 @@ def pick_host(default: str | None = None) -> str | None:
     hosts = inventory.all_hosts()
     if not hosts:
         return None
-    choices = [questionary.Choice(title=f"{h.name}  ({h.connection})", value=h.name) for h in hosts]
+    choices = [(f"{h.name}  ({h.connection})", h.name) for h in hosts]
     valid_default = default if any(h.name == default for h in hosts) else None
     return _select("Target host:", choices, valid_default)
 
@@ -87,6 +88,6 @@ def pick_runbook() -> str | None:
     # dispatch still receives the resolvable name. iter_runbooks() is sorted by
     # dotted name, so the flat list stays grouped by category.
     to_dotted = {(rb.alias or rb.leaf): rb.dotted_name for rb in runbooks}
-    meta = {(rb.alias or rb.leaf): _summary(rb) for rb in runbooks}
+    meta = {(rb.alias or rb.leaf): rb.summary for rb in runbooks}
     chosen = _autocomplete("Runbook:", list(to_dotted), meta)
     return None if chosen is None else to_dotted.get(chosen, chosen)

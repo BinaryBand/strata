@@ -13,7 +13,6 @@ from typing import Annotated
 import typer
 
 from strata.adapters import fs, gui_token
-from strata.cli import gui_server
 from strata.core import paths
 from strata.core.models import ServerAppsDefaults
 
@@ -48,6 +47,9 @@ def dev_gui_data() -> None:
     Useful for inspecting the catalog by hand; `strata.cli.gui_server` is the
     single source both this and `strata gui` read from.
     """
+    # Deferred: gui_server pulls in the whole guard/vault stack, which no other command needs.
+    from strata.cli import gui_server  # noqa: PLC0415
+
     typer.echo(json.dumps(gui_server.build_gui_data(), indent=2))
 
 

@@ -22,8 +22,9 @@ from typing import Any
 
 import pytest
 
-from strata.adapters import guard_executor, prerequisites
+from strata.adapters import guard_executor
 from strata.adapters.ansible import inventory, rclone, runner, secrets
+from strata.core import discovery
 
 Runbook = Callable[..., int]
 
@@ -95,7 +96,7 @@ def _fake_prompts(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     monkeypatch.setattr(guard_executor.click, "prompt", fake_prompt)
     monkeypatch.setattr(guard_executor.click, "echo", ctx["echoes"].append)
     # The sudo prompt lives with the prerequisite table, not the executor.
-    monkeypatch.setattr(prerequisites.getpass, "getpass", fake_getpass)
+    monkeypatch.setattr(secrets.getpass, "getpass", fake_getpass)
 
 
 def _fake_runner(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
@@ -236,7 +237,7 @@ def install_upstream(
             return stub
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(guard_executor.importlib, "import_module", fake_import)
+    monkeypatch.setattr(discovery.importlib, "import_module", fake_import)
 
 
 class _Recorder:

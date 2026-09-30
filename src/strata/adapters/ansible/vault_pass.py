@@ -38,5 +38,11 @@ def set_vault_password(value: str) -> None:
 
     Args:
         value: The vault password to persist.
+
+    Raises:
+        ValueError: If `value` is empty.
     """
+    if not value:
+        msg = "vault password cannot be empty"
+        raise ValueError(msg)
     keyring.set_password(_SERVICE, _ACCOUNT, value)

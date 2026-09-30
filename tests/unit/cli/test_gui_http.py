@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from strata.cli import gui_http
 
 
@@ -46,3 +48,19 @@ def test_send_json_writes_status_headers_and_body() -> None:
     body = handler.wfile.getvalue()
     assert handler.response_headers["Content-Length"] == str(len(body))
     assert json.loads(body) == {"ok": True}
+
+
+def test_require_returns_the_values_in_order() -> None:
+    assert gui_http.require({"a": 1, "b": 2}, "b", "a") == (2, 1)
+
+
+def test_require_refuses_a_missing_or_empty_key_with_a_400() -> None:
+    with pytest.raises(gui_http.ApiError) as excinfo:
+        gui_http.require({"a": 1, "b": ""}, "a", "b")
+    assert excinfo.value.status == 400
+    assert excinfo.value.message == "a and b are required"
+
+
+def test_require_names_a_single_key_in_the_singular() -> None:
+    with pytest.raises(gui_http.ApiError, match="value is required"):
+        gui_http.require({}, "value")

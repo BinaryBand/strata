@@ -22,7 +22,6 @@ intended meaning.
 from __future__ import annotations
 
 import grp
-import importlib
 import inspect
 import pwd
 import types
@@ -35,7 +34,7 @@ import click
 
 from strata.adapters import prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
-from strata.core import guard, ports
+from strata.core import discovery, guard, ports
 from strata.core import requirements as req
 
 
@@ -74,10 +73,8 @@ def _ensure_secret(
 
     An empty answer is re-prompted rather than stored. `default=default or ""`
     made the prompt non-mandatory even when there was no default, so pressing
-    Enter yielded "" and wrote it -- and since has_secret() only checks that
-    the key exists, nothing ever asked again. One stray Enter on
-    tailscale_auth_key permanently poisoned it, and every later run silently
-    handed the playbook an empty key.
+    Enter yielded "" -- which `secrets.set_secret` now refuses outright, so this
+    loop is the interactive half of that rule, not the only defence.
     """
     if secrets.has_secret(vault_key):
         return
@@ -294,7 +291,7 @@ def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Repor
     install_baikal and install_restic. check() answers for the runbook's own
     work; it was never evidence about the runbook's dependencies.
     """
-    module = importlib.import_module(f"strata.core.runbooks.{dotted_name}")
+    module = discovery.load(dotted_name)
     check = getattr(module, "check", None)
     if is_controller(target) and check is not None and check_safely(check, reporter):
         return _satisfy_all(module, target=target, reporter=reporter)

@@ -41,7 +41,7 @@ def test_ensure_sudo_password_prompts_only_when_absent(monkeypatch: pytest.Monke
     assert stored == []
 
     monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
-    monkeypatch.setattr(prerequisites.getpass, "getpass", lambda _prompt: "hunter2")
+    monkeypatch.setattr(secrets.getpass, "getpass", lambda _prompt: "hunter2")
     prerequisites.ensure("sudo_password")
     assert stored == [("ansible_become_password", "hunter2")]
 

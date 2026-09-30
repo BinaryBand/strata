@@ -12,7 +12,6 @@ from __future__ import annotations
 import http.client
 import json
 import threading
-import typing
 import urllib.error
 import urllib.request
 
@@ -20,6 +19,7 @@ import pytest
 
 from strata.cli import gui_server
 from strata.core import requirements as req
+from strata.core.discovery import RunbookInfo
 
 # The keys the GUI app's lib/data/strata_cli.dart reads out of each object. Changing a
 # name here without changing the Dart side makes the GUI fall back to sample
@@ -90,32 +90,6 @@ def test_jellyfin_guard_chain_is_reported_in_declaration_order(snapshot: dict) -
 # -- the guard-label contract -------------------------------------------
 
 
-def test_every_requirement_type_has_a_label() -> None:
-    """A new @guard.* with no labeler silently renders as its class name.
-
-    _guard_label falls back to type(r).__name__, and the Dart side falls back to
-    GuardType.requires for an unknown type string -- two silent degradations
-    that would let a new requirement reach the GUI looking like a dependency on
-    another runbook. Driven off the Requirement union itself, so adding a member
-    there without a label fails here.
-    """
-    declared = set(typing.get_args(req.Requirement))
-    assert declared, "Requirement is a union; get_args should not be empty"
-    missing = sorted(t.__name__ for t in declared - set(gui_server._GUARD_LABELERS))
-    assert not missing, (
-        f"requirement types with no gui_server label: {missing}. "
-        "Add one to _GUARD_LABELERS and a GuardType to the GUI app's lib/data/strata_cli.dart."
-    )
-
-
-def test_no_stale_labelers() -> None:
-    """The inverse: a labeler for a type no longer in the union is dead code."""
-    stale = sorted(
-        t.__name__ for t in set(gui_server._GUARD_LABELERS) - set(typing.get_args(req.Requirement))
-    )
-    assert not stale, f"labelers for types no longer in Requirement: {stale}"
-
-
 def test_sudo_password_prerequisite_gets_the_friendly_label() -> None:
     assert gui_server._guard_label(req.Prerequisite("sudo_password")) == "Sudo password"
 
@@ -138,14 +112,20 @@ def test_other_prerequisites_keep_their_name() -> None:
     ],
 )
 def test_description_strips_prefix_and_capitalizes(raw: str, expected: str) -> None:
-    assert gui_server._description(raw) == expected
+    info = RunbookInfo(
+        dotted_name="x", leaf="x", category="", docstring_first_line=raw, accepts_tags=False
+    )
+    assert gui_server._capitalize_first(info.summary) == expected
 
 
 # -- the server ---------------------------------------------------------
 
 
+_TOKEN = "test-token"
+
+
 @pytest.fixture
-def served() -> str:
+def served(monkeypatch: pytest.MonkeyPatch) -> str:
     """Run `serve` on an ephemeral port in a thread; yield its base URL.
 
     Port 0 lets the kernel pick, so a developer already running `strata gui`
@@ -153,6 +133,7 @@ def served() -> str:
     ThreadingHTTPServer has no clean cross-version shutdown from inside a
     KeyboardInterrupt-suppressing serve().
     """
+    monkeypatch.setattr(gui_server.gui_token, "get_or_create_token", lambda: _TOKEN)
     urls: list[str] = []
     ready = threading.Event()
 
@@ -235,3 +216,75 @@ def test_preflight_allows_the_token_header(served: str) -> None:
         assert response.status == 204
         assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
         assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:54321"
+
+
+# -- routing and auth ----------------------------------------------------
+
+
+def _send(
+    url: str,
+    method: str,
+    *,
+    body: bytes | None = None,
+    token: str | None = None,
+) -> tuple[int, dict]:
+    request = urllib.request.Request(url, data=body, method=method)
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_a_read_route_is_open(served: str) -> None:
+    status, payload = _send(f"{served}/api/vault-status", "GET")
+    assert status == 200
+    assert "has_vault_password" in payload
+
+
+def test_a_mutating_route_without_the_token_is_401(served: str) -> None:
+    status, _ = _send(f"{served}/api/run", "POST", body=b"{}")
+    assert status == 401
+
+
+def test_the_run_status_poll_needs_the_token(served: str) -> None:
+    assert _send(f"{served}/api/run/abc", "GET")[0] == 401
+    assert _send(f"{served}/api/run/abc", "GET", token=_TOKEN)[0] == 404
+
+
+def test_an_unknown_mutating_path_is_401_before_404(served: str) -> None:
+    """An unauthenticated caller cannot probe which mutating paths exist."""
+    assert _send(f"{served}/api/nope", "POST", body=b"{}")[0] == 401
+    assert _send(f"{served}/api/nope", "POST", body=b"{}", token=_TOKEN)[0] == 404
+
+
+def test_a_route_is_only_reachable_by_its_own_method(served: str) -> None:
+    assert _send(f"{served}/api/gui-data", "POST", body=b"{}", token=_TOKEN)[0] == 404
+
+
+def test_a_missing_field_is_a_400_with_the_message(served: str) -> None:
+    status, payload = _send(f"{served}/api/run", "POST", body=b"{}", token=_TOKEN)
+    assert status == 400
+    assert payload == {"error": "dotted_name is required"}
+
+
+def test_a_malformed_json_body_is_a_400_not_a_dropped_connection(served: str) -> None:
+    status, payload = _send(f"{served}/api/run", "POST", body=b"{not json", token=_TOKEN)
+    assert status == 400
+    assert "error" in payload
+
+
+def test_an_unexpected_failure_is_a_500_not_a_dropped_connection(
+    served: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(_request: object) -> dict:
+        msg = "kaboom"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(gui_server, "_ROUTES", (gui_server.Route("GET", "/api/boom", boom),))
+    status, payload = _send(f"{served}/api/boom", "GET", token=_TOKEN)
+    assert (status, payload) == (500, {"error": "internal error"})

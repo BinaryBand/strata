@@ -86,7 +86,7 @@ def test_meta_maps_each_alias_to_its_summary(picks: Picks) -> None:
     picks.answers = [jellyfin.alias]
     picker.pick_runbook()
     _message, _choices, meta = picks.calls[0]
-    assert meta.get(jellyfin.alias) == picker._summary(jellyfin)
+    assert meta.get(jellyfin.alias) == jellyfin.summary
 
 
 def test_abort_returns_none(picks: Picks) -> None:
@@ -101,7 +101,7 @@ def test_abort_returns_none(picks: Picks) -> None:
 def test_summary_drops_the_runbook_prefix() -> None:
     jellyfin = next(rb for rb in iter_runbooks() if rb.leaf == "install_jellyfin")
     assert jellyfin.docstring_first_line.startswith("Runbook:")
-    assert picker._summary(jellyfin).startswith("deploy Jellyfin")
+    assert jellyfin.summary.startswith("deploy Jellyfin")
 
 
 def test_summary_handles_a_root_level_runbook() -> None:
@@ -112,7 +112,7 @@ def test_summary_handles_a_root_level_runbook() -> None:
         docstring_first_line="Runbook: a runbook with no category.",
         accepts_tags=False,
     )
-    assert picker._summary(root) == "a runbook with no category."
+    assert root.summary == "a runbook with no category."
 
 
 # -- the host picker ------------------------------------------------------
@@ -126,7 +126,7 @@ def host_select(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     def fake_select(message: str, choices: list, default: str | None) -> str | None:
         recorded["message"] = message
-        recorded["values"] = [str(c.value) for c in choices]
+        recorded["values"] = [value for _title, value in choices]
         recorded["default"] = default
         answer = recorded.get("answer")
         if answer is None:

@@ -20,7 +20,6 @@ other, with no registration step and nothing to sequence.
 
 from __future__ import annotations
 
-import getpass
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -34,8 +33,7 @@ _SUDO_VAULT_VAR = "ansible_become_password"
 def _ensure_sudo_password() -> None:
     if not secrets.has_secret(_SUDO_VAULT_VAR):
         secrets.set_secret(
-            _SUDO_VAULT_VAR,
-            getpass.getpass("sudo password (will be stored in vault): "),
+            _SUDO_VAULT_VAR, secrets.prompt_password("sudo password (will be stored in vault): ")
         )
 
 

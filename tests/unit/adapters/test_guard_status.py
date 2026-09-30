@@ -17,6 +17,7 @@ import pytest
 
 from strata.adapters import guard_status
 from strata.adapters.ansible import inventory, rclone, secrets, vault_pass
+from strata.core import discovery
 from strata.core import requirements as req
 from strata.core.models import Device
 
@@ -103,14 +104,14 @@ def test_mount_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def test_upstream_runbook_status_uses_its_own_check(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_module = ModuleType("fake_upstream")
     fake_module.__dict__["check"] = lambda: True
-    monkeypatch.setattr(guard_status.importlib, "import_module", lambda _name: fake_module)
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _name: fake_module)
     requirement = req.UpstreamRunbook(dotted_name="infrastructure.install_podman")
     assert guard_status.guard_status(requirement, target=None) == "satisfied"
 
 
 def test_upstream_runbook_status_unknown_without_a_check(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_module = ModuleType("fake_upstream")
-    monkeypatch.setattr(guard_status.importlib, "import_module", lambda _name: fake_module)
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _name: fake_module)
     requirement = req.UpstreamRunbook(dotted_name="infrastructure.install_podman")
     assert guard_status.guard_status(requirement, target=None) == "unknown"
 

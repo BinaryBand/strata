@@ -8,6 +8,8 @@ JSON request body and write a JSON response.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -37,6 +39,38 @@ class JsonHandler(Protocol):
     def end_headers(self) -> None:
         """Write the blank line ending the headers."""
         ...
+
+
+class ApiError(Exception):
+    """A request the API refuses, carrying the HTTP status and message to send back."""
+
+    def __init__(self, status: int, message: str) -> None:
+        """Record the status and the message that becomes the `error` field."""
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+@dataclass(frozen=True)
+class Request:
+    """What a route body needs from one HTTP request, already parsed."""
+
+    body: dict[str, Any] = field(default_factory=dict)
+    query: dict[str, str] = field(default_factory=dict)  # first value per key
+    args: dict[str, str] = field(default_factory=dict)  # `{name}` captures from the path
+
+
+def require(data: Mapping[str, Any], *keys: str) -> tuple[Any, ...]:
+    """Return the values of `keys` in `data`, or raise a 400 naming the ones needed.
+
+    A missing key and an empty value are the same refusal: none of the routes
+    has a meaningful empty answer.
+    """
+    values = tuple(data.get(key) for key in keys)
+    if not all(values):
+        verb = "is" if len(keys) == 1 else "are"
+        raise ApiError(400, f"{' and '.join(keys)} {verb} required")
+    return values
 
 
 def read_json_body(handler: JsonHandler) -> dict[str, Any]:
