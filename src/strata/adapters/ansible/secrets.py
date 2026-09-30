@@ -132,7 +132,6 @@ def set_secret(name: str, value: str) -> None:
         value: Plaintext to encrypt under that name.
     """
     ensure_vault_password()
-    _SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     block = _encrypt(name, value) + "\n"
 
     content = SECRETS_FILE.read_text() if SECRETS_FILE.exists() else ""

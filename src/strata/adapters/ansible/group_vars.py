@@ -1,7 +1,5 @@
 """Read and write values in ansible/inventory/group_vars/all/managed.yml."""
 
-import yaml
-
 from strata.adapters import fs
 from strata.core import paths
 
@@ -14,26 +12,16 @@ def load() -> dict:
     Returns:
         The YAML document as a dict.
     """
-    if not _GROUP_VARS.exists():
-        return {}
-    return yaml.safe_load(_GROUP_VARS.read_text()) or {}
+    return fs.read_yaml(_GROUP_VARS)
 
 
 def save(data: dict) -> None:
-    """Write `data` to group_vars/all/managed.yml as block-style YAML, creating parent dirs.
+    """Write `data` to group_vars/all/managed.yml as block-style YAML.
 
     Args:
         data: The full replacement document for the `all` group.
     """
-    _GROUP_VARS.parent.mkdir(parents=True, exist_ok=True)
-    # sort_keys=False: yaml.dump sorts alphabetically by default, so every
-    # single-key change rewrote the whole tracked file in a new order and
-    # produced a full-file diff. Preserving insertion order keeps a set_var
-    # to a one-line diff.
-    fs.write_text(
-        _GROUP_VARS,
-        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
-    )
+    fs.write_yaml(_GROUP_VARS, data)
 
 
 def set_var(key: str, value: object) -> None:

@@ -9,6 +9,7 @@ and anything running headlessly (tests, future non-interactive callers) gets
 silence instead of stray stdout it has to capture.
 """
 
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,7 +23,7 @@ _VAULT_PASS = ANSIBLE_DIR / "vault_pass.py"
 # transparently redirect every run_playbook() call -- including the ones
 # guard.* decorators make internally, which have no inventory kwarg of
 # their own -- at a disposable test inventory instead of the real one.
-_DEFAULT_INVENTORY = ANSIBLE_DIR / "inventory" / "hosts.ini"
+_DEFAULT_INVENTORY = paths.INVENTORY_DIR / "hosts.ini"
 # ansible-runner treats private_data_dir as persistent job state: it reads
 # env/extravars, env/cmdline, env/envvars from here as *base* extravars for
 # every run, merged under whatever this call passes explicitly. Since this
@@ -124,17 +125,16 @@ def run_playbook(
         including the case where the play matched no hosts, which ansible
         itself reports as success. See _matched_no_hosts.
     """
-    cmdline = f"--vault-password-file={_VAULT_PASS}"
-    if target:
-        cmdline += f" --limit {target}"
-
     result = ansible_runner.run(
         private_data_dir=str(_DEFAULT_PRIVATE_DATA_DIR),
         project_dir=str(ANSIBLE_DIR),
         inventory=str(inventory or _DEFAULT_INVENTORY),
         playbook=playbook,
         extravars=extravars or {},
-        cmdline=cmdline,
+        # limit= is its own argv element; splicing target into cmdline let a
+        # value like "nas --become" inject flags, since cmdline is shlex-split.
+        cmdline=f"--vault-password-file={shlex.quote(str(_VAULT_PASS))}",
+        limit=target or None,
         rotate_artifacts=_ARTIFACT_RETENTION,
     )
 

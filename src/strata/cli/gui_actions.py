@@ -45,31 +45,30 @@ def runbook_status(dotted_name: str, target: str | None) -> tuple[int, dict[str,
     return 200, {"dotted_name": resolved, "guards": guards, "installed": installed}
 
 
-class QueueReporter:
-    """Buffers reported lines in memory for an HTTP poller to read.
+@dataclasses.dataclass
+class RunState:
+    """The one in-flight (or just-finished) run the server remembers.
 
-    Satisfies `ports.Reporter`. A run's whole life -- one thread, one buffer --
-    lives as long as `_current_run` points at it; there is deliberately no
-    persistence or multi-run history.
+    Satisfies `ports.Reporter`, buffering reported lines in memory for an HTTP
+    poller to read. A run's whole life -- one thread, one buffer -- lives as
+    long as `_current_run` points at it; there is deliberately no persistence
+    or multi-run history.
     """
 
-    def __init__(self) -> None:
-        """Start with an empty buffer."""
-        self.lines: list[str] = []
+    run_id: str
+    exit_code: int | None = None
+    lines: list[str] = dataclasses.field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        """`running` until an exit code is recorded, then `succeeded` or `failed`."""
+        if self.exit_code is None:
+            return "running"
+        return "succeeded" if self.exit_code == 0 else "failed"
 
     def info(self, message: str) -> None:
         """Append `message` to the buffer."""
         self.lines.append(message)
-
-
-@dataclasses.dataclass
-class RunState:
-    """The one in-flight (or just-finished) run the server remembers."""
-
-    run_id: str
-    reporter: QueueReporter
-    status: str = "running"
-    exit_code: int | None = None
 
 
 _run_lock = threading.Lock()
@@ -93,23 +92,18 @@ def start_run(
         if resolved is None:
             return 400, {"error": f"unknown runbook {dotted_name!r}"}
         module = importlib.import_module(f"strata.core.runbooks.{resolved}")
-        reporter = QueueReporter()
-        state = RunState(run_id=uuid.uuid4().hex, reporter=reporter)
+        state = RunState(run_id=uuid.uuid4().hex)
         _current_run = state
 
         def _run() -> None:
-            runner.set_reporter(reporter)
+            runner.set_reporter(state)
             try:
-                exit_code = guard_executor.execute(
-                    module, target=target, tags=tags, reporter=reporter
-                )
+                exit_code = guard_executor.execute(module, target=target, tags=tags, reporter=state)
             except Exception as exc:  # noqa: BLE001 -- a background thread has no caller to raise to; record the failure so the poller sees it instead of the run silently hanging
-                reporter.info(f"error: {exc}")
-                state.status = "failed"
+                state.info(f"error: {exc}")
                 state.exit_code = 1
                 return
             state.exit_code = exit_code
-            state.status = "succeeded" if exit_code == 0 else "failed"
 
         threading.Thread(target=_run, daemon=True).start()
         return 200, {"run_id": state.run_id}
@@ -164,7 +158,7 @@ def get_run_status(handler: JsonHandler, run_id: str) -> None:
     _send_json(
         handler,
         200,
-        {"status": state.status, "exit_code": state.exit_code, "lines": list(state.reporter.lines)},
+        {"status": state.status, "exit_code": state.exit_code, "lines": list(state.lines)},
     )
 
 
@@ -204,17 +198,7 @@ def post_device(handler: JsonHandler, body: dict[str, Any]) -> None:
         connection=body.get("connection", "ssh"),
         port=body.get("port"),
     )
-    _send_json(
-        handler,
-        200,
-        {
-            "name": device.name,
-            "host": device.host,
-            "user": device.user,
-            "connection": device.connection,
-            "port": device.port,
-        },
-    )
+    _send_json(handler, 200, device.model_dump())
 
 
 def post_run(handler: JsonHandler, body: dict[str, Any]) -> None:

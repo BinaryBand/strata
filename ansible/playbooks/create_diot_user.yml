@@ -7,6 +7,8 @@
 - name: Create the diot container-operator user
   hosts: all
   become: true
+  # Nothing below reads a gathered fact; the implicit setup task cost ~2s a play.
+  gather_facts: false
 
   vars:
     diot_group: diot

@@ -46,13 +46,18 @@ def declared(fn: object) -> list[req.Requirement]:
     return list(getattr(fn, req.REQUIREMENTS_ATTR, ()))
 
 
-def prerequisite[F: Callable[..., object]](name: str) -> Callable[[F], F]:
-    """Require a named prerequisite the executor knows how to satisfy."""
+def _requirement[F: Callable[..., object]](requirement: req.Requirement) -> Callable[[F], F]:
+    """Return a decorator that declares `requirement` on the function it wraps."""
 
     def decorator(fn: F) -> F:
-        return _declare(fn, req.Prerequisite(name))
+        return _declare(fn, requirement)
 
     return decorator
+
+
+def prerequisite[F: Callable[..., object]](name: str) -> Callable[[F], F]:
+    """Require a named prerequisite the executor knows how to satisfy."""
+    return _requirement(req.Prerequisite(name))
 
 
 def secret[F: Callable[..., object]](
@@ -69,29 +74,20 @@ def secret[F: Callable[..., object]](
     enters nothing, a `generate`d random value (or `default`) is stored instead,
     so the secret is never left unset.
     """
-
-    def decorator(fn: F) -> F:
-        return _declare(
-            fn,
-            req.Secret(
-                vault_key=vault_key,
-                message=prompt or f"{vault_key} ({kind})",
-                kind=kind,
-                default=default,
-                generate=generate,
-            ),
+    return _requirement(
+        req.Secret(
+            vault_key=vault_key,
+            message=prompt or f"{vault_key} ({kind})",
+            kind=kind,
+            default=default,
+            generate=generate,
         )
-
-    return decorator
+    )
 
 
 def user[F: Callable[..., object]](username: str, playbook: str) -> Callable[[F], F]:
     """Require a system account, created by `playbook` when absent."""
-
-    def decorator(fn: F) -> F:
-        return _declare(fn, req.SystemUser(username=username, playbook=playbook))
-
-    return decorator
+    return _requirement(req.SystemUser(username=username, playbook=playbook))
 
 
 def path[F: Callable[..., object]](
@@ -107,23 +103,14 @@ def path[F: Callable[..., object]](
     `mode` is an octal string, e.g. "2770". For rclone remotes
     (``remote:subpath`` notation) use mount() instead.
     """
-
-    def decorator(fn: F) -> F:
-        return _declare(
-            fn,
-            req.LocalPath(path=target_path, owner=owner, group=group, mode=mode, state=state),
-        )
-
-    return decorator
+    return _requirement(
+        req.LocalPath(path=target_path, owner=owner, group=group, mode=mode, state=state)
+    )
 
 
 def mount[F: Callable[..., object]](remote_path: str) -> Callable[[F], F]:
     """Require an rclone remote, in ``remote:subpath`` form, to be mounted."""
-
-    def decorator(fn: F) -> F:
-        return _declare(fn, req.Mount(remote_path=remote_path, writable=False))
-
-    return decorator
+    return _requirement(req.Mount(remote_path=remote_path, writable=False))
 
 
 def storage[F: Callable[..., object]](  # noqa: PLR0913
@@ -145,22 +132,17 @@ def storage[F: Callable[..., object]](  # noqa: PLR0913
     promotes a remote to writable and remounts it if it was registered
     read-only, since a read-only mount cannot serve as a write destination.
     """
-
-    def decorator(fn: F) -> F:
-        return _declare(
-            fn,
-            req.Storage(
-                vault_key=vault_key,
-                message=prompt or f"{vault_key} (text)",
-                default=default,
-                owner=owner,
-                group=group,
-                mode=mode,
-                require_writable=require_writable,
-            ),
+    return _requirement(
+        req.Storage(
+            vault_key=vault_key,
+            message=prompt or f"{vault_key} (text)",
+            default=default,
+            owner=owner,
+            group=group,
+            mode=mode,
+            require_writable=require_writable,
         )
-
-    return decorator
+    )
 
 
 def controller_only[F: Callable[..., object]](reason: str) -> Callable[[F], F]:
@@ -178,11 +160,7 @@ def controller_only[F: Callable[..., object]](reason: str) -> Callable[[F], F]:
     the controller" -- guards already handle that per requirement. This says
     the runbook itself has no meaning elsewhere.
     """
-
-    def decorator(fn: F) -> F:
-        return _declare(fn, req.ControllerOnly(reason))
-
-    return decorator
+    return _requirement(req.ControllerOnly(reason))
 
 
 def requires[F: Callable[..., object]](runbook_name: str) -> Callable[[F], F]:

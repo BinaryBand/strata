@@ -137,7 +137,6 @@ def _read() -> str:
 
 
 def _write(text: str) -> None:
-    _INI_PATH.parent.mkdir(parents=True, exist_ok=True)
     fs.write_text(_INI_PATH, text)
 
 
@@ -348,12 +347,11 @@ def all_hosts() -> list[Device]:
     since a runbook can target either. ``[local]`` hosts default to a ``local``
     connection when the line does not say otherwise.
     """
-    sections = _parse_ini(_read())
+    text = _read()
     return [
-        _device_from(parsed, group=group)
+        _device_from(entry, group=group)
         for group in (_LOCAL_GROUP, _REMOTE_GROUP)
-        for line in sections.get(group, [])
-        if (parsed := _parse_host_line(line)) is not None
+        for entry in _entries_from_sections(text, group=group)
     ]
 
 

@@ -66,6 +66,11 @@ def is_writable(name: str) -> bool:
     return name in list_writable_remotes()
 
 
+def is_registered(name: str, *, writable: bool) -> bool:
+    """True if *name* is registered for auto-mounting, read-write when *writable*."""
+    return name in list_remotes() and (not writable or is_writable(name))
+
+
 def _without(items: list[str], name: str) -> list[str]:
     """Return *items* with *name* dropped, preserving order."""
     return [r for r in items if r != name]

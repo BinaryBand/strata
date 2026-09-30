@@ -11,3 +11,8 @@ class Device(BaseModel):
     user: str = "root"  # ansible_user
     connection: str = "ssh"  # ansible_connection
     port: int | None = None  # ansible_port (optional)
+
+    @property
+    def is_controller(self) -> bool:
+        """True for the machine strata itself runs on (a `local` connection)."""
+        return self.connection == "local"

@@ -26,7 +26,7 @@ import importlib
 import inspect
 import pwd
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from secrets import token_urlsafe
 from typing import assert_never
@@ -58,7 +58,7 @@ def is_controller(target: str | None) -> bool:
     if target is None:
         return True
     device = inventory.get(target)
-    return device is not None and device.connection == "local"
+    return device is not None and device.is_controller
 
 
 # ── Individual requirement handlers ────────────────────────────────────────
@@ -135,6 +135,13 @@ def path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
         return False
 
 
+def _play(
+    playbook: str, *, target: str | None, extravars: Mapping[str, object] | None = None
+) -> int | None:
+    """Run `playbook`, mapping a zero exit to None (satisfied) and any failure to its code."""
+    return runner.run_playbook(playbook, extravars=extravars, target=target) or None
+
+
 def _ensure_local_path(spec: req.LocalPath, *, target: str | None) -> int | None:
     """Provision `spec` via ensure_path.yml unless it is already satisfied."""
     if is_controller(target) and path_satisfied(spec):
@@ -146,29 +153,23 @@ def _ensure_local_path(spec: req.LocalPath, *, target: str | None) -> int | None
         extravars["guard_group"] = spec.group
     if spec.mode is not None:
         extravars["guard_mode"] = spec.mode
-    exit_code = runner.run_playbook("playbooks/ensure_path.yml", extravars=extravars, target=target)
-    return exit_code or None
+    return _play("playbooks/ensure_path.yml", extravars=extravars, target=target)
 
 
 def _ensure_mount(remote_path: str, *, target: str | None, writable: bool = False) -> int | None:
     remote_name = rclone.remote_name(remote_path)
-    needs_remount = False
     if not rclone.has_remote(remote_name):
         rclone.prompt_create_remote(remote_name)
-    if remote_name not in rclone.list_remotes():
+    needs_remount = not rclone.is_registered(remote_name, writable=writable)
+    if needs_remount:
         rclone.add_to_config(remote_name, writable=writable)
-        needs_remount = True
-    elif writable and not rclone.is_writable(remote_name):
-        rclone.add_to_config(remote_name, writable=True)
-        needs_remount = True
 
     # os.path.exists(resolved) describes the controller's mount state, so it can
     # only stand in for a remote host's when they are the same machine.
     mounted = is_controller(target) and Path(rclone.resolve(remote_path)).exists()
     if not needs_remount and mounted:
         return None
-    exit_code = runner.run_playbook("playbooks/enable_rclone.yml", target=target)
-    return exit_code or None
+    return _play("playbooks/enable_rclone.yml", target=target)
 
 
 def _ensure_user(playbook: str, *, target: str | None) -> int | None:
@@ -185,8 +186,7 @@ def _ensure_user(playbook: str, *, target: str | None) -> int | None:
     than restating its postconditions in Python, where the restatement would
     drift from the playbook that owns them.
     """
-    exit_code = runner.run_playbook(playbook, target=target)
-    return exit_code or None
+    return _play(playbook, target=target)
 
 
 def _ensure_storage(requirement: req.Storage, *, target: str | None) -> int | None:
@@ -301,8 +301,7 @@ def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Repor
     # Forward the reporter rather than letting execute() install a null one:
     # a runbook's own progress messages were shown when it was invoked
     # directly and swallowed when the same runbook ran as a dependency.
-    exit_code = execute(module, target=target, reporter=reporter)
-    return exit_code or None
+    return execute(module, target=target, reporter=reporter) or None
 
 
 def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
@@ -372,22 +371,16 @@ def execute(
 
 # ── Dependency injection ───────────────────────────────────────────────────
 
-# Adapters a runbook's main() may ask for, keyed by parameter name. Values are
-# built lazily so declaring one here costs nothing for runbooks that don't want
-# it. Modules satisfy their Protocol ports structurally, so no adapter has to
-# inherit anything.
-_PROVIDERS: dict[str, Callable[[], object]] = {
-    "runner": lambda: runner,
-    "secrets": lambda: secrets,
-}
+# Adapters a runbook's main() may ask for, keyed by parameter name. Modules
+# satisfy their Protocol ports structurally, so no adapter has to inherit
+# anything.
+_PROVIDERS: dict[str, object] = {"runner": runner, "secrets": secrets}
 
 
 def _injectables(main: Callable[..., int], reporter: ports.Reporter) -> dict[str, object]:
     """Build the subset of adapters `main` actually declares parameters for."""
     accepted = inspect.signature(main).parameters
-    supplied: dict[str, object] = {
-        name: provider() for name, provider in _PROVIDERS.items() if name in accepted
-    }
+    supplied = {name: adapter for name, adapter in _PROVIDERS.items() if name in accepted}
     if "reporter" in accepted:
         supplied["reporter"] = reporter
     return supplied

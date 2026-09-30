@@ -22,6 +22,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import yaml
+
 
 def _mode_for(path: Path) -> int:
     """Mode the replacement should carry: the existing one, else a fresh create's."""
@@ -62,3 +64,21 @@ def write_text(path: Path, text: str) -> None:
         tmp_path.replace(path)
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+def read_yaml(path: Path) -> dict:
+    """Return the YAML mapping at `path`, or {} if the file is absent or empty."""
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def write_yaml(path: Path, data: dict) -> None:
+    """Write `data` to `path` as block-style YAML, atomically.
+
+    sort_keys=False: yaml.dump sorts alphabetically by default, so every
+    single-key change rewrote the whole tracked file in a new order and
+    produced a full-file diff. Preserving insertion order keeps a set_var to a
+    one-line diff.
+    """
+    write_text(path, yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))

@@ -138,7 +138,7 @@ def test_start_run_then_poll_until_done(monkeypatch: pytest.MonkeyPatch) -> None
     assert state is not None
     assert state.status == "succeeded"
     assert state.exit_code == 0
-    assert "done" in state.reporter.lines
+    assert "done" in state.lines
 
 
 def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:

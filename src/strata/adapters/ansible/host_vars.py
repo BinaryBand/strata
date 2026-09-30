@@ -9,8 +9,6 @@ with) any same-named group default.
 
 from pathlib import Path
 
-import yaml
-
 from strata.adapters import fs
 from strata.core import paths
 
@@ -30,10 +28,7 @@ def load(host: str) -> dict:
     Returns:
         The YAML document as a dict.
     """
-    path = _path(host)
-    if not path.exists():
-        return {}
-    return yaml.safe_load(path.read_text()) or {}
+    return fs.read_yaml(_path(host))
 
 
 def save(host: str, data: dict) -> None:
@@ -43,15 +38,7 @@ def save(host: str, data: dict) -> None:
         host: Inventory hostname the file belongs to.
         data: The full replacement document for that host.
     """
-    _HOST_VARS_DIR.mkdir(parents=True, exist_ok=True)
-    # sort_keys=False: yaml.dump sorts alphabetically by default, so every
-    # single-key change rewrote the whole tracked file in a new order and
-    # produced a full-file diff. Preserving insertion order keeps a set_var
-    # to a one-line diff.
-    fs.write_text(
-        _path(host),
-        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
-    )
+    fs.write_yaml(_path(host), data)
 
 
 def discard(host: str) -> bool:

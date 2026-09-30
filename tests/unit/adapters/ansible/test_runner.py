@@ -85,12 +85,13 @@ def test_run_playbook_always_supplies_the_vault_password_file(fake_ansible: Fake
 
 def test_run_playbook_without_target_does_not_limit(fake_ansible: FakeRunner) -> None:
     runner.run_playbook("p.yml")
-    assert "--limit" not in fake_ansible.kwargs["cmdline"]
+    assert fake_ansible.kwargs["limit"] is None
 
 
 def test_run_playbook_with_target_limits_to_it(fake_ansible: FakeRunner) -> None:
     runner.run_playbook("p.yml", target="Rpi4")
-    assert "--limit Rpi4" in fake_ansible.kwargs["cmdline"]
+    assert fake_ansible.kwargs["limit"] == "Rpi4"
+    assert "--limit" not in fake_ansible.kwargs["cmdline"]
 
 
 def test_run_playbook_defaults_the_inventory(fake_ansible: FakeRunner) -> None:

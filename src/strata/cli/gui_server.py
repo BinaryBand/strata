@@ -111,17 +111,7 @@ def build_gui_data() -> dict[str, Any]:
         {"dotted_name": f.dotted_name, "error": f.error} for f in discovery.import_failures()
     ]
 
-    devices = [
-        {
-            "name": d.name,
-            "host": d.host,
-            "user": d.user,
-            "connection": d.connection,
-            "port": d.port,
-            "is_controller": d.connection == "local",
-        }
-        for d in inventory.all_hosts()
-    ]
+    devices = [{**d.model_dump(), "is_controller": d.is_controller} for d in inventory.all_hosts()]
 
     return {"runbooks": runbooks, "import_failures": import_failures, "devices": devices}
 
