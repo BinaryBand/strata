@@ -24,16 +24,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from strata.adapters.ansible import secrets, vault_pass
+from strata.core import ports
 
 # The vault variable the sudo password is stored under. Named for the ansible
 # variable it becomes, not for what it holds.
 _SUDO_VAULT_VAR = "ansible_become_password"
 
 
-def _ensure_sudo_password() -> None:
+def _ensure_sudo_password(prompter: ports.Prompter) -> None:
     if not secrets.has_secret(_SUDO_VAULT_VAR):
+        secrets.ensure_vault_password(prompter)
         secrets.set_secret(
-            _SUDO_VAULT_VAR, secrets.prompt_password("sudo password (will be stored in vault): ")
+            _SUDO_VAULT_VAR,
+            secrets.prompt_password(prompter, "sudo password (will be stored in vault): "),
         )
 
 
@@ -41,7 +44,7 @@ def _ensure_sudo_password() -> None:
 class _Prerequisite:
     """How to establish one named prerequisite, and how to tell whether it holds."""
 
-    ensure: Callable[[], None]
+    ensure: Callable[[ports.Prompter], None]
     satisfied: Callable[[], bool]
 
 
@@ -49,8 +52,8 @@ def _sudo_password_satisfied() -> bool:
     return secrets.has_secret(_SUDO_VAULT_VAR)
 
 
-def _ensure_vault_password() -> None:
-    secrets.ensure_vault_password()
+def _ensure_vault_password(prompter: ports.Prompter) -> None:
+    secrets.ensure_vault_password(prompter)
 
 
 def _vault_password_satisfied() -> bool:
@@ -74,8 +77,8 @@ _TABLE: dict[str, _Prerequisite] = {
 }
 
 
-def ensure(name: str) -> None:
-    """Establish prerequisite `name`, prompting the operator if it is absent.
+def ensure(name: str, prompter: ports.Prompter) -> None:
+    """Establish prerequisite `name`, asking `prompter` for it if it is absent.
 
     An unregistered name is a programming error in the runbook that declared
     it, so it raises rather than passing silently.
@@ -84,7 +87,7 @@ def ensure(name: str) -> None:
     if entry is None:
         msg = f"Prerequisite {name!r} is not registered. Available: {sorted(_TABLE)}"
         raise KeyError(msg)
-    entry.ensure()
+    entry.ensure(prompter)
 
 
 def satisfied(name: str) -> bool:

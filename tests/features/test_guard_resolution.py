@@ -204,7 +204,7 @@ def run_requiring_sudo(ctx: dict[str, Any]) -> None:
 
 @when(parsers.re(r'^I run a runbook requiring that secret and answer "(?P<answer>[^"]*)"$'))
 def run_requiring_secret(ctx: dict[str, Any], answer: str) -> None:
-    ctx["answers"] = [answer]
+    ctx["prompter"].answers = [answer]
     _run_secret(ctx)
 
 
@@ -271,10 +271,9 @@ def run_exit_code(ctx: dict[str, Any], code: int) -> None:
 
 @then("I am prompted for the sudo password with hidden input")
 def prompted_for_sudo(ctx: dict[str, Any]) -> None:
-    sudo_prompts = [p for p in ctx["prompts"] if p.get("via") == "getpass"]
+    sudo_prompts = [p for p in ctx["prompts"] if str(p["message"]).startswith("sudo password")]
     assert len(sudo_prompts) == 1, ctx["prompts"]
-    assert "sudo password" in sudo_prompts[0]["message"]
-    assert sudo_prompts[0]["hide_input"] is True
+    assert sudo_prompts[0]["hidden"] is True
 
 
 @then("it is stored vault-encrypted for next time")
@@ -289,16 +288,14 @@ def not_prompted(ctx: dict[str, Any]) -> None:
 
 @then(parsers.parse('I am prompted with the message showing "{text}"'))
 def prompted_showing(ctx: dict[str, Any], text: str) -> None:
-    """click renders the default itself, so the guard asks it to show one."""
+    """The prompter renders the default itself, so the guard hands it one."""
     assert ctx["prompts"], "expected a prompt"
-    first = ctx["prompts"][0]
-    assert first["show_default"] is True
-    assert first["default"] == text.strip("[]")
+    assert ctx["prompts"][0]["default"] == text.strip("[]")
 
 
 @then("I am prompted with hidden input")
 def prompted_hidden(ctx: dict[str, Any]) -> None:
-    assert ctx["prompts"][0]["hide_input"] is True
+    assert ctx["prompts"][0]["hidden"] is True
 
 
 @then(parsers.parse('the secret "{key}" is stored as "{value}"'))

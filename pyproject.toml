@@ -53,12 +53,15 @@ exhaustive = true
 exhaustive_ignores = ["__main__"]
 
 [[tool.importlinter.contracts]]
-# Typer is the CLI framework, so only the composition root may depend on it.
-# core and adapters return data and let cli format it.
-name = "Only cli imports typer"
+# Typer is the CLI framework, so only the composition root may depend on it --
+# and so for everything else that talks to the terminal: click (Typer's
+# engine), questionary and getpass. core and adapters return data and let cli
+# format it; a value they need from the operator arrives through the
+# `ports.Prompter` that cli passes in.
+name = "Only cli talks to the terminal"
 type = "forbidden"
 source_modules = ["strata.core", "strata.adapters"]
-forbidden_modules = ["typer"]
+forbidden_modules = ["typer", "click", "questionary", "getpass"]
 
 [[tool.importlinter.contracts]]
 # cli parses arguments, constructs adapters and passes them into core. Running

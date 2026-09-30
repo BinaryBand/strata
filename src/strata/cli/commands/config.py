@@ -6,6 +6,7 @@ import typer
 
 from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
 from strata.cli._helpers import fail
+from strata.cli.wiring import build_prompter
 from strata.core import paths
 
 _SECRETS_FILE = secrets.SECRETS_FILE.relative_to(paths.PROJECT_ROOT)
@@ -71,6 +72,9 @@ def config_secret(
     if value is None:
         value = typer.prompt(name, hide_input=True, confirmation_prompt=True)
 
+    # set_secret has no prompter and fails on a missing vault password, so the
+    # terminal is where a first-time operator gets asked for one.
+    secrets.ensure_vault_password(build_prompter())
     try:
         secrets.set_secret(name, value)
     except ValueError as exc:

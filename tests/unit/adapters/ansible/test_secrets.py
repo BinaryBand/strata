@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Literal
 
 import ansible.parsing.vault as ansible_vault
 import pytest
 from ansible.parsing.vault import AnsibleVaultError, VaultSecret
 
 from strata.adapters.ansible import secrets
+from strata.core import requirements as req
+from tests._fakes import FakePrompter
 
 _REAL_VAULTLIB = ansible_vault.VaultLib
 
@@ -75,33 +78,104 @@ def fake_vault(monkeypatch: pytest.MonkeyPatch) -> type[FakeVaultLib]:
 # ── ensure_vault_password() ───────────────────────────────────────────
 
 
-def test_ensure_vault_password_is_a_noop_when_already_stored(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def boom(_: str) -> str:
-        msg = "should not prompt"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(secrets.getpass, "getpass", boom)
-    secrets.ensure_vault_password()
+def test_ensure_vault_password_is_a_noop_when_already_stored() -> None:
+    prompter = FakePrompter()
+    secrets.ensure_vault_password(prompter)
+    assert prompter.asked == []
 
 
-def test_ensure_vault_password_prompts_and_stores_when_absent(
+def test_ensure_vault_password_asks_and_stores_when_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stored: list[str] = []
     monkeypatch.setattr(secrets.vault_pass, "has_vault_password", lambda: False)
     monkeypatch.setattr(secrets.vault_pass, "set_vault_password", stored.append)
-    monkeypatch.setattr(secrets.getpass, "getpass", lambda _prompt: "hunter2")
+    prompter = FakePrompter(["hunter2"])
 
-    secrets.ensure_vault_password()
+    secrets.ensure_vault_password(prompter)
+
     assert stored == ["hunter2"]
+    assert [q["hidden"] for q in prompter.asked] == [True]
 
 
-def test_prompt_password_reprompts_until_non_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    answers = iter(["", "hunter2"])
-    monkeypatch.setattr(secrets.getpass, "getpass", lambda _prompt: next(answers))
-    assert secrets.prompt_password("pw: ") == "hunter2"
+def test_prompt_password_reasks_until_non_empty() -> None:
+    prompter = FakePrompter(["", "hunter2"])
+    assert secrets.prompt_password(prompter, "pw: ") == "hunter2"
+    assert [q["message"] for q in prompter.asked] == ["pw: ", "pw: "]
+    assert prompter.told == ["A password cannot be empty."]
+
+
+# ── ensure_secret() ───────────────────────────────────────────────────
+
+
+def _secret(
+    *,
+    kind: Literal["text", "password"] = "password",
+    default: str | None = None,
+    generate: bool = False,
+) -> req.Secret:
+    return req.Secret(
+        vault_key="tailscale_auth_key",
+        message="key",
+        kind=kind,
+        default=default,
+        generate=generate,
+    )
+
+
+def test_ensure_secret_reasks_a_blank_answer_rather_than_storing_it() -> None:
+    """An empty secret used to be written and never asked about again.
+
+    has_secret() only checks that the key exists, so one stray Enter on e.g.
+    tailscale_auth_key poisoned it permanently and every later run handed the
+    playbook an empty key.
+    """
+    prompter = FakePrompter(["", "  ", "real-token"])
+
+    secrets.ensure_secret(_secret(), prompter)
+
+    assert secrets.get_secret("tailscale_auth_key") == "real-token"
+    assert prompter.told == ["tailscale_auth_key cannot be empty."] * 2
+    assert [q["hidden"] for q in prompter.asked] == [True, True, True]
+
+
+def test_ensure_secret_still_generates_when_generate_is_set() -> None:
+    secrets.ensure_secret(_secret(generate=True), FakePrompter([""]))
+
+    assert secrets.get_secret("tailscale_auth_key")
+
+
+def test_ensure_secret_hands_the_default_to_the_prompter_and_accepts_it() -> None:
+    prompter = FakePrompter()  # no scripted answer: Enter, so the default comes back
+
+    secrets.ensure_secret(_secret(kind="text", default="admin"), prompter)
+
+    assert prompter.asked == [{"message": "key", "default": "admin", "hidden": False}]
+    assert secrets.get_secret("tailscale_auth_key") == "admin"
+
+
+def test_ensure_secret_does_not_ask_when_the_key_is_already_stored() -> None:
+    secrets.set_secret("tailscale_auth_key", "kept")
+    prompter = FakePrompter()
+
+    secrets.ensure_secret(_secret(), prompter)
+
+    assert prompter.asked == []
+    assert secrets.get_secret("tailscale_auth_key") == "kept"
+
+
+def test_ensure_secret_asks_for_a_missing_vault_password_before_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keychain: list[str] = []
+    monkeypatch.setattr(secrets.vault_pass, "has_vault_password", lambda: bool(keychain))
+    monkeypatch.setattr(secrets.vault_pass, "set_vault_password", keychain.append)
+    prompter = FakePrompter(["the-token", "vault-pw"])
+
+    secrets.ensure_secret(_secret(), prompter)
+
+    assert keychain == ["vault-pw"]
+    assert secrets.get_secret("tailscale_auth_key") == "the-token"
 
 
 def test_set_secret_refuses_an_empty_value() -> None:
@@ -173,6 +247,8 @@ def test_set_secret_encrypts_with_the_keychain_password(
 def test_set_secret_fails_helpfully_when_the_keychain_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """set_secret has no prompter, so it names the fix instead of asking for the password."""
+    monkeypatch.setattr(secrets.vault_pass, "has_vault_password", lambda: False)
     monkeypatch.setattr(secrets.vault_pass, "get_vault_password", lambda: None)
 
     with pytest.raises(RuntimeError, match="strata config vault-password"):

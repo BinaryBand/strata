@@ -14,10 +14,9 @@ the point of use.
 
 import json
 
-import click
-
 from strata.adapters import proc
 from strata.adapters.ansible import group_vars, host_vars
+from strata.core import ports
 
 # Re-exported so existing callers keep importing path translation from the
 # rclone module they already use. The implementations are pure and live in core
@@ -242,7 +241,7 @@ def _guess_default_backend_type(name: str) -> str | None:
     return None
 
 
-def prompt_create_remote(name: str) -> None:
+def prompt_create_remote(name: str, prompter: ports.Prompter) -> None:
     """Interactively authorize rclone remote *name* if it isn't configured yet.
 
     Hands the terminal to rclone's own ``config create`` wizard (OAuth
@@ -262,19 +261,22 @@ def prompt_create_remote(name: str) -> None:
         message += " (e.g. pcloud, drive, s3 -- see `rclone help backends`)"
 
     while True:
-        backend: str = click.prompt(message, default=default_type).strip()
+        backend = prompter.ask(message, default=default_type).strip()
+        if not backend:
+            prompter.tell("A backend type is required.")
+            continue
         if known and backend not in known:
-            click.echo(
+            prompter.tell(
                 f"{backend!r} isn't a known rclone backend type. "
                 "Try again, or see `rclone help backends` for the full list."
             )
             continue
 
-        click.echo(f"Running: rclone config create {name} {backend}")
+        prompter.tell(f"Running: rclone config create {name} {backend}")
         result = proc.run(["rclone", "config", "create", name, backend])
         if result.returncode == 0 and has_remote(name):
             return
-        click.echo(
+        prompter.tell(
             f"rclone config create {name} {backend!r} did not succeed -- "
             "try again (or Ctrl+C to abort)."
         )

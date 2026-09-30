@@ -27,10 +27,7 @@ import pwd
 import types
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from secrets import token_urlsafe
 from typing import assert_never
-
-import click
 
 from strata.adapters import prerequisites
 from strata.adapters.ansible import inventory, rclone, runner, secrets
@@ -61,37 +58,6 @@ def is_controller(target: str | None) -> bool:
 
 
 # ── Individual requirement handlers ────────────────────────────────────────
-
-
-def _ensure_secret(
-    vault_key: str, message: str, *, kind: str, default: str | None, generate: bool
-) -> None:
-    """Prompt for and store `vault_key` if it is not already in the vault.
-
-    click renders the default (e.g. "[admin]") and returns it on a blank
-    answer, so prompt strings should not repeat it by hand.
-
-    An empty answer is re-prompted rather than stored. `default=default or ""`
-    made the prompt non-mandatory even when there was no default, so pressing
-    Enter yielded "" -- which `secrets.set_secret` now refuses outright, so this
-    loop is the interactive half of that rule, not the only defence.
-    """
-    if secrets.has_secret(vault_key):
-        return
-    while True:
-        entry: str = click.prompt(
-            message,
-            default=default or "",
-            show_default=default is not None,
-            hide_input=kind == "password",
-        ).strip()
-        if entry:
-            break
-        if generate:
-            entry = token_urlsafe(24)
-            break
-        click.echo(f"{vault_key} cannot be empty.")
-    secrets.set_secret(vault_key, entry)
 
 
 def path_satisfied(spec: req.LocalPath) -> bool:  # noqa: PLR0911
@@ -153,10 +119,12 @@ def _ensure_local_path(spec: req.LocalPath, *, target: str | None) -> int | None
     return _play("playbooks/ensure_path.yml", extravars=extravars, target=target)
 
 
-def _ensure_mount(remote_path: str, *, target: str | None, writable: bool = False) -> int | None:
+def _ensure_mount(
+    remote_path: str, *, target: str | None, prompter: ports.Prompter, writable: bool = False
+) -> int | None:
     remote_name = rclone.remote_name(remote_path)
     if not rclone.has_remote(remote_name):
-        rclone.prompt_create_remote(remote_name)
+        rclone.prompt_create_remote(remote_name, prompter)
     needs_remount = not rclone.is_registered(remote_name, writable=writable)
     if needs_remount:
         rclone.add_to_config(remote_name, writable=writable)
@@ -186,13 +154,18 @@ def _ensure_user(playbook: str, *, target: str | None) -> int | None:
     return _play(playbook, target=target)
 
 
-def _ensure_storage(requirement: req.Storage, *, target: str | None) -> int | None:
-    _ensure_secret(
-        requirement.vault_key,
-        requirement.message,
-        kind="text",
-        default=requirement.default,
-        generate=False,
+def _ensure_storage(
+    requirement: req.Storage, *, target: str | None, prompter: ports.Prompter
+) -> int | None:
+    secrets.ensure_secret(
+        req.Secret(
+            vault_key=requirement.vault_key,
+            message=requirement.message,
+            kind="text",
+            default=requirement.default,
+            generate=False,
+        ),
+        prompter,
     )
     value = secrets.get_secret(requirement.vault_key)
     if not value:
@@ -208,7 +181,9 @@ def _ensure_storage(requirement: req.Storage, *, target: str | None) -> int | No
         raise RuntimeError(msg)
 
     if rclone.is_remote_path(value):
-        return _ensure_mount(value, target=target, writable=requirement.require_writable)
+        return _ensure_mount(
+            value, target=target, prompter=prompter, writable=requirement.require_writable
+        )
     return _ensure_local_path(
         req.LocalPath(
             path=value,
@@ -234,7 +209,11 @@ def _refuse_non_controller(
 
 
 def _satisfy_one(  # noqa: PLR0911, C901
-    requirement: req.Requirement, *, target: str | None, reporter: ports.Reporter
+    requirement: req.Requirement,
+    *,
+    target: str | None,
+    reporter: ports.Reporter,
+    prompter: ports.Prompter,
 ) -> int | None:
     """Satisfy one requirement, returning a non-zero exit code on failure.
 
@@ -249,16 +228,10 @@ def _satisfy_one(  # noqa: PLR0911, C901
         case req.ControllerOnly():
             return _refuse_non_controller(requirement, target=target, reporter=reporter)
         case req.Prerequisite():
-            prerequisites.ensure(requirement.name)
+            prerequisites.ensure(requirement.name, prompter)
             return None
         case req.Secret():
-            _ensure_secret(
-                requirement.vault_key,
-                requirement.message,
-                kind=requirement.kind,
-                default=requirement.default,
-                generate=requirement.generate,
-            )
+            secrets.ensure_secret(requirement, prompter)
             return None
         case req.SystemUser():
             return _ensure_user(requirement.playbook, target=target)
@@ -266,12 +239,17 @@ def _satisfy_one(  # noqa: PLR0911, C901
             return _ensure_local_path(requirement, target=target)
         case req.Mount():
             return _ensure_mount(
-                requirement.remote_path, target=target, writable=requirement.writable
+                requirement.remote_path,
+                target=target,
+                prompter=prompter,
+                writable=requirement.writable,
             )
         case req.Storage():
-            return _ensure_storage(requirement, target=target)
+            return _ensure_storage(requirement, target=target, prompter=prompter)
         case req.UpstreamRunbook():
-            return _run_upstream(requirement.dotted_name, target=target, reporter=reporter)
+            return _run_upstream(
+                requirement.dotted_name, target=target, reporter=reporter, prompter=prompter
+            )
         case _:
             # Without this the match silently falls through and returns None
             # -- i.e. "satisfied" -- for any Requirement variant added to the
@@ -280,7 +258,9 @@ def _satisfy_one(  # noqa: PLR0911, C901
             assert_never(requirement)
 
 
-def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Reporter) -> int | None:
+def _run_upstream(
+    dotted_name: str, *, target: str | None, reporter: ports.Reporter, prompter: ports.Prompter
+) -> int | None:
     """Satisfy an upstream runbook, skipping its own main() if check() says so.
 
     A satisfied check() skips the upstream's *play*, never its guards. It used
@@ -294,11 +274,13 @@ def _run_upstream(dotted_name: str, *, target: str | None, reporter: ports.Repor
     module = discovery.load(dotted_name)
     check = getattr(module, "check", None)
     if is_controller(target) and check is not None and check_safely(check, reporter):
-        return _satisfy_all(module, target=target, reporter=reporter)
+        return _satisfy_all(module, target=target, reporter=reporter, prompter=prompter)
     # Forward the reporter rather than letting execute() install a null one:
     # a runbook's own progress messages were shown when it was invoked
-    # directly and swallowed when the same runbook ran as a dependency.
-    return execute(module, target=target, reporter=reporter) or None
+    # directly and swallowed when the same runbook ran as a dependency. The
+    # prompter goes the same way, or an upstream's missing secret would be
+    # refused in a run that was allowed to ask.
+    return execute(module, target=target, reporter=reporter, prompter=prompter) or None
 
 
 def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
@@ -328,7 +310,11 @@ def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
 
 
 def _satisfy_all(
-    module: types.ModuleType, *, target: str | None, reporter: ports.Reporter
+    module: types.ModuleType,
+    *,
+    target: str | None,
+    reporter: ports.Reporter,
+    prompter: ports.Prompter,
 ) -> int | None:
     """Satisfy every requirement a module declares; None means all of them hold.
 
@@ -336,7 +322,7 @@ def _satisfy_all(
     not the main() that follows it.
     """
     for requirement in guard.declared(module.main):
-        exit_code = _satisfy_one(requirement, target=target, reporter=reporter)
+        exit_code = _satisfy_one(requirement, target=target, reporter=reporter, prompter=prompter)
         if exit_code is not None:
             return exit_code
     return None
@@ -348,15 +334,22 @@ def execute(
     target: str | None,
     tags: list[str] | None = None,
     reporter: ports.Reporter | None = None,
+    prompter: ports.Prompter | None = None,
 ) -> int:
     """Satisfy a runbook module's declared requirements, then run its main().
 
     Requirements are satisfied in declaration order (outermost decorator first);
     the first one to fail short-circuits and its exit code is returned without
     main() running.
+
+    A caller that omits `prompter` gets one that refuses every question, the
+    way an omitted `reporter` gets one that drops every message: a missing
+    secret then fails the run with a message naming it, where a default that
+    prompted would hang any caller with no terminal.
     """
     reporter = reporter or ports.NullReporter()
-    exit_code = _satisfy_all(module, target=target, reporter=reporter)
+    prompter = prompter or ports.NonInteractivePrompter()
+    exit_code = _satisfy_all(module, target=target, reporter=reporter, prompter=prompter)
     if exit_code is not None:
         return exit_code
 

@@ -1,9 +1,9 @@
 """Unit tests for the read-only guard readiness check.
 
-guard_status must never prompt or mutate, so click.prompt/getpass are left
-unpatched throughout -- a test that reached them would mean the function
-under test broke its own contract. target is left as None (the controller)
-except where a case is specifically about a remote target.
+guard_status must never prompt or mutate, so it takes no prompter and these
+tests supply none -- a test that needed one would mean the function under test
+broke its own contract. target is left as None (the controller) except where a
+case is specifically about a remote target.
 """
 
 from __future__ import annotations

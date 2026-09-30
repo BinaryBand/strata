@@ -21,7 +21,7 @@ from typing import Any
 from strata.adapters import guard_executor, guard_status, reachability
 from strata.adapters.ansible import host_vars, inventory, runner, secrets, vault_pass
 from strata.cli.gui_http import ApiError, Request, require
-from strata.core import discovery, guard
+from strata.core import discovery, guard, ports
 
 
 def runbook_status(dotted_name: str, target: str | None) -> dict[str, Any]:
@@ -97,7 +97,16 @@ def start_run(dotted_name: str, target: str | None, tags: list[str] | None) -> d
         def _run() -> None:
             runner.set_reporter(state)
             try:
-                exit_code = guard_executor.execute(module, target=target, tags=tags, reporter=state)
+                exit_code = guard_executor.execute(
+                    module,
+                    target=target,
+                    tags=tags,
+                    reporter=state,
+                    # Explicit, though it is also execute()'s default: a missing secret
+                    # fails this run with a message the poller shows, rather than
+                    # blocking a daemon thread on a prompt in the server's terminal.
+                    prompter=ports.NonInteractivePrompter(),
+                )
             except Exception as exc:  # noqa: BLE001 -- a background thread has no caller to raise to; record the failure so the poller sees it instead of the run silently hanging
                 state.info(f"error: {exc}")
                 state.exit_code = 1

@@ -16,7 +16,7 @@ import typer
 from strata.adapters import guard_executor
 from strata.adapters import state as state_mod
 from strata.cli import dispatch
-from strata.cli.wiring import TyperReporter
+from strata.cli.wiring import TyperPrompter, TyperReporter
 from strata.core.models import AppState
 
 
@@ -41,9 +41,16 @@ def executions(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
         target: str | None,
         tags: list[str] | None = None,
         reporter: object | None = None,
+        prompter: object | None = None,
     ) -> int:
         calls.append(
-            {"module": module.__name__, "target": target, "tags": tags, "reporter": reporter}
+            {
+                "module": module.__name__,
+                "target": target,
+                "tags": tags,
+                "reporter": reporter,
+                "prompter": prompter,
+            }
         )
         return 0
 
@@ -165,6 +172,17 @@ def test_run_runbook_hands_a_typer_reporter_to_the_executor(
 ) -> None:
     dispatch.run_runbook("install_jellyfin", target="workstation")
     assert isinstance(executions[0]["reporter"], TyperReporter)
+
+
+# -- prompter wiring -----------------------------------------------------
+
+
+def test_run_runbook_hands_a_typer_prompter_to_the_executor(
+    executions: list[dict[str, object]],
+) -> None:
+    """The CLI is the one caller with a terminal, so it is the one that may ask."""
+    dispatch.run_runbook("install_jellyfin", target="workstation")
+    assert isinstance(executions[0]["prompter"], TyperPrompter)
 
 
 # -- exit code passthrough -----------------------------------------------

@@ -43,6 +43,9 @@ def _isolate_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ctx: dict[s
     secret_store: dict[str, str] = {}
     monkeypatch.setattr(secrets, "set_secret", secret_store.__setitem__)
     monkeypatch.setattr(secrets, "has_secret", secret_store.__contains__)
+    # `config secret` asks for a missing vault password first, which the
+    # scenarios here do not exercise; `config vault-password` has its own.
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
     ctx["secrets"] = secret_store
 
     # Prompt spy: record kwargs, then delegate to the real prompt (reads stdin).

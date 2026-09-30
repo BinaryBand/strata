@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from strata.adapters.ansible import runner
-from strata.cli.wiring import TyperReporter, build_reporter
+from strata.cli import wiring
+from strata.cli.wiring import TyperPrompter, TyperReporter, build_prompter, build_reporter
 
 
 class _Sentinel:
@@ -47,3 +48,40 @@ def test_installed_reporter_carries_runner_output(capsys: pytest.CaptureFixture[
     build_reporter()
     runner._reporter.info("  [ok] install podman")
     assert "[ok] install podman" in capsys.readouterr().out
+
+
+def test_build_prompter_returns_typer_prompter() -> None:
+    assert isinstance(build_prompter(), TyperPrompter)
+
+
+def test_typer_prompter_hands_typer_the_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    def fake_prompt(text: str, **kwargs: object) -> str:
+        seen.append((text, kwargs))
+        return "answer"
+
+    monkeypatch.setattr(wiring.typer, "prompt", fake_prompt)
+
+    assert TyperPrompter().ask("backend", default="pcloud", hidden=True) == "answer"
+    assert seen == [
+        ("backend", {"default": "pcloud", "show_default": True, "hide_input": True}),
+    ]
+
+
+def test_typer_prompter_with_no_default_allows_a_blank_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`default=""` is what lets Typer return "" instead of insisting on an answer."""
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(wiring.typer, "prompt", lambda _text, **kw: seen.append(kw) or "")
+
+    assert TyperPrompter().ask("name") == ""
+    assert seen == [{"default": "", "show_default": False, "hide_input": False}]
+
+
+def test_typer_prompter_tell_writes_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    TyperPrompter().tell("A password cannot be empty.")
+    captured = capsys.readouterr()
+    assert captured.err == "A password cannot be empty.\n"
+    assert captured.out == ""

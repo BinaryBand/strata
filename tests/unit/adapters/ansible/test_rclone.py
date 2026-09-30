@@ -16,6 +16,7 @@ import pytest
 
 from strata.adapters.ansible import group_vars, host_vars, rclone
 from strata.core import remote_paths
+from tests._fakes import FakePrompter
 
 
 class FakeRclone:
@@ -359,60 +360,66 @@ def test_guess_is_none_with_several_ambiguous_remotes(fake: FakeRclone) -> None:
 # ── prompt_create_remote() ────────────────────────────────────────────
 
 
-def _answers(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> list[str]:
-    remaining = list(values)
-
-    def prompt(_message: str, default: str | None = None) -> str:  # noqa: ARG001
-        return remaining.pop(0)
-
-    monkeypatch.setattr(rclone.click, "prompt", prompt)
-    monkeypatch.setattr(rclone.click, "echo", lambda *_a, **_k: None)
-    return remaining
-
-
-def test_prompt_create_remote_is_a_noop_when_configured(
-    fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _answers(monkeypatch, [])
-    rclone.prompt_create_remote("pcloud")
+def test_prompt_create_remote_is_a_noop_when_configured(fake: FakeRclone) -> None:
+    prompter = FakePrompter()
+    rclone.prompt_create_remote("pcloud", prompter)
     assert fake.calls == [["rclone", "config", "dump"]]
+    assert prompter.asked == []
 
 
-def test_prompt_create_remote_creates_a_missing_remote(
-    fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _answers(monkeypatch, ["s3"])
-
-    rclone.prompt_create_remote("backup")
+def test_prompt_create_remote_creates_a_missing_remote(fake: FakeRclone) -> None:
+    rclone.prompt_create_remote("backup", FakePrompter(["s3"]))
 
     assert ["rclone", "config", "create", "backup", "s3"] in fake.calls
     assert fake.remotes["backup"] == "s3"
 
 
-def test_prompt_create_remote_reprompts_on_an_unknown_backend(
-    fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
+def test_prompt_create_remote_offers_the_guessed_backend_as_the_default(
+    fake: FakeRclone,
 ) -> None:
-    remaining = _answers(monkeypatch, ["nosuchbackend", "s3"])
+    fake.remotes = {"pcloud": "pcloud"}
+    prompter = FakePrompter()  # Enter: the default is taken
 
-    rclone.prompt_create_remote("backup")
+    rclone.prompt_create_remote("backup", prompter)
 
-    assert remaining == []
+    assert [q["default"] for q in prompter.asked] == ["pcloud"]
+    assert fake.remotes["backup"] == "pcloud"
+
+
+def test_prompt_create_remote_reasks_on_an_unknown_backend(fake: FakeRclone) -> None:
+    prompter = FakePrompter(["nosuchbackend", "s3"])
+
+    rclone.prompt_create_remote("backup", prompter)
+
+    assert prompter.answers == []
+    assert any("isn't a known rclone backend type" in m for m in prompter.told)
     creates = [c for c in fake.calls if c[1:3] == ["config", "create"]]
     assert creates == [["rclone", "config", "create", "backup", "s3"]]
 
 
-def test_prompt_create_remote_strips_whitespace_from_the_answer(
-    fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
+def test_prompt_create_remote_reasks_on_a_blank_answer_with_no_default(
+    fake: FakeRclone,
 ) -> None:
-    _answers(monkeypatch, ["  s3  "])
-    rclone.prompt_create_remote("backup")
+    """click re-asked an empty answer itself; `ask` returns "" so the loop must."""
+    prompter = FakePrompter(["", "  ", "s3"])
+
+    rclone.prompt_create_remote("backup", prompter)
+
+    assert prompter.answers == []
+    assert prompter.told.count("A backend type is required.") == 2
+    creates = [c for c in fake.calls if c[1:3] == ["config", "create"]]
+    assert creates == [["rclone", "config", "create", "backup", "s3"]]
+
+
+def test_prompt_create_remote_strips_whitespace_from_the_answer(fake: FakeRclone) -> None:
+    rclone.prompt_create_remote("backup", FakePrompter(["  s3  "]))
     assert fake.remotes["backup"] == "s3"
 
 
 def test_prompt_create_remote_retries_when_create_fails(
     fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    remaining = _answers(monkeypatch, ["s3", "drive"])
+    prompter = FakePrompter(["s3", "drive"])
     calls = {"n": 0}
     original = fake.__call__
 
@@ -427,19 +434,19 @@ def test_prompt_create_remote_retries_when_create_fails(
 
     monkeypatch.setattr(rclone.proc, "run", flaky)
 
-    rclone.prompt_create_remote("backup")
+    rclone.prompt_create_remote("backup", prompter)
 
-    assert remaining == []
+    assert prompter.answers == []
+    assert any("did not succeed" in m for m in prompter.told)
     assert fake.remotes["backup"] == "drive"
 
 
 def test_prompt_create_remote_skips_validation_when_providers_unavailable(
-    fake: FakeRclone, monkeypatch: pytest.MonkeyPatch
+    fake: FakeRclone,
 ) -> None:
     fake.providers = None
-    _answers(monkeypatch, ["anything"])
 
-    rclone.prompt_create_remote("backup")
+    rclone.prompt_create_remote("backup", FakePrompter(["anything"]))
     assert fake.remotes["backup"] == "anything"
 
 

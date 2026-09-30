@@ -24,7 +24,9 @@ import pytest
 
 from strata.adapters import guard_executor
 from strata.adapters.ansible import inventory, rclone, runner, secrets
+from strata.cli import dispatch
 from strata.core import discovery
+from tests._fakes import FakePrompter
 
 Runbook = Callable[..., int]
 
@@ -41,9 +43,6 @@ def isolate_guards(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None
     ctx.update(
         events=[],
         vault={},
-        prompts=[],
-        answers=[],
-        echoes=[],
         playbooks=[],
         playbook_rc=lambda _playbook: 0,
         decorators=[],
@@ -70,33 +69,41 @@ def _fake_secrets(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     monkeypatch.setattr(secrets, "has_secret", lambda key: key in ctx["vault"])
     monkeypatch.setattr(secrets, "get_secret", ctx["vault"].get)
     monkeypatch.setattr(secrets, "set_secret", ctx["vault"].__setitem__)
+    # The vault password lives in the OS keychain, which no scenario is about.
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
+
+
+class _HarnessPrompter(FakePrompter):
+    """A FakePrompter that also feeds the event spine and answers the sudo prompt.
+
+    The sudo password is asked for through the prerequisite table rather than a
+    declared `@guard.secret`, so scenarios never queue an answer for it; it
+    answers itself, and leaves whatever a scenario did queue for its own prompt.
+    """
+
+    def __init__(self, ctx: dict[str, Any]) -> None:
+        super().__init__()
+        self._ctx = ctx
+
+    def ask(self, message: str, *, default: str | None = None, hidden: bool = False) -> str:
+        if message.startswith("sudo password"):
+            self._ctx["events"].append("prompt:sudo")
+            self.answers.insert(0, "sudo-pw")
+        return super().ask(message, default=default, hidden=hidden)
 
 
 def _fake_prompts(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
-    """The executor's two prompt sites.
+    """One recording prompter, handed to the executor and to `run_runbook`.
 
-    They are not interchangeable: a secret goes through `click.prompt` in the
-    executor, which renders defaults and can hide input, while the sudo
-    password goes through `getpass.getpass` in the prerequisite table, which
-    reads the terminal directly and so cannot be driven by feeding stdin the
-    way the other feature suites drive prompts.
+    `run_runbook` builds its own terminal prompter, so the runs that go through
+    it (`backup_restore`, `server_app_journeys`) are pointed at this one too.
+    A scenario queues an answer with `ctx["prompter"].answers`; `ctx["prompts"]`
+    is the list of what was asked, as `{"message", "default", "hidden"}`.
     """
-
-    def fake_prompt(message: str, **kwargs: Any) -> str:
-        ctx["prompts"].append({"message": message, **kwargs})
-        if ctx["answers"]:
-            return ctx["answers"].pop(0)
-        return str(kwargs.get("default", ""))
-
-    def fake_getpass(message: str = "") -> str:
-        ctx["prompts"].append({"message": message, "hide_input": True, "via": "getpass"})
-        ctx["events"].append("prompt:sudo")
-        return "sudo-pw"
-
-    monkeypatch.setattr(guard_executor.click, "prompt", fake_prompt)
-    monkeypatch.setattr(guard_executor.click, "echo", ctx["echoes"].append)
-    # The sudo prompt lives with the prerequisite table, not the executor.
-    monkeypatch.setattr(secrets.getpass, "getpass", fake_getpass)
+    prompter = _HarnessPrompter(ctx)
+    ctx["prompter"] = prompter
+    ctx["prompts"] = prompter.asked
+    monkeypatch.setattr(dispatch, "build_prompter", lambda: prompter)
 
 
 def _fake_runner(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
@@ -137,7 +144,7 @@ def _fake_rclone(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
         if writable:
             ctx["rclone_writable"].add(name)
 
-    def fake_prompt_create_remote(name: str) -> None:
+    def fake_prompt_create_remote(name: str, _prompter: Any) -> None:
         ctx["rclone_created"].append(name)
         ctx["rclone_known"].add(name)
 
@@ -195,7 +202,10 @@ def run_declared(ctx: dict[str, Any]) -> None:
 
     try:
         ctx["exit_code"] = guard_executor.execute(
-            stub_module(decorated), target=ctx["target"], reporter=_Recorder(ctx)
+            stub_module(decorated),
+            target=ctx["target"],
+            reporter=_Recorder(ctx),
+            prompter=ctx["prompter"],
         )
     except Exception as exc:  # noqa: BLE001 - the scenarios assert on what was raised
         ctx["error"] = exc

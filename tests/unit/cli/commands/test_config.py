@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
 from strata.cli.commands.config import app
+from strata.cli.wiring import TyperPrompter
 from strata.core import paths
 
 runner = CliRunner()
@@ -27,8 +28,17 @@ def _no_real_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(group_vars, "set_var", boom)
     monkeypatch.setattr(secrets, "set_secret", boom)
+    monkeypatch.setattr(secrets, "ensure_vault_password", boom)
     monkeypatch.setattr(vault_pass, "set_vault_password", boom)
     monkeypatch.setattr(keys, "generate_key", boom)
+
+
+@pytest.fixture
+def vault_password_asked(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Stub the ask-for-a-missing-vault-password step, recording the prompter it got."""
+    prompters: list[object] = []
+    monkeypatch.setattr(secrets, "ensure_vault_password", prompters.append)
+    return prompters
 
 
 # -- config var ----------------------------------------------------------
@@ -95,6 +105,7 @@ def test_vault_password_rejects_an_empty_value_with_exit_1(
     assert "cannot be empty" in result.output
 
 
+@pytest.mark.usefixtures("vault_password_asked")
 def test_secret_rejects_an_empty_value_with_exit_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(secrets, "set_secret", _refuse_empty)
     result = runner.invoke(app, ["secret", "jellyfin_api_key", "--value", ""])
@@ -126,6 +137,7 @@ def test_vault_password_mismatched_confirmation_is_not_stored(
 # -- config secret -------------------------------------------------------
 
 
+@pytest.mark.usefixtures("vault_password_asked")
 def test_secret_encrypts_given_value(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(secrets, "set_secret", lambda n, v: calls.append((n, v)))
@@ -136,6 +148,7 @@ def test_secret_encrypts_given_value(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Encrypted and stored 'jellyfin_api_key'" in result.output
 
 
+@pytest.mark.usefixtures("vault_password_asked")
 def test_secret_reports_the_file_it_actually_wrote(monkeypatch: pytest.MonkeyPatch) -> None:
     """The message once named ansible/group_vars/, a directory that does not exist."""
     monkeypatch.setattr(secrets, "set_secret", lambda _n, _v: None)
@@ -145,6 +158,7 @@ def test_secret_reports_the_file_it_actually_wrote(monkeypatch: pytest.MonkeyPat
     assert f"in {written}" in result.output
 
 
+@pytest.mark.usefixtures("vault_password_asked")
 def test_secret_prompts_hidden_with_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(secrets, "set_secret", lambda n, v: calls.append((n, v)))
@@ -153,6 +167,35 @@ def test_secret_prompts_hidden_with_confirmation(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert calls == [("sudo_password", "s3cret")]
     assert "s3cret" not in result.output
+
+
+def test_secret_asks_for_a_missing_vault_password_before_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set_secret has no prompter and now fails on a missing vault password.
+
+    So the CLI, which has a terminal, has to be the one to ask, and to do it
+    before the write it would otherwise fail.
+    """
+    order: list[str] = []
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _p: order.append("ask"))
+    monkeypatch.setattr(secrets, "set_secret", lambda _n, _v: order.append("store"))
+
+    result = runner.invoke(app, ["secret", "jellyfin_api_key", "--value", "abc123"])
+
+    assert result.exit_code == 0
+    assert order == ["ask", "store"]
+
+
+def test_secret_gives_the_vault_password_question_a_terminal_prompter(
+    monkeypatch: pytest.MonkeyPatch, vault_password_asked: list[object]
+) -> None:
+    monkeypatch.setattr(secrets, "set_secret", lambda _n, _v: None)
+
+    runner.invoke(app, ["secret", "jellyfin_api_key", "--value", "abc123"])
+
+    assert len(vault_password_asked) == 1
+    assert isinstance(vault_password_asked[0], TyperPrompter)
 
 
 # -- config key ----------------------------------------------------------

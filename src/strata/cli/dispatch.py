@@ -16,7 +16,7 @@ import typer
 from strata.adapters import state as config
 from strata.cli._helpers import apply_hint
 from strata.cli.picker import pick_host
-from strata.cli.wiring import build_reporter
+from strata.cli.wiring import build_prompter, build_reporter
 from strata.core.discovery import (
     accepts_tags,
     import_failures,
@@ -82,7 +82,11 @@ def run_runbook(name: str, target: str | None = None, tags: str | None = None) -
     from strata.adapters import guard_executor  # noqa: PLC0415
 
     return guard_executor.execute(
-        module, target=resolved_target, tags=parsed_tags, reporter=build_reporter()
+        module,
+        target=resolved_target,
+        tags=parsed_tags,
+        reporter=build_reporter(),
+        prompter=build_prompter(),
     )
 
 

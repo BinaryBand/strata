@@ -25,6 +25,7 @@ from strata.adapters.ansible import inventory, rclone, runner, secrets
 from strata.core import discovery, guard, ports
 from strata.core import requirements as req
 from strata.core.models import Device
+from tests._fakes import FakePrompter
 
 _ME = pwd.getpwuid(os.getuid()).pw_name
 _MY_GROUP = grp.getgrgid(os.getgid()).gr_name
@@ -118,7 +119,9 @@ def _stub_module(main: _Runbook) -> ModuleType:
     return module
 
 
-def _execute(*decorators: _Guard, target: str | None = None) -> int:
+def _execute(
+    *decorators: _Guard, target: str | None = None, prompter: ports.Prompter | None = None
+) -> int:
     """Declare requirements on a stub runbook, then run it through the executor.
 
     Mirrors production exactly: cli hands guard_executor.execute() a module, it
@@ -132,7 +135,7 @@ def _execute(*decorators: _Guard, target: str | None = None) -> int:
     decorated: _Runbook = main
     for decorator in reversed(decorators):
         decorated = decorator(decorated)
-    return guard_executor.execute(_stub_module(decorated), target=target)
+    return guard_executor.execute(_stub_module(decorated), target=target, prompter=prompter)
 
 
 @pytest.fixture
@@ -208,8 +211,10 @@ def test_storage_remote_path_unregistered_creates_and_registers(
     monkeypatch.setattr(rclone, "is_remote_path", lambda _value: True)
     monkeypatch.setattr(rclone, "has_remote", lambda _name: False)
 
-    created: list[str] = []
-    monkeypatch.setattr(rclone, "prompt_create_remote", created.append)
+    created: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        rclone, "prompt_create_remote", lambda name, prompter: created.append((name, prompter))
+    )
     monkeypatch.setattr(rclone, "list_remotes", list)
     registered: list[tuple[str, bool]] = []
     monkeypatch.setattr(
@@ -222,8 +227,10 @@ def test_storage_remote_path_unregistered_creates_and_registers(
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(runner, "run_playbook", lambda *a, **k: calls.append((a, k)) or 0)
 
-    assert _execute(guard.storage("some_remote_key", require_writable=True)) == 0
-    assert created == ["ghost"]
+    prompter = FakePrompter()
+
+    assert _execute(guard.storage("some_remote_key", require_writable=True), prompter=prompter) == 0
+    assert created == [("ghost", prompter)]
     assert registered == [("ghost", True)]
     assert len(calls) == 1
     assert calls[0][0][0] == "playbooks/enable_rclone.yml"
@@ -275,7 +282,7 @@ def test_requirements_are_satisfied_in_decorator_order(
         "_TABLE",
         {
             "_test_marker": prerequisites._Prerequisite(
-                ensure=lambda: calls.append("prereq"),
+                ensure=lambda _prompter: calls.append("prereq"),
                 satisfied=lambda: False,
             )
         },
@@ -433,44 +440,83 @@ def test_no_target_at_all_is_still_the_controller() -> None:
     assert guard_executor.is_controller(None) is True
 
 
-def test_a_blank_answer_is_re_prompted_rather_than_stored(
+# ── the prompter ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def vault(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """An in-memory vault, with the keychain's vault password already present."""
+    store: dict[str, str] = {}
+    monkeypatch.setattr(secrets, "has_secret", store.__contains__)
+    monkeypatch.setattr(secrets, "get_secret", store.get)
+    monkeypatch.setattr(secrets, "set_secret", store.__setitem__)
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
+    return store
+
+
+def test_a_secret_guard_asks_the_prompter_it_was_given(vault: dict[str, str]) -> None:
+    prompter = FakePrompter(["real-token"])
+
+    exit_code = _execute(guard.secret("tailscale_auth_key", prompt="key"), prompter=prompter)
+
+    assert exit_code == 0
+    assert vault == {"tailscale_auth_key": "real-token"}
+    assert [q["hidden"] for q in prompter.asked] == [True]
+
+
+def test_a_prerequisite_guard_hands_the_prompter_to_the_prerequisite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An empty secret used to be written and never asked about again.
-
-    has_secret() only checks that the key exists, so one stray Enter on e.g.
-    tailscale_auth_key poisoned it permanently and every later run handed the
-    playbook an empty key.
-    """
-    monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
-    stored: list[tuple[str, str]] = []
-    monkeypatch.setattr(secrets, "set_secret", lambda k, v: stored.append((k, v)))
-
-    answers = iter(["", "  ", "real-token"])
-    monkeypatch.setattr(guard_executor.click, "prompt", lambda *_a, **_kw: next(answers))
-    monkeypatch.setattr(guard_executor.click, "echo", lambda *_a, **_kw: None)
-
-    guard_executor._ensure_secret(
-        "tailscale_auth_key", "key", kind="password", default=None, generate=False
+    seen: list[object] = []
+    monkeypatch.setattr(
+        prerequisites,
+        "_TABLE",
+        {
+            "_test_marker": prerequisites._Prerequisite(
+                ensure=seen.append,
+                satisfied=lambda: False,
+            )
+        },
     )
+    prompter = FakePrompter()
 
-    assert stored == [("tailscale_auth_key", "real-token")]
+    _execute(guard.prerequisite("_test_marker"), prompter=prompter)
+
+    assert seen == [prompter]
 
 
-def test_a_blank_answer_still_generates_when_generate_is_set(
-    monkeypatch: pytest.MonkeyPatch,
+def test_an_upstream_runbook_is_run_with_the_same_prompter(
+    vault: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
-    stored: list[tuple[str, str]] = []
-    monkeypatch.setattr(secrets, "set_secret", lambda k, v: stored.append((k, v)))
-    monkeypatch.setattr(guard_executor.click, "prompt", lambda *_a, **_kw: "")
+    """An upstream's missing secret must be asked for in a run that is allowed to ask."""
 
-    guard_executor._ensure_secret(
-        "restic_password", "pw", kind="password", default=None, generate=True
-    )
+    def upstream_main(target: str | None = None) -> int:  # noqa: ARG001
+        return 0
 
-    assert len(stored) == 1
-    assert stored[0][1]
+    upstream = _stub_module(guard.secret("upstream_key", prompt="upstream key")(upstream_main))
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _name: upstream)
+    prompter = FakePrompter(["from-the-operator"])
+
+    exit_code = _execute(guard.requires("infrastructure.install_podman"), prompter=prompter)
+
+    assert exit_code == 0
+    assert vault == {"upstream_key": "from-the-operator"}
+
+
+def test_no_prompter_means_a_missing_secret_is_refused_not_asked_for(
+    vault: dict[str, str],
+) -> None:
+    """A run with no terminal, such as one started from the GUI, must not block on a prompt."""
+    with pytest.raises(ports.PromptUnavailableError, match="needs an answer"):
+        _execute(guard.secret("tailscale_auth_key", prompt="key"))
+
+    assert vault == {}
+
+
+def test_no_prompter_still_lets_an_already_stored_secret_through(vault: dict[str, str]) -> None:
+    vault["tailscale_auth_key"] = "stored"
+
+    assert _execute(guard.secret("tailscale_auth_key", prompt="key")) == 0
 
 
 def test_check_receives_the_adapters_it_declares() -> None:

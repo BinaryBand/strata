@@ -17,7 +17,7 @@ import pytest
 from strata.adapters.ansible import host_vars, inventory, secrets, vault_pass
 from strata.cli import gui_actions
 from strata.cli.gui_http import ApiError, Request
-from strata.core import discovery
+from strata.core import discovery, guard
 from strata.core.models import Device
 
 # ── runbook_status / get_runbook_status ─────────────────────────────────
@@ -112,6 +112,39 @@ def test_start_run_then_poll_until_done(monkeypatch: pytest.MonkeyPatch) -> None
     assert state.status == "succeeded"
     assert state.exit_code == 0
     assert "done" in state.lines
+
+
+def test_a_run_with_a_missing_secret_fails_instead_of_prompting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A GUI run has no terminal. It used to block a daemon thread on click.prompt.
+
+    The real executor runs here, so this also proves start_run hands it a prompter
+    that refuses; the poller then reads the failure off the run's own lines.
+    """
+
+    def main(target: str | None = None) -> int:  # noqa: ARG001
+        return 0
+
+    fake_module = ModuleType("fake_runbook")
+    fake_module.__dict__["main"] = guard.secret("tailscale_auth_key", prompt="key")(main)
+    monkeypatch.setattr(gui_actions.discovery, "resolve_name", lambda _n: "services.fake")
+    monkeypatch.setattr(discovery.importlib, "import_module", lambda _n: fake_module)
+    monkeypatch.setattr(gui_actions.runner, "set_reporter", lambda _r: None)
+    monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
+
+    run_id = gui_actions.start_run("fake", None, None)["run_id"]
+
+    deadline = time.monotonic() + 2
+    state = gui_actions.get_run(run_id)
+    while state is not None and state.status == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        state = gui_actions.get_run(run_id)
+
+    assert state is not None
+    assert state.status == "failed"
+    assert state.exit_code == 1
+    assert any("needs an answer" in line for line in state.lines)
 
 
 def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:

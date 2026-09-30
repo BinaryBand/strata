@@ -48,6 +48,47 @@ class NullReporter:
         """Drop `message`."""
 
 
+class Prompter(Protocol):
+    """Asks the operator for a value. cli decides how -- a terminal prompt, or refusal.
+
+    core and adapters must not import a prompting library, so anything they
+    need from the operator goes through here. `ask` never loops and never
+    validates: a caller that needs a non-empty answer re-asks itself, because
+    what counts as acceptable is that caller's rule and not the terminal's.
+    """
+
+    def ask(self, message: str, *, default: str | None = None, hidden: bool = False) -> str:
+        """Return the answer: on a blank answer, `default` if there is one, else ""."""
+        ...
+
+    def tell(self, message: str) -> None:
+        """Show a correction or notice before the next question."""
+        ...
+
+
+class PromptUnavailableError(RuntimeError):
+    """A value was needed and there was no operator to ask."""
+
+
+class NonInteractivePrompter:
+    """Refuses every question. For callers with no terminal, such as a GUI run.
+
+    Satisfies Prompter. Refusing beats blocking: a GUI run prompting would sit
+    on a terminal nobody is watching, from a daemon thread, forever.
+    """
+
+    def ask(self, message: str, *, default: str | None = None, hidden: bool = False) -> str:  # noqa: ARG002 -- the Prompter signature
+        """Raise: there is nobody to answer."""
+        msg = (
+            f"{message.strip()!r} needs an answer; "
+            "set it with `strata config secret` or run this from the CLI"
+        )
+        raise PromptUnavailableError(msg)
+
+    def tell(self, message: str) -> None:
+        """Drop `message`."""
+
+
 class SecretReader(Protocol):
     """Reads previously stored vault secrets."""
 

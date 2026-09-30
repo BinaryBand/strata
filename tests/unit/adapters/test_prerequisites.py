@@ -6,12 +6,13 @@ import pytest
 
 from strata.adapters import prerequisites
 from strata.adapters.ansible import secrets, vault_pass
+from tests._fakes import FakePrompter
 
 
 def test_ensure_rejects_an_unregistered_name() -> None:
     """A runbook declaring a name nobody registered is a bug, not a no-op."""
     with pytest.raises(KeyError, match="not registered"):
-        prerequisites.ensure("no_such_prerequisite")
+        prerequisites.ensure("no_such_prerequisite", FakePrompter())
 
 
 def test_satisfied_reports_an_unregistered_name_as_unsatisfied() -> None:
@@ -33,17 +34,47 @@ def test_vault_password_reads_the_keychain(monkeypatch: pytest.MonkeyPatch) -> N
     assert prerequisites.satisfied("vault_password") is True
 
 
-def test_ensure_sudo_password_prompts_only_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_sudo_password_asks_only_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     stored: list[tuple[str, str]] = []
     monkeypatch.setattr(secrets, "has_secret", lambda _key: True)
     monkeypatch.setattr(secrets, "set_secret", lambda k, v: stored.append((k, v)))
-    prerequisites.ensure("sudo_password")
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
+    prompter = FakePrompter()
+    prerequisites.ensure("sudo_password", prompter)
     assert stored == []
+    assert prompter.asked == []
 
     monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
-    monkeypatch.setattr(secrets.getpass, "getpass", lambda _prompt: "hunter2")
-    prerequisites.ensure("sudo_password")
+    prompter = FakePrompter(["hunter2"])
+    prerequisites.ensure("sudo_password", prompter)
     assert stored == [("ansible_become_password", "hunter2")]
+    assert [(q["message"], q["hidden"]) for q in prompter.asked] == [
+        ("sudo password (will be stored in vault): ", True)
+    ]
+
+
+def test_ensure_sudo_password_gets_the_vault_password_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set_secret no longer asks for a missing vault password, so this must."""
+    order: list[str] = []
+    monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
+    monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: order.append("vault"))
+    monkeypatch.setattr(secrets, "set_secret", lambda _k, _v: order.append("store"))
+
+    prerequisites.ensure("sudo_password", FakePrompter(["hunter2"]))
+
+    assert order == ["vault", "store"]
+
+
+def test_ensure_vault_password_hands_over_the_prompter(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(secrets, "ensure_vault_password", seen.append)
+    prompter = FakePrompter()
+
+    prerequisites.ensure("vault_password", prompter)
+
+    assert seen == [prompter]
 
 
 def test_every_entry_answers_both_halves(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,4 +88,4 @@ def test_every_entry_answers_both_halves(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(vault_pass, "has_vault_password", lambda: True)
     for name in prerequisites._TABLE:
         assert prerequisites.satisfied(name) is True
-        prerequisites.ensure(name)
+        prerequisites.ensure(name, FakePrompter())
