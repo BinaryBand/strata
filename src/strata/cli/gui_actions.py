@@ -177,9 +177,23 @@ def post_device(request: Request) -> dict[str, Any]:
 
 
 def post_run(request: Request) -> dict[str, Any]:
-    """Handle `POST /api/run`."""
+    """Handle `POST /api/run`.
+
+    `target` and `tags` come straight off the wire, so they are checked here the
+    way the CLI checks them (`_helpers.require_host` refuses an unknown host),
+    rather than reaching the executor as whatever JSON happened to hold.
+    """
     (dotted_name,) = require(request.body, "dotted_name")
-    return start_run(dotted_name, request.body.get("target"), request.body.get("tags"))
+    target = request.body.get("target")
+    if target is not None:
+        if not isinstance(target, str) or not target:
+            raise ApiError(400, "target must be a host name")
+        if inventory.get(target) is None:
+            raise ApiError(400, f"unknown host {target!r}")
+    tags = request.body.get("tags")
+    if tags is not None and not (isinstance(tags, list) and all(isinstance(t, str) for t in tags)):
+        raise ApiError(400, "tags must be a list of strings")
+    return start_run(dotted_name, target, tags)
 
 
 def delete_device(request: Request) -> dict[str, Any]:

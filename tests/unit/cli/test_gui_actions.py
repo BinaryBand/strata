@@ -140,6 +140,62 @@ def test_a_second_run_is_refused_while_one_is_in_flight(monkeypatch: pytest.Monk
     finish.set()
 
 
+def _known_host(name: str) -> Device:
+    return Device(name=name, host="10.0.0.9", user="root", connection="ssh")
+
+
+@pytest.mark.parametrize("target", [5, "", ["rpi4"]])
+def test_post_run_refuses_a_target_that_is_not_a_host_name(
+    monkeypatch: pytest.MonkeyPatch, target: object
+) -> None:
+    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_run(Request(body={"dotted_name": "fake", "target": target}))
+    assert (excinfo.value.status, excinfo.value.message) == (400, "target must be a host name")
+
+
+def test_post_run_refuses_an_unknown_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(inventory, "get", lambda _name: None)
+    monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_run(Request(body={"dotted_name": "fake", "target": "ghost"}))
+    assert (excinfo.value.status, excinfo.value.message) == (400, "unknown host 'ghost'")
+
+
+@pytest.mark.parametrize("tags", ["a,b", ["a", 1], {"a": "b"}, 7])
+def test_post_run_refuses_tags_that_are_not_a_list_of_strings(
+    monkeypatch: pytest.MonkeyPatch, tags: object
+) -> None:
+    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(gui_actions, "start_run", _refuse_to_start)
+    with pytest.raises(ApiError) as excinfo:
+        gui_actions.post_run(Request(body={"dotted_name": "fake", "tags": tags}))
+    assert (excinfo.value.status, excinfo.value.message) == (400, "tags must be a list of strings")
+
+
+def test_post_run_passes_a_known_target_and_good_tags_to_start_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str | None, list[str] | None]] = []
+
+    def record(dotted_name: str, target: str | None, tags: list[str] | None) -> dict[str, Any]:
+        calls.append((dotted_name, target, tags))
+        return {"run_id": "r1"}
+
+    monkeypatch.setattr(inventory, "get", _known_host)
+    monkeypatch.setattr(gui_actions, "start_run", record)
+
+    body = {"dotted_name": "fake", "target": "rpi4", "tags": ["jellyfin"]}
+    assert gui_actions.post_run(Request(body=body)) == {"run_id": "r1"}
+    assert gui_actions.post_run(Request(body={"dotted_name": "fake"})) == {"run_id": "r1"}
+    assert calls == [("fake", "rpi4", ["jellyfin"]), ("fake", None, None)]
+
+
+def _refuse_to_start(*_args: object) -> dict[str, Any]:
+    pytest.fail("start_run must not be reached with an invalid request")
+
+
 def test_get_run_status_unknown_id() -> None:
     with pytest.raises(ApiError) as excinfo:
         gui_actions.get_run_status(Request(args={"run_id": "nope"}))
