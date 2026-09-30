@@ -21,7 +21,7 @@ from types import ModuleType
 import pytest
 
 from strata.adapters import guard_executor, prerequisites
-from strata.adapters.ansible import inventory, rclone, runner, secrets
+from strata.adapters.ansible import host_scope, host_vars, inventory, rclone, runner, secrets
 from strata.core import discovery, guard, ports
 from strata.core import requirements as req
 from tests._fakes import FakePrompter, fake_vault, remote_device
@@ -177,6 +177,28 @@ def test_storage_local_path_missing_runs_playbook(
     assert _execute(guard.storage("some_local_key")) == 0
     assert len(calls) == 1
     assert calls[0][0][0] == "playbooks/ensure_path.yml"
+
+
+def test_storage_uses_the_targets_host_vars_override_without_asking_for_the_vault_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ansible reads the override, so the guard has to prepare that location."""
+    monkeypatch.setattr(inventory, "get", remote_device)
+    host_vars.set_var("rpi4", "restic_repository", str(tmp_path / "per-host"))
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        msg = "the vaulted default should not be asked for"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(secrets, "ensure_secret", refuse)
+    plays: list[dict[str, object] | None] = []
+    monkeypatch.setattr(
+        runner, "run_playbook", lambda _p, extravars=None, **_k: plays.append(extravars) or 0
+    )
+
+    assert _execute(guard.storage("restic_repository"), target="rpi4") == 0
+    assert plays[0] is not None
+    assert plays[0]["guard_path"] == str(tmp_path / "per-host")
 
 
 @pytest.mark.usefixtures("_no_prompt")
@@ -521,8 +543,8 @@ def test_check_receives_the_adapters_it_declares() -> None:
         seen.append(secrets)
         return True
 
-    assert guard_executor.check_safely(check, ports.NullReporter()) is True
-    assert seen == [secrets]
+    assert guard_executor.check_safely(check, ports.NullReporter(), target="rpi4") is True
+    assert [type(reader) for reader in seen] == [host_scope.HostSecrets]
 
 
 def test_a_check_that_cannot_reach_the_vault_is_not_fatal() -> None:
@@ -532,4 +554,4 @@ def test_a_check_that_cannot_reach_the_vault_is_not_fatal() -> None:
         msg = "ansible-vault view failed"
         raise RuntimeError(msg)
 
-    assert guard_executor.check_safely(check, ports.NullReporter()) is False
+    assert guard_executor.check_safely(check, ports.NullReporter(), target=None) is False

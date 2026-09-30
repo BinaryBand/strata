@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import typer
 
-from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
-from strata.cli._helpers import fail
+from strata.adapters.ansible import group_vars, host_vars, keys, secrets, vault_pass
+from strata.cli._helpers import fail, require_host
 from strata.cli.wiring import build_prompter
 from strata.core import paths
 
@@ -21,7 +21,7 @@ app = typer.Typer(
 def config_var(
     name: str = typer.Argument(
         ...,
-        help="Variable name to set in ansible/inventory/group_vars/all/managed.yml.",
+        help="Variable name to set.",
     ),
     value: str | None = typer.Option(
         None,
@@ -29,13 +29,27 @@ def config_var(
         "-v",
         help="Value to set. Prompted interactively if not provided.",
     ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Set it for this host only, in its host_vars file, overriding the "
+        "every-host value and the vault's (e.g. restic_repository).",
+    ),
 ) -> None:
-    """Set a variable in ansible/inventory/group_vars/all/managed.yml."""
+    """Set a variable for every host, or with --target for one host only."""
+    if target is not None:
+        # Before the prompt, so an unknown host is refused before it asks.
+        require_host(target)
     if value is None:
         value = typer.prompt(name)
 
-    group_vars.set_var(name, value)
-    typer.echo(f"Set {name} -> {value!r} in ansible/inventory/group_vars/all/managed.yml")
+    if target is None:
+        group_vars.set_var(name, value)
+        typer.echo(f"Set {name} -> {value!r} in ansible/inventory/group_vars/all/managed.yml")
+        return
+    host_vars.set_var(target, name, value)
+    typer.echo(f"Set {name} -> {value!r} for {target} in ansible/inventory/host_vars/{target}.yml")
 
 
 @app.command("vault-password")

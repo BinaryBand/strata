@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from strata.adapters import guard_executor
-from strata.adapters.ansible import inventory, rclone, runner
+from strata.adapters.ansible import host_scope, inventory, rclone, runner
 from strata.cli import dispatch
 from strata.core import discovery
 from tests._fakes import FakePrompter, fake_vault
@@ -126,6 +126,9 @@ def _fake_rclone(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     the remote listed (an unlisted one is added, forcing a remount). Collapsing
     them would make the create-then-mount scenario pass for the wrong reason.
     """
+    # No scenario sets a per-host override; reading one would read the
+    # operator's real host_vars/<target>.yml.
+    monkeypatch.setattr(host_scope.HostSecrets, "override", lambda _self, _name: None)
     monkeypatch.setattr(rclone, "has_remote", lambda name: name in ctx["rclone_known"])
     monkeypatch.setattr(rclone, "list_remotes", lambda: sorted(ctx["rclone_listed"]))
     monkeypatch.setattr(rclone, "is_writable", lambda name: name in ctx["rclone_writable"])

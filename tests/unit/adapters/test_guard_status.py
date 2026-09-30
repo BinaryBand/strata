@@ -16,7 +16,7 @@ from types import ModuleType
 import pytest
 
 from strata.adapters import guard_status
-from strata.adapters.ansible import inventory, rclone, secrets, vault_pass
+from strata.adapters.ansible import host_vars, inventory, rclone, secrets, vault_pass
 from strata.core import discovery
 from strata.core import requirements as req
 from tests._fakes import remote_device
@@ -29,6 +29,27 @@ def test_controller_only_status(monkeypatch: pytest.MonkeyPatch) -> None:
     assert guard_status.guard_status(requirement, target=None) == "satisfied"
     monkeypatch.setattr(inventory, "get", remote_device)
     assert guard_status.guard_status(requirement, target="rpi4") == "missing"
+
+
+def test_storage_status_counts_the_targets_host_vars_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The playbook reads the override, so no vault entry is needed alongside it."""
+    monkeypatch.setattr(secrets, "has_secret", lambda _key: False)
+    monkeypatch.setattr(inventory, "get", remote_device)
+    storage = req.Storage(
+        vault_key="restic_repository",
+        message="x",
+        default=None,
+        owner=None,
+        group=None,
+        mode=None,
+        require_writable=False,
+    )
+    assert guard_status.guard_status(storage, target="nas") == "missing"
+
+    host_vars.set_var("nas", "restic_repository", "pcloud:nas-restic")
+    assert guard_status.guard_status(storage, target="nas") == "satisfied"
 
 
 def test_prerequisite_status(monkeypatch: pytest.MonkeyPatch) -> None:

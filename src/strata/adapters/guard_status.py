@@ -21,7 +21,7 @@ import types
 from typing import assert_never
 
 from strata.adapters import guard_executor, prerequisites
-from strata.adapters.ansible import rclone, secrets
+from strata.adapters.ansible import host_scope, rclone, secrets
 from strata.core import discovery, ports
 from strata.core import requirements as req
 
@@ -42,7 +42,7 @@ def check_result(module: types.ModuleType, *, target: str | None) -> bool | None
     check = getattr(module, "check", None)
     if check is None or not guard_executor.is_controller(target):
         return None
-    return guard_executor.check_safely(check, ports.NullReporter())
+    return guard_executor.check_safely(check, ports.NullReporter(), target=target)
 
 
 def _status(*, ok: bool) -> str:
@@ -74,11 +74,14 @@ def guard_status(  # noqa: PLR0911, PLR0912, C901
             # of names here, so registering a prerequisite cannot leave this
             # endpoint reporting it missing forever.
             return _status(ok=prerequisites.satisfied(requirement.name))
-        case req.Secret() | req.Storage():
+        case req.Secret():
+            return _status(ok=secrets.has_secret(requirement.vault_key))
+        case req.Storage():
             # Existence only: confirming a Storage vault value's mount/path is
             # live would need the vault unlocked, which this read-only check
-            # must not do, so it collapses to the same has_secret check.
-            return _status(ok=secrets.has_secret(requirement.vault_key))
+            # must not do. A host_vars override counts, as it does for the
+            # playbook.
+            return _status(ok=host_scope.HostSecrets(target).has_value(requirement.vault_key))
         case req.SystemUser():
             # Existence, deliberately, even though the executor stopped
             # treating it as proof the account is fit (it now always runs the

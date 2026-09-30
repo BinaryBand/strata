@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import assert_never
 
 from strata.adapters import prerequisites
-from strata.adapters.ansible import inventory, rclone, runner, secrets
+from strata.adapters.ansible import host_scope, inventory, rclone, runner, secrets
 from strata.core import discovery, guard, ports
 from strata.core import requirements as req
 
@@ -157,8 +157,12 @@ def _ensure_user(playbook: str, *, target: str | None) -> int | None:
 def _ensure_storage(
     requirement: req.Storage, *, target: str | None, prompter: ports.Prompter
 ) -> int | None:
-    secrets.ensure_secret(requirement.as_secret(), prompter)
-    value = secrets.get_secret(requirement.vault_key)
+    # A host_vars override is what the playbook will use, so with one set the
+    # vaulted default is neither asked for nor read.
+    scoped = host_scope.HostSecrets(target)
+    if scoped.override(requirement.vault_key) is None:
+        secrets.ensure_secret(requirement.as_secret(), prompter)
+    value = scoped.get_secret(requirement.vault_key)
     if not value:
         # This used to say "was just set but could not be read back", which
         # was almost never what happened: the usual cause was an empty value
@@ -264,7 +268,7 @@ def _run_upstream(
     """
     module = discovery.load(dotted_name)
     check = getattr(module, "check", None)
-    if is_controller(target) and check is not None and check_safely(check, reporter):
+    if is_controller(target) and check is not None and check_safely(check, reporter, target=target):
         return _satisfy_all(module, target=target, reporter=reporter, prompter=prompter)
     # Forward the reporter rather than letting execute() install a null one:
     # a runbook's own progress messages were shown when it was invoked
@@ -274,7 +278,9 @@ def _run_upstream(
     return execute(module, target=target, reporter=reporter, prompter=prompter) or None
 
 
-def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
+def check_safely(
+    check: Callable[..., bool], reporter: ports.Reporter, *, target: str | None
+) -> bool:
     """Report whether `check()` says the upstream runbook is already satisfied.
 
     check() gets the same adapter injection main() does. It used to be called
@@ -295,7 +301,7 @@ def check_safely(check: Callable[..., bool], reporter: ports.Reporter) -> bool:
     to running the playbook.
     """
     try:
-        return check(**_injectables(check, reporter))
+        return check(**_injectables(check, reporter, target=target))
     except (OSError, RuntimeError):
         return False
 
@@ -344,7 +350,10 @@ def execute(
     if exit_code is not None:
         return exit_code
 
-    kwargs: dict[str, object] = {"target": target, **_injectables(module.main, reporter)}
+    kwargs: dict[str, object] = {
+        "target": target,
+        **_injectables(module.main, reporter, target=target),
+    }
     if tags is not None:
         kwargs["tags"] = tags
     return module.main(**kwargs)
@@ -352,16 +361,20 @@ def execute(
 
 # ── Dependency injection ───────────────────────────────────────────────────
 
-# Adapters a runbook's main() may ask for, keyed by parameter name. Modules
-# satisfy their Protocol ports structurally, so no adapter has to inherit
-# anything.
-_PROVIDERS: dict[str, object] = {"runner": runner, "secrets": secrets}
 
+def _injectables(
+    main: Callable[..., int], reporter: ports.Reporter, *, target: str | None
+) -> dict[str, object]:
+    """Build the subset of adapters `main` actually declares parameters for.
 
-def _injectables(main: Callable[..., int], reporter: ports.Reporter) -> dict[str, object]:
-    """Build the subset of adapters `main` actually declares parameters for."""
+    Adapters satisfy their Protocol ports structurally, so none has to inherit
+    anything. `secrets` reads as the target's playbook will, host_vars
+    override first, so a check() looks where the playbook is about to work.
+    """
     accepted = inspect.signature(main).parameters
-    supplied = {name: adapter for name, adapter in _PROVIDERS.items() if name in accepted}
-    if "reporter" in accepted:
-        supplied["reporter"] = reporter
-    return supplied
+    providers: dict[str, object] = {
+        "runner": runner,
+        "secrets": host_scope.HostSecrets(target),
+        "reporter": reporter,
+    }
+    return {name: adapter for name, adapter in providers.items() if name in accepted}

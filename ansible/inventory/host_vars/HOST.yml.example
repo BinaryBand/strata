@@ -1,7 +1,7 @@
 # Template for host_vars/<host>.yml, the per-host variables the strata CLI
-# writes (`strata config var --target <host>`, `strata config key`, rclone
-# sync registration). The CLI creates the file on first write; copying this is
-# only for writing it by hand.
+# writes (`strata config var --target <host>`, rclone sync registration). The
+# CLI creates the file on first write; copying this is only for writing it by
+# hand.
 #
 # host_vars/*.yml is gitignored -- each file is named after one of your real
 # machines.
@@ -9,3 +9,7 @@
 # rclone remotes sync_rclone_remote copies to local storage on this host.
 rclone_synced_remotes:
   - myremote
+
+# This host's restic repository, overriding the vaulted every-host default:
+# `strata config var restic_repository --target <host> --value myremote:restic-<host>`
+# restic_repository: myremote:restic-host

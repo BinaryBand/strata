@@ -10,10 +10,11 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from strata.adapters.ansible import group_vars, keys, secrets, vault_pass
+from strata.adapters.ansible import group_vars, host_vars, inventory, keys, secrets, vault_pass
 from strata.cli.commands.config import app
 from strata.cli.wiring import TyperPrompter
 from strata.core import paths
+from tests._fakes import remote_device
 
 runner = CliRunner()
 
@@ -27,6 +28,7 @@ def _no_real_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError(msg)
 
     monkeypatch.setattr(group_vars, "set_var", boom)
+    monkeypatch.setattr(host_vars, "set_var", boom)
     monkeypatch.setattr(secrets, "set_secret", boom)
     monkeypatch.setattr(secrets, "ensure_vault_password", boom)
     monkeypatch.setattr(vault_pass, "set_vault_password", boom)
@@ -71,6 +73,29 @@ def test_var_prompts_when_value_omitted(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.exit_code == 0
     assert calls == [("media_root", "/mnt/media")]
     assert "media_root" in result.output
+
+
+def test_var_with_a_target_sets_it_for_that_host_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The per-host restic override: host_vars beats the vault in Ansible."""
+    calls: list[tuple[str, str, object]] = []
+    monkeypatch.setattr(inventory, "get", remote_device)
+    monkeypatch.setattr(host_vars, "set_var", lambda h, k, v: calls.append((h, k, v)))
+
+    result = runner.invoke(
+        app, ["var", "restic_repository", "--target", "nas", "--value", "pcloud:nas"]
+    )
+    assert result.exit_code == 0
+    assert calls == [("nas", "restic_repository", "pcloud:nas")]
+    assert "for nas in ansible/inventory/host_vars/nas.yml" in result.output
+
+
+def test_var_refuses_an_unknown_target_before_asking(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(inventory, "get", lambda _name: None)
+    monkeypatch.setattr(inventory, "all_hosts", list)
+
+    result = runner.invoke(app, ["var", "restic_repository", "--target", "ghost"])
+    assert result.exit_code == 1
+    assert "not in the inventory" in result.output
 
 
 def test_var_requires_a_name() -> None:
