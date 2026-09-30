@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from strata.adapters.ansible import secrets
 from strata.core import discovery
@@ -27,6 +29,35 @@ class RecordingPlaybookRunner:
     ) -> int:
         self.calls.append((playbook, dict(extravars or {}), target))
         return self.rc
+
+
+SOURCE_MANIFEST: dict[str, Any] = {
+    "schema": 1,
+    "name": "demo",
+    "alias": "install Demo",
+    "description": "Demo service",
+    "toolchain": "uv",
+    "build": "uv sync --frozen",
+    "run": {"command": "uv run --no-sync demo serve --host ${DEMO_HOST}", "env": {"MODE": "prod"}},
+    "dirs": [
+        {"path": "/srv/demo"},
+        {"path": "/srv/demo/data"},
+        {"path": "/srv/demo/config", "mode": "2750"},
+    ],
+    "secrets": [
+        {"name": "demo_host", "kind": "text", "prompt": "Host", "env": "DEMO_HOST"},
+        {"name": "demo_key", "prompt": "API key", "file": "/srv/demo/config/key"},
+    ],
+    "backup": {"tag": "demo", "path": "/srv/demo/data"},
+}
+
+
+def write_project(directory: Path, **overrides: Any) -> Path:
+    """Create a project at `directory` whose strata.app.yml is SOURCE_MANIFEST plus overrides."""
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest = {**SOURCE_MANIFEST, **overrides}
+    (directory / "strata.app.yml").write_text(yaml.safe_dump(manifest, sort_keys=False))
+    return directory
 
 
 class FakePrompter:

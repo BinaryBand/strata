@@ -14,9 +14,13 @@ import typer
 
 from strata.adapters import fs, gui_token
 from strata.core import paths
-from strata.core.models import AppSpec
+from strata.core.models import AppSpec, SourceAppSpec
 
-_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "app_spec_schema.json"
+_VSCODE_DIR = paths.PROJECT_ROOT / ".vscode"
+_SCHEMAS = {
+    "app_spec_schema.json": AppSpec,
+    "source_app_schema.json": SourceAppSpec,
+}
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -26,16 +30,18 @@ app = typer.Typer(
 
 @app.command("schema")
 def dev_schema() -> None:
-    """Write the JSON Schema for ansible/apps/*.yml to .vscode/.
+    """Write the JSON Schemas for the app declarations to .vscode/.
 
-    Regenerates .vscode/app_spec_schema.json from the Pydantic model at
-    src/strata/core/models/app_spec.py.  VS Code yaml.schemas points at that
-    file, so editing an app's YAML gets intellisense and validation.
-    Run this any time you change the model structure.
+    Regenerates .vscode/app_spec_schema.json (ansible/apps/*.yml) and
+    .vscode/source_app_schema.json (an external project's strata.app.yml) from
+    the Pydantic models under src/strata/core/models/. VS Code yaml.schemas
+    points at those files, so editing a declaration gets intellisense and
+    validation. Run this any time you change a model structure.
     """
-    schema = AppSpec.model_json_schema()
-    fs.write_text(_SCHEMA_PATH, json.dumps(schema, indent=2, sort_keys=True) + "\n")
-    typer.echo(f"Wrote schema to {_SCHEMA_PATH}")
+    for name, model in _SCHEMAS.items():
+        schema = model.model_json_schema()
+        fs.write_text(_VSCODE_DIR / name, json.dumps(schema, indent=2, sort_keys=True) + "\n")
+        typer.echo(f"Wrote schema to {_VSCODE_DIR / name}")
 
 
 @app.command("gui-data")

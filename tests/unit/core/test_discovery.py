@@ -15,8 +15,8 @@ from types import ModuleType
 
 import pytest
 
-from strata.core import discovery, paths
-from tests._fakes import fail_import
+from strata.core import discovery, guard, paths
+from tests._fakes import fail_import, write_project
 
 # A runbook that must exist for the dependency chain documented in docs/ARCHITECTURE.md
 # to work at all; if it is renamed these tests should be updated deliberately.
@@ -255,3 +255,63 @@ def test_a_spec_that_repeats_a_runbook_module_is_reported(
     # The listing describes the module that load() returns: the spec's, not the twin's.
     assert listed[0].summary.startswith("deploy Baikal")
     assert discovery.load("services.install_baikal") is not twin
+
+
+# ── runbooks built from registered projects ───────────────────────────
+
+
+def _register(projects_file: Path, *directories: Path) -> None:
+    projects_file.write_text("projects:\n" + "".join(f"  - {d}\n" for d in directories))
+
+
+def test_a_registered_project_is_listed_and_loadable(tmp_path: Path, projects_file: Path) -> None:
+    _register(projects_file, write_project(tmp_path / "demo"))
+
+    info = next(r for r in discovery.iter_runbooks() if r.dotted_name == "services.install_demo")
+    assert (info.alias, info.category) == ("install Demo", "services")
+    assert callable(discovery.load("services.install_demo").main)
+    assert discovery.import_failures() == []
+
+
+def test_a_project_backup_tag_reaches_the_backup_tags(tmp_path: Path, projects_file: Path) -> None:
+    _register(projects_file, write_project(tmp_path / "demo"))
+    modules, failures = discovery.runbook_modules()
+    assert failures == []
+    assert guard.backup_tags_of(modules["services.install_demo"].main) == (
+        ("demo", "/srv/demo/data"),
+    )
+
+
+def test_a_project_with_a_bad_manifest_is_reported_and_the_others_still_load(
+    tmp_path: Path, projects_file: Path
+) -> None:
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "strata.app.yml").write_text("name: broken\n")
+    _register(projects_file, broken, write_project(tmp_path / "demo"))
+
+    failures = {f.dotted_name: f.error for f in discovery.import_failures()}
+    assert "ProjectError" in failures[str(broken)]
+    assert "strata.app.yml" in failures[str(broken)]
+    assert "services.install_demo" in {r.dotted_name for r in discovery.iter_runbooks()}
+
+
+def test_a_broken_project_list_is_one_failure(projects_file: Path) -> None:
+    projects_file.write_text("projects: nope\n")
+    failures = discovery.import_failures()
+    assert [f.dotted_name for f in failures] == [str(projects_file)]
+
+
+def test_a_project_that_repeats_an_app_spec_is_reported(
+    tmp_path: Path, projects_file: Path, apps_dir: Path
+) -> None:
+    _copy_spec(apps_dir, "baikal")
+    _register(projects_file, write_project(tmp_path / "baikal", name="baikal"))
+
+    failures = {f.dotted_name: f.error for f in discovery.import_failures()}
+    assert "declared by both" in failures["services.install_baikal"]
+    # The listing describes the module load() returns: the project's, declared last.
+    listed = [r for r in discovery.iter_runbooks() if r.dotted_name == "services.install_baikal"]
+    assert len(listed) == 1
+    assert listed[0].summary.startswith("deploy Demo service")
+    assert discovery.load("services.install_baikal").__doc__ == listed[0].docstring_first_line

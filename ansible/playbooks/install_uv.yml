@@ -1,0 +1,53 @@
+---
+# Install uv system-wide: the toolchain for external projects declared with
+# `toolchain: uv` in their strata.app.yml. A pinned release tarball with a
+# checksum, not `curl | sh`; uv_version and uv_sha256 are in
+# inventory/group_vars/all/common.yml. The binary goes in /usr/local/bin so
+# diot's user services find it on their default PATH.
+- name: Install uv
+  hosts: all
+  become: true
+
+  vars:
+    uv_target: "{{ ansible_facts.architecture }}-unknown-linux-gnu"
+
+  tasks:
+    - name: Require a pinned checksum for this architecture
+      ansible.builtin.assert:
+        that: ansible_facts.architecture in uv_sha256
+        fail_msg: >-
+          No uv checksum is pinned for {{ ansible_facts.architecture }}; add it
+          to uv_sha256 in inventory/group_vars/all/common.yml.
+
+    - name: Check the installed uv
+      ansible.builtin.command:
+        argv: [/usr/local/bin/uv, --version]
+      register: uv_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install the pinned uv release
+      when: uv_version not in (uv_installed.stdout | default(''))
+      block:
+        - name: Download the uv release
+          ansible.builtin.get_url:
+            url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ uv_target }}.tar.gz"
+            dest: "/tmp/uv-{{ uv_version }}-{{ uv_target }}.tar.gz"
+            checksum: "sha256:{{ uv_sha256[ansible_facts.architecture] }}"
+            mode: "0600"
+
+        - name: Unpack uv and uvx into /usr/local/bin
+          ansible.builtin.unarchive:
+            src: "/tmp/uv-{{ uv_version }}-{{ uv_target }}.tar.gz"
+            dest: /usr/local/bin
+            remote_src: true
+            extra_opts: [--strip-components=1]
+            owner: root
+            group: root
+            mode: "0755"
+
+      always:
+        - name: Remove the downloaded archive
+          ansible.builtin.file:
+            path: "/tmp/uv-{{ uv_version }}-{{ uv_target }}.tar.gz"
+            state: absent

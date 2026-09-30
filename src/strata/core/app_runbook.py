@@ -11,25 +11,15 @@ unit from it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from types import ModuleType
 
 from strata.core import guard
 from strata.core.models import AppSpec
 from strata.core.ports import PlaybookRunner
 from strata.core.remote_paths import resolve
+from strata.core.runbook_module import Guard, assemble, secret_guards, state_guards
 
 PLAYBOOK = "playbooks/install_podman_app.yml"
-
-_OWNER = "diot"
-
-type _Main = Callable[..., int]
-type _Guard = Callable[[_Main], _Main]
-
-
-def dotted_name(app: str) -> str:
-    """The runbook of app `app`, relative to strata.core.runbooks: ``services.install_baikal``."""
-    return f"services.install_{app}"
 
 
 def build(spec: AppSpec) -> ModuleType:
@@ -40,40 +30,32 @@ def build(spec: AppSpec) -> ModuleType:
         """Deploy the container and its Quadlet unit."""
         return runner.run_playbook(PLAYBOOK, extravars=extravars, target=target)
 
-    module_name = f"strata.core.runbooks.{dotted_name(spec.name)}"
-    # Each decorator prepends, so applying the list from the end gives the order written.
-    runbook: _Main = main
-    for declare in reversed(_guards(spec)):
-        runbook = declare(runbook)
-    module = ModuleType(
-        module_name,
+    return assemble(
+        spec.name,
         f"Runbook: deploy {spec.description} as a rootless Podman container owned by diot.",
+        main,
+        _guards(spec),
+        PLAYBOOK,
     )
-    vars(module).update(main=runbook, PLAYBOOK=PLAYBOOK)
-    return module
 
 
-def _guards(spec: AppSpec) -> list[_Guard]:
+def _guards(spec: AppSpec) -> list[Guard]:
     """The guards, outermost first: the order the executor satisfies them in.
 
     A directory's owner is created by an earlier guard, so the paths follow the
     user and podman guards.
     """
-    guards: list[_Guard] = [guard.alias(spec.alias)]
+    guards: list[Guard] = [guard.alias(spec.alias)]
     if spec.backup:
         guards.append(guard.backup_tag(spec.backup.tag, spec.backup.path))
     guards += [
         guard.prerequisite("sudo_password"),
         guard.requires("infrastructure.install_podman"),
     ]
-    guards += [guard.path(d.path, owner=_OWNER, group=spec.name, mode=d.mode) for d in spec.dirs]
+    guards += state_guards(spec.name, spec.dirs)
     if spec.mount:
         guards.append(guard.mount(spec.mount.remote))
-    guards += [
-        guard.secret(s.name, kind=s.kind, prompt=s.prompt, default=s.default, generate=s.generate)
-        for s in spec.secrets
-    ]
-    return guards
+    return guards + secret_guards(spec.secrets)
 
 
 def _payload(spec: AppSpec) -> dict[str, object]:

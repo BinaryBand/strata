@@ -1,8 +1,9 @@
 """Discover runbook modules under strata.core.runbooks.
 
 Exposes ``iter_runbooks()`` which walks the runbook package, imports each
-module, adds the runbook built from each app spec in ansible/apps/, and returns
-metadata the CLI uses for ``--list``, autocompletion, and bare-leaf resolution.
+module, adds the runbook built from each app spec in ansible/apps/ and from each
+project registered in ansible/projects.yml, and returns metadata the CLI uses
+for ``--list``, autocompletion, and bare-leaf resolution.
 """
 
 from __future__ import annotations
@@ -19,7 +20,15 @@ from types import ModuleType
 from typing import NamedTuple
 
 import strata.core.runbooks as _runbook_pkg
-from strata.core import app_runbook, app_specs, guard, paths
+from strata.core import (
+    app_runbook,
+    app_specs,
+    guard,
+    paths,
+    projects,
+    runbook_module,
+    source_runbook,
+)
 
 
 @dataclass(frozen=True)
@@ -116,12 +125,58 @@ def _spec_runbooks(
     modules: dict[str, ModuleType] = {}
     failures: list[ImportFailure] = []
     for path in app_specs.spec_files(directory):
-        short = app_runbook.dotted_name(path.stem)
+        short = runbook_module.dotted_name(path.stem)
         try:
             modules[short] = app_runbook.build(app_specs.load(path))
         except Exception as exc:  # noqa: BLE001
             failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
     return modules, tuple(failures)
+
+
+@functools.cache
+def _project_runbooks(
+    file: Path,
+) -> tuple[dict[str, ModuleType], tuple[ImportFailure, ...]]:
+    """Build a runbook module from the manifest of each project listed in `file`, once per process.
+
+    A project that cannot be read, or whose manifest is invalid, is a failure
+    like a bad spec, keyed by its directory since it has no trustworthy name.
+    """
+    modules: dict[str, ModuleType] = {}
+    failures: list[ImportFailure] = []
+    try:
+        directories = projects.registered(file)
+    except projects.ProjectError as exc:
+        return modules, (ImportFailure(dotted_name=str(file), error=str(exc)),)
+    for directory in directories:
+        try:
+            spec = projects.load(directory)
+            modules[runbook_module.dotted_name(spec.name)] = source_runbook.build(spec, directory)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(ImportFailure(str(directory), f"{type(exc).__name__}: {exc}"))
+    return modules, tuple(failures)
+
+
+def _declared() -> tuple[dict[str, ModuleType], list[ImportFailure]]:
+    """The runbooks built from declarations, not imported: Podman specs, then projects.
+
+    A name declared twice keeps the later one and records the clash, so the
+    listing and `load` cannot disagree about which one runs.
+    """
+    modules: dict[str, ModuleType] = {}
+    failures: list[ImportFailure] = []
+    for built, errors in (
+        _spec_runbooks(paths.APPS_DIR),
+        _project_runbooks(paths.PROJECTS_FILE),
+    ):
+        failures.extend(errors)
+        for short, module in built.items():
+            if short in modules:
+                failures.append(
+                    ImportFailure(short, "declared by both ansible/apps/ and a project")
+                )
+            modules[short] = module
+    return modules, failures
 
 
 class _Walk(NamedTuple):
@@ -154,13 +209,13 @@ def _walk() -> _Walk:
             # ImportError. import_failures() surfaces these to the CLI.
             failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
 
-    spec_modules, spec_failures = _spec_runbooks(paths.APPS_DIR)
-    failures.extend(spec_failures)
-    for short, module in spec_modules.items():
+    declared, declared_failures = _declared()
+    failures.extend(declared_failures)
+    for short, module in declared.items():
         if short in modules:
-            # load() prefers the spec, so the listing does too.
+            # load() prefers the declaration, so the listing does too.
             failures.append(
-                ImportFailure(short, "declared by both a runbook module and ansible/apps/")
+                ImportFailure(short, "declared by both a runbook module and a declaration")
             )
         modules[short] = module
 
@@ -172,12 +227,12 @@ def _walk() -> _Walk:
 def load(dotted_name: str) -> ModuleType:
     """Return the runbook module named `dotted_name`, relative to the runbook package.
 
-    A Podman app declared in ansible/apps/ has no module to import; its runbook
-    is the one built from its spec.
+    A Podman app declared in ansible/apps/, or a registered project, has no
+    module to import; its runbook is the one built from its declaration.
     """
-    spec_module = _spec_runbooks(paths.APPS_DIR)[0].get(dotted_name)
-    if spec_module is not None:
-        return spec_module
+    declared_module = _declared()[0].get(dotted_name)
+    if declared_module is not None:
+        return declared_module
     return importlib.import_module(f"{_runbook_pkg.__name__}.{dotted_name}")
 
 

@@ -6,3 +6,11 @@
 diot_user: diot
 diot_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[diot_user][1] }}"
 
+
+# The uv release install_uv.yml puts in /usr/local/bin, pinned by series (0.11)
+# and by checksum so a host installs exactly the binary reviewed here. Bump the
+# version and both checksums together; `.sha256` sits beside each release asset.
+uv_version: "0.11.29"
+uv_sha256:
+  x86_64: "04f8b82f5d47f0512dcd32c67a4a6f16a0ea27c81537c338fd0ad6b23cebe829"
+  aarch64: "94500fb064ae3c971a873cba64d94694c50677e0a4dbf78735c80509e7429919"

@@ -13,11 +13,12 @@ from typing import Any
 from pytest_bdd import given, parsers, scenarios, then
 
 from strata.core import paths
-from strata.core.models import AppSpec
+from strata.core.models import AppSpec, SourceAppSpec
 
 scenarios("dev.feature")
 
-_SCHEMA_PATH = paths.PROJECT_ROOT / ".vscode" / "app_spec_schema.json"
+_VSCODE_DIR = paths.PROJECT_ROOT / ".vscode"
+_SCHEMA_PATH = _VSCODE_DIR / "app_spec_schema.json"
 
 
 def _listed_as_word(output: str, name: str) -> bool:
@@ -55,6 +56,12 @@ def model_unchanged() -> None:
 def schema_written_from_model(ctx: dict[str, Any]) -> None:
     assert ctx["result"].exit_code == 0
     assert json.loads(_SCHEMA_PATH.read_text()) == AppSpec.model_json_schema()
+
+
+@then(".vscode/source_app_schema.json is written from the SourceAppSpec model")
+def source_schema_written_from_model() -> None:
+    written = json.loads((_VSCODE_DIR / "source_app_schema.json").read_text())
+    assert written == SourceAppSpec.model_json_schema()
 
 
 @then("the output reports the path it wrote")

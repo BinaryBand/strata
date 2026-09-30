@@ -1,0 +1,4 @@
+---
+# service_user's systemd --user runtime directory, where its user manager
+# listens. Resolves once the role has looked the account up with getent.
+service_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[service_user][1] }}"

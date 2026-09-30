@@ -1,0 +1,5 @@
+# The external projects strata installs from this machine, one absolute path per
+# checkout. Copy to projects.yml (gitignored) and list your own. Each project
+# ships a strata.app.yml at its root; see docs/APP_MANIFEST.md.
+projects:
+  - /home/you/Dev/example-project

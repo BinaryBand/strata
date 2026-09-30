@@ -31,3 +31,6 @@ ansible/inventory/group_vars/secrets/
 ansible/inventory/hosts.ini
 ansible/inventory/host_vars/*.yml
 ansible/inventory/group_vars/all/managed.yml
+
+# The external projects installed from this machine: paths to your own checkouts.
+ansible/projects.yml

@@ -12,6 +12,7 @@ The package is a three-layer scaffold, and an import-linter contract enforces it
 - `src/strata/core/` -- runbooks, models, guards, and the `Protocol` ports adapters satisfy. No I/O. `core/runbooks/` is grouped by category (`system/`, `package_managers/`, `development/`, `infrastructure/`, `services/`); each module exposes `main(target, *, runner)` and an optional `check()`, decorated with guards that *declare* requirements rather than satisfying them.
 - `src/strata/adapters/` -- everything that touches the outside world: `guard_executor.py` (satisfies what the guards declared, then calls `main()`), `ansible/` (runner, vault secrets, host_vars/group_vars, SSH keys, rclone, inventory), `proc.py`, `state.py`, `fs.py`.
 - `ansible/playbooks/` -- the actual playbooks. Paths resolve relative to `ansible/`, independent of where the runbook module lives. Sequences more than one playbook needs live in `ansible/roles/`.
+- `ansible/projects.yml` -- the external projects installed from this machine, one checkout path each. Gitignored, with `projects.yml.example` beside it.
 - `ansible/inventory/` -- `hosts.ini`, `host_vars/<host>.yml` (per-host plain variables, e.g. rclone synced remotes and a per-host restic repository) and `group_vars/all/managed.yml` (every-host rclone remotes and serves) are yours and gitignored, each with a `.example` template beside it; the CLI creates the variable files on first write. `group_vars/secrets/all.yml` holds the vault-encrypted secrets (gitignored). `ansible/apps/<name>.yml` declares each Podman server app.
 
 `docs/ARCHITECTURE.md` is the full structural reference -- the layer scaffold, the guard flow, the call chain from CLI to playbook, and the conventions a change is expected to hold to. `docs/LEDGER.md` records known asymmetries and refactor opportunities.
@@ -112,6 +113,18 @@ flowchart TD
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
 These three are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.
+
+## Installing a project from its own repository
+
+A project in another repository ships a `strata.app.yml` at its root and is installed as a systemd user service of `diot`. The manifest is documented in `docs/APP_MANIFEST.md`.
+
+```bash
+cp ansible/projects.yml.example ansible/projects.yml   # then list your checkouts
+strata runbook --list                                  # the project shows up as services.install_<name>
+strata runbook services.install_<name> --target <host>
+```
+
+The runbook installs the project's toolchain, ships the committed `HEAD` of the checkout to the host and builds it there. Commit before deploying, since uncommitted changes are not shipped. Deploying again after a new commit updates the service.
 
 ## rclone mounts
 

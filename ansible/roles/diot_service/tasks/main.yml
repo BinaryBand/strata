@@ -1,0 +1,80 @@
+---
+# Write a `systemd --user` service unit for a diot-owned service, reload the
+# user manager and start it. The counterpart of podman_quadlet_service for a
+# process that is not a container: its one caller is install_source_app.yml.
+#
+# Required vars:
+#   service_user     the become_user the service runs as (e.g. diot)
+#   service_name     unit basename -- written to <name>.service
+#   service_content  full unit file content
+#
+# Optional vars:
+#   service_mode          mode for the unit file (default "0644"; tighten to
+#                         "0600" when the unit embeds secrets)
+#   service_no_log        suppress logging of the write task (default false; set
+#                         true when service_content embeds a secret)
+#   service_extra_notify  handler names to notify when the unit changes, for a
+#                         caller that must restart its service onto the new
+#                         unit (the reload below runs before they flush)
+- name: Require diot_service vars
+  ansible.builtin.assert:
+    that:
+      - service_user | default('') | length > 0
+      - service_name | default('') | length > 0
+      - service_content | default('') | length > 0
+    fail_msg: >-
+      service_user, service_name and service_content must all be set before
+      including diot_service.
+
+- name: "Look up {{ service_user }}'s uid and home directory"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ service_user }}"
+
+- name: "Write the {{ service_name }} unit"
+  become_user: "{{ service_user }}"
+  vars:
+    service_home: "{{ ansible_facts.getent_passwd[service_user][4] }}"
+  # systemd --user is reached over service_user's lingering runtime dir;
+  # without XDG_RUNTIME_DIR the user-scoped systemd_service tasks below
+  # cannot connect.
+  environment:
+    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+  block:
+    - name: Ensure the user unit directory exists
+      ansible.builtin.file:
+        path: "{{ service_home }}/.config/systemd/user"
+        state: directory
+        mode: "0700"
+
+    - name: "Write the {{ service_name }}.service unit"
+      ansible.builtin.copy:
+        dest: "{{ service_home }}/.config/systemd/user/{{ service_name }}.service"
+        mode: "{{ service_mode | default('0644') }}"
+        content: "{{ service_content }}"
+      no_log: "{{ service_no_log | default(false) }}"
+      notify: "{{ service_extra_notify | default([]) }}"
+
+# Runs every time, not only when the unit changed, so a unit the manager lost
+# (reboot, systemd reset) is recovered too, and before the caller's restart
+# handlers flush so they restart onto the new unit.
+- name: Reload the user systemd manager
+  become_user: "{{ service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true
+
+- name: Restart onto a changed unit before starting
+  ansible.builtin.meta: flush_handlers
+
+- name: "Ensure {{ service_name }} is running and starts at boot"
+  become_user: "{{ service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ service_runtime_dir }}"
+  ansible.builtin.systemd_service:
+    name: "{{ service_name }}.service"
+    scope: user
+    state: started
+    enabled: true

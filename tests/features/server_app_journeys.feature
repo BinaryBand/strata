@@ -39,6 +39,15 @@ Feature: Provision server apps and their dependency chain end-to-end
     When I run "strata runbook services.install_baikal"
     Then 3 directories are ensured before "playbooks/install_podman_app.yml"
 
+  Scenario: Installing a registered project needs uv and diot, not Podman
+    Given a project "demo" is registered
+    And neither the diot user, Podman nor Jellyfin are installed
+    When I run "strata runbook services.install_demo"
+    Then the diot user is created
+    And "playbooks/install_uv.yml" runs before "playbooks/install_source_app.yml"
+    And 3 directories are ensured before "playbooks/install_source_app.yml"
+    And "playbooks/install_podman.yml" is not run
+
   Scenario: Enabling the rclone HTTP server requires the rclone mount layer first
     Given the diot user and Podman are installed
     When I run "strata runbook infrastructure.enable_rclone_http"

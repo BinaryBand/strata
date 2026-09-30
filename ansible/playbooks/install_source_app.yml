@@ -1,0 +1,190 @@
+---
+# Deploy an external project as a systemd user service of diot. The project is
+# a repository strata does not own: its committed HEAD is archived here on the
+# controller, unpacked to a release directory on the target, built there by the
+# project's own command, and run from the `current` link. Its runbook
+# (core/source_runbook.py) hands over the resolved manifest as the `source_app`
+# extravar and has already provisioned the state directories with guard.path and
+# put the toolchain on the host, so nothing about a particular project is
+# spelled here. State lives in those directories, never in a release. A secret
+# written into the unit or a file is read from the vault by name.
+- name: Deploy an external project as a systemd user service of diot
+  hosts: all
+  become: true
+
+  vars:
+    app_root: "/srv/{{ source_app.name | default('') }}"
+
+  tasks:
+    - name: Require the project extravar
+      ansible.builtin.assert:
+        that:
+          - source_app is defined
+          - source_app.name | default('') | length > 0
+        fail_msg: >-
+          source_app must be set; run this through the services.install_<app>
+          runbook, which is built from the project's strata.app.yml.
+
+    - name: Install acl, which lets Ansible hand temp files to the unprivileged diot
+      ansible.builtin.package:
+        name: acl
+        state: present
+
+    - name: Resolve the project's committed HEAD
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv: [git, -C, "{{ source_app.project_dir }}", rev-parse, HEAD]
+      register: source_head
+      changed_when: false
+
+    - name: Check the project for uncommitted changes
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv: [git, -C, "{{ source_app.project_dir }}", status, --porcelain]
+      register: source_status
+      changed_when: false
+
+    - name: Say which commit is deployed
+      ansible.builtin.debug:
+        msg: >-
+          Deploying {{ source_app.name }} at {{ source_head.stdout }}{{
+          ' (uncommitted changes are not included)' if source_status.stdout | length > 0 else '' }}.
+
+    - name: "Check whether release {{ source_head.stdout[:12] }} is already built"
+      ansible.builtin.stat:
+        path: "{{ app_root }}/releases/{{ source_head.stdout }}/.strata-built"
+      register: source_built
+
+    - name: Build a release that is not built yet
+      when: not source_built.stat.exists
+      block:
+        - name: Archive the committed HEAD on the controller
+          delegate_to: localhost
+          become: false
+          ansible.builtin.tempfile:
+            state: file
+            suffix: ".tar.gz"
+          register: source_archive
+
+        - name: Write the archive
+          delegate_to: localhost
+          become: false
+          ansible.builtin.command:
+            argv:
+              - git
+              - -C
+              - "{{ source_app.project_dir }}"
+              - archive
+              - --format=tar.gz
+              - --output
+              - "{{ source_archive.path }}"
+              - HEAD
+          changed_when: true
+
+        # A release with no marker never became current, so nothing runs from it.
+        - name: Clear an unfinished release
+          ansible.builtin.file:
+            path: "{{ app_root }}/releases/{{ source_head.stdout }}"
+            state: absent
+
+        - name: Create the release directory
+          ansible.builtin.file:
+            path: "{{ app_root }}/releases/{{ source_head.stdout }}"
+            state: directory
+            owner: "{{ diot_user }}"
+            group: "{{ source_app.name }}"
+            mode: "0750"
+
+        - name: Unpack the release
+          ansible.builtin.unarchive:
+            src: "{{ source_archive.path }}"
+            dest: "{{ app_root }}/releases/{{ source_head.stdout }}"
+            owner: "{{ diot_user }}"
+            group: "{{ source_app.name }}"
+
+        # A shell, not a bare command: the manifest's build is a shell line
+        # (`uv sync && ln -s ...`), written by the project that owns it.
+        - name: Build the release as diot
+          become_user: "{{ diot_user }}"
+          ansible.builtin.shell:
+            cmd: "{{ source_app.build }}"
+            chdir: "{{ app_root }}/releases/{{ source_head.stdout }}"
+            executable: /bin/sh
+          changed_when: true
+
+        - name: Mark the release built
+          become_user: "{{ diot_user }}"
+          ansible.builtin.file:
+            path: "{{ app_root }}/releases/{{ source_head.stdout }}/.strata-built"
+            state: touch
+            mode: "0640"
+
+      always:
+        - name: Remove the archive from the controller
+          delegate_to: localhost
+          become: false
+          ansible.builtin.file:
+            path: "{{ source_archive.path }}"
+            state: absent
+          when: source_archive is defined and source_archive.path is defined
+
+    - name: Point current at the release
+      ansible.builtin.file:
+        src: "{{ app_root }}/releases/{{ source_head.stdout }}"
+        dest: "{{ app_root }}/current"
+        state: link
+        owner: "{{ diot_user }}"
+        group: "{{ source_app.name }}"
+      notify: "Restart {{ source_app.name }}"
+
+    - name: Find the releases on disk
+      ansible.builtin.find:
+        paths: "{{ app_root }}/releases"
+        file_type: directory
+      register: source_releases
+
+    - name: Prune all but the three newest releases
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: >-
+        {{ (source_releases.files | sort(attribute='mtime', reverse=true))[3:]
+           | rejectattr('path', 'equalto', app_root ~ '/releases/' ~ source_head.stdout) | list }}
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Write the secret files
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ vars[item.name] }}"
+        owner: "{{ diot_user }}"
+        group: "{{ source_app.name }}"
+        mode: "0600"
+      no_log: true
+      loop: "{{ source_app.secret_files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      notify: "Restart {{ source_app.name }}"
+
+    - name: "Deploy and start {{ source_app.name }}"
+      ansible.builtin.include_role:
+        name: diot_service
+      vars:
+        service_user: "{{ diot_user }}"
+        service_name: "{{ source_app.name }}"
+        service_mode: "{{ source_app.unit_mode }}"
+        service_no_log: "{{ source_app.no_log }}"
+        service_extra_notify: ["Restart {{ source_app.name }}"]
+        service_content: "{{ lookup('ansible.builtin.template', 'source_app.service.j2') }}"
+
+  handlers:
+    - name: "Restart {{ source_app.name }}"
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
+      ansible.builtin.systemd_service:
+        name: "{{ source_app.name }}.service"
+        scope: user
+        state: restarted

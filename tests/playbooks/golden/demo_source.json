@@ -1,0 +1,26 @@
+{
+  "alias": "install Demo",
+  "guards": [
+    "Prerequisite(name='sudo_password')",
+    "SystemUser(username='diot', playbook='playbooks/create_diot_user.yml')",
+    "UpstreamRunbook(dotted_name='infrastructure.install_uv')",
+    "LocalPath(path='/srv/demo', owner='diot', group='demo', mode='2770', state='directory')",
+    "LocalPath(path='/srv/demo/data', owner='diot', group='demo', mode='2770', state='directory')",
+    "LocalPath(path='/srv/demo/config', owner='diot', group='demo', mode='2750', state='directory')",
+    "Secret(vault_key='demo_host', message='Host', kind='text', default=None, generate=False)",
+    "Secret(vault_key='demo_key', message='API key', kind='password', default=None, generate=False)"
+  ],
+  "backup": {
+    "demo": "/srv/demo/data"
+  },
+  "role_vars": {
+    "service_user": "diot",
+    "service_name": "demo",
+    "service_mode": "0600",
+    "service_no_log": true,
+    "service_extra_notify": [
+      "Restart demo"
+    ]
+  },
+  "unit": "[Unit]\nDescription=Demo service\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=/srv/demo/current\nEnvironment=\"MODE=prod\"\nEnvironment=\"DEMO_HOST=<vault:demo_host>\"\nExecStart=uv run --no-sync demo serve --host ${DEMO_HOST}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+}

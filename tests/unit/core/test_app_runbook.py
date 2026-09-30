@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from strata.core import app_runbook, guard
+from strata.core import app_runbook, guard, runbook_module
 from strata.core import requirements as req
 from strata.core.models import AppSpec
 from tests._fakes import RecordingPlaybookRunner
@@ -39,7 +39,7 @@ def test_the_module_is_named_and_documented_like_a_runbook() -> None:
     assert module.__doc__ == (
         "Runbook: deploy Demo server as a rootless Podman container owned by diot."
     )
-    assert app_runbook.dotted_name("demo") == "services.install_demo"
+    assert runbook_module.dotted_name("demo") == "services.install_demo"
 
 
 def test_main_keeps_the_signature_the_executor_injects_into() -> None:

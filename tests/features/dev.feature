@@ -2,7 +2,7 @@ Feature: Maintainer tooling behind a hidden dev namespace
   As a maintainer
   I want maintainer-only commands tucked under a hidden `dev` group
   So that an operator's --help shows only operator commands, while I can still
-  regenerate the app-spec schema when I change the model
+  regenerate the app-spec schemas when I change a model
 
   Scenario: The dev group is hidden from the top-level help
     When I run "strata --help"
@@ -13,9 +13,10 @@ Feature: Maintainer tooling behind a hidden dev namespace
     When I run "strata dev --help"
     Then "schema" is listed as a command
 
-  Scenario: Regenerate the app-spec schema
+  Scenario: Regenerate the app-spec schemas
     When I run "strata dev schema"
     Then .vscode/app_spec_schema.json is written from the AppSpec model
+    And .vscode/source_app_schema.json is written from the SourceAppSpec model
     And the output reports the path it wrote
 
   Scenario: The regenerated schema matches the current model

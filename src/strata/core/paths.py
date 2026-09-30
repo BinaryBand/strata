@@ -21,3 +21,6 @@ INVENTORY_DIR = ANSIBLE_DIR / "inventory"
 HOSTS_INI = INVENTORY_DIR / "hosts.ini"
 GROUP_VARS_DIR = INVENTORY_DIR / "group_vars"
 HOST_VARS_DIR = INVENTORY_DIR / "host_vars"
+# The external projects this machine installs: absolute paths, one per project.
+# Gitignored beside hosts.ini, since the paths name the operator's own checkouts.
+PROJECTS_FILE = ANSIBLE_DIR / "projects.yml"
