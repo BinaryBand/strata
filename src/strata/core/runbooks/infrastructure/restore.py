@@ -33,7 +33,7 @@ def main(
 
     Args:
         target: Inventory host to restore onto; None uses the last selected target.
-        tags: Backup tags to restore; None restores every registered app. The
+        tags: Backup tags to restore; None restores every declared app. The
             static `config` tag is restored only when named here.
         runner: Playbook runner supplied by the executor.
 

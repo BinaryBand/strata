@@ -21,9 +21,26 @@ _CONFIG_TAG = "config"
 _CONFIG_PATH = str(paths.INVENTORY_DIR)
 
 
-def _discover_backup_paths() -> dict[str, str]:
-    """Return every declared tag -> path, or raise ValueError if one cannot be trusted."""
-    return discovery.backup_paths()
+def declared_backup_paths() -> dict[str, str]:
+    """Return every restic tag -> path the runbooks declare with @guard.backup_tag.
+
+    Refuses, with a ValueError, while any runbook fails to load: that runbook's
+    tags would be missing, and a backup that leaves an app's data out without
+    saying so is worse than one that does not run. It also refuses a tag
+    declared for two different paths.
+    """
+    modules, failures = discovery.runbook_modules()
+    if failures:
+        listed = "; ".join(f"{f.dotted_name}: {f.error}" for f in failures)
+        msg = f"Backup tags cannot be listed while a runbook fails to load ({listed})."
+        raise ValueError(msg)
+    tags: dict[str, str] = {}
+    for name, module in modules.items():
+        for tag, path in guard.backup_tags_of(module.main):
+            if tags.setdefault(tag, path) != path:
+                msg = f"Backup tag {tag!r} is declared for {tags[tag]!r} and for {path!r} ({name})."
+                raise ValueError(msg)
+    return tags
 
 
 def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:
@@ -33,7 +50,7 @@ def selected_backup_paths(tags: list[str] | None) -> dict[str, str]:
     same per-app paths this runbook reads them from. The static config tag is
     included only when named; this runbook's main() adds it regardless.
     """
-    backup_paths = _discover_backup_paths()
+    backup_paths = declared_backup_paths()
     selected = tags or sorted(backup_paths)
     unknown = sorted(set(selected) - set(backup_paths) - {_CONFIG_TAG})
     if unknown:
@@ -70,7 +87,7 @@ def main(
 
     Args:
         target: Inventory host to back up; None uses the last selected target.
-        tags: Backup tags to include; None backs up every registered app. The
+        tags: Backup tags to include; None backs up every declared app. The
             static `config` tag is always added on top of the selection.
         runner: Playbook runner supplied by the executor.
 

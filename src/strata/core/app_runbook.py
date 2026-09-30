@@ -33,7 +33,7 @@ def dotted_name(app: str) -> str:
 
 
 def build(spec: AppSpec) -> ModuleType:
-    """Return the runbook module for `spec`, its guards declared and its backup tag registered."""
+    """Return the runbook module for `spec`, its guards and backup tag declared."""
     extravars = {"podman_app": _payload(spec)}
 
     def main(target: str | None = None, *, runner: PlaybookRunner) -> int:

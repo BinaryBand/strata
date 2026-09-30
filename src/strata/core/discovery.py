@@ -191,26 +191,14 @@ def import_failures() -> list[ImportFailure]:
     return _walk().failures
 
 
-def backup_paths() -> dict[str, str]:
-    """Return every restic tag -> path the runbooks declare with @guard.backup_tag.
+def runbook_modules() -> tuple[dict[str, ModuleType], list[ImportFailure]]:
+    """Return each listed runbook's module by dotted name, and what failed to load.
 
-    Refuses, with a ValueError, while any runbook fails to load: that runbook's
-    tags would be missing, and a backup that leaves an app's data out without
-    saying so is worse than one that does not run. It also refuses a tag
-    declared for two different paths.
+    For a caller that reads what the runbooks declare (infrastructure.backup
+    reads their backup tags) and has to know whether it saw all of them.
     """
     walk = _walk()
-    if walk.failures:
-        listed = "; ".join(f"{f.dotted_name}: {f.error}" for f in walk.failures)
-        msg = f"Backup tags cannot be listed while a runbook fails to load ({listed})."
-        raise ValueError(msg)
-    tags: dict[str, str] = {}
-    for name, module in walk.modules.items():
-        for tag, path in guard.backup_tags_of(module.main):
-            if tags.setdefault(tag, path) != path:
-                msg = f"Backup tag {tag!r} is declared for {tags[tag]!r} and for {path!r} ({name})."
-                raise ValueError(msg)
-    return tags
+    return walk.modules, walk.failures
 
 
 def resolve_name(name: str) -> str | None:

@@ -31,6 +31,7 @@ import yaml
 
 from strata.core import discovery, guard
 from strata.core import requirements as req
+from strata.core.runbooks.infrastructure import backup
 from tests.playbooks._ansible import ANSIBLE_DIR, iter_tasks
 
 # Binary name -> dotted runbook (relative to strata.core.runbooks) that
@@ -76,10 +77,8 @@ def _runbook_names() -> list[str]:
 def _requires_map() -> dict[str, list[str]]:
     """Every runbook's declared upstream runbooks, by dotted name."""
     return {
-        name: [
-            r.dotted_name for r in guard.declared(module.main) if isinstance(r, req.UpstreamRunbook)
-        ]
-        for name, module in ((n, discovery.load(n)) for n in _runbook_names())
+        name: [r.dotted_name for r in _declared(name) if isinstance(r, req.UpstreamRunbook)]
+        for name in _runbook_names()
     }
 
 
@@ -267,7 +266,7 @@ KNOWN_OVERLAPPING_BACKUP_TAGS: set[tuple[str, str]] = set()
 
 
 def test_no_backup_tag_covers_another_tags_path() -> None:
-    overlaps = set(_overlapping(discovery.backup_paths()))
+    overlaps = set(_overlapping(backup.declared_backup_paths()))
 
     unexpected = overlaps - KNOWN_OVERLAPPING_BACKUP_TAGS
     assert not unexpected, (

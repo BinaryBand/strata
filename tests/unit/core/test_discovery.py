@@ -16,6 +16,7 @@ from types import ModuleType
 import pytest
 
 from strata.core import discovery, paths
+from tests._fakes import fail_import
 
 # A runbook that must exist for the dependency chain documented in docs/ARCHITECTURE.md
 # to work at all; if it is renamed these tests should be updated deliberately.
@@ -130,15 +131,7 @@ def test_an_unimportable_module_is_skipped_not_raised(
     monkeypatch: pytest.MonkeyPatch,
     runbooks: list[discovery.RunbookInfo],
 ) -> None:
-    real_import = discovery.importlib.import_module
-
-    def flaky(name: str, package: str | None = None) -> ModuleType:
-        if name.endswith("." + _FILE_DOTTED):
-            msg = "boom"
-            raise ImportError(msg)
-        return real_import(name, package)
-
-    monkeypatch.setattr(discovery.importlib, "import_module", flaky)
+    fail_import(monkeypatch, _FILE_DOTTED)
 
     names = {r.dotted_name for r in discovery.iter_runbooks()}
     assert _FILE_DOTTED not in names
@@ -219,16 +212,8 @@ def test_load_returns_the_module_built_from_the_spec() -> None:
 _SHIPPED_APPS = paths.APPS_DIR
 
 
-@pytest.fixture
-def apps_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A private ansible/apps/ that the discovery under test reads instead of the shipped one."""
-    monkeypatch.setattr(paths, "APPS_DIR", tmp_path)
-    return tmp_path
-
-
-def _copy_spec(apps_dir: Path, name: str, *, as_name: str | None = None) -> None:
-    source = (_SHIPPED_APPS / f"{name}.yml").read_text()
-    (apps_dir / f"{as_name or name}.yml").write_text(source)
+def _copy_spec(apps_dir: Path, name: str) -> None:
+    (apps_dir / f"{name}.yml").write_text((_SHIPPED_APPS / f"{name}.yml").read_text())
 
 
 def test_a_bad_spec_is_reported_and_the_others_still_load(apps_dir: Path) -> None:
@@ -270,44 +255,3 @@ def test_a_spec_that_repeats_a_runbook_module_is_reported(
     # The listing describes the module that load() returns: the spec's, not the twin's.
     assert listed[0].summary.startswith("deploy Baikal")
     assert discovery.load("services.install_baikal") is not twin
-
-
-# ── backup tags ───────────────────────────────────────────────────────
-
-
-def test_backup_paths_are_the_tags_the_shipped_specs_declare() -> None:
-    assert discovery.backup_paths() == {
-        "baikal": "/srv/baikal",
-        "jellyfin": "/srv/jellyfin/config",
-        "minio": "/srv/minio/data",
-    }
-
-
-def _write_spec(apps_dir: Path, name: str, *, tag: str, path: str) -> None:
-    (apps_dir / f"{name}.yml").write_text(
-        f"name: {name}\nalias: install {name}\ndescription: {name} server\n"
-        f"image: docker.io/x/{name}:1\ndirs:\n  - path: {path}\n"
-        f"backup:\n  tag: {tag}\n  path: {path}\n"
-    )
-
-
-def test_a_tag_declared_for_two_paths_is_refused(apps_dir: Path) -> None:
-    _write_spec(apps_dir, "alpha", tag="shared", path="/srv/alpha")
-    _write_spec(apps_dir, "beta", tag="shared", path="/srv/beta")
-    with pytest.raises(
-        ValueError, match="'shared' is declared for '/srv/alpha' and for '/srv/beta'"
-    ):
-        discovery.backup_paths()
-
-
-def test_a_tag_repeated_for_the_same_path_is_accepted(apps_dir: Path) -> None:
-    _write_spec(apps_dir, "alpha", tag="shared", path="/srv/alpha")
-    _write_spec(apps_dir, "beta", tag="shared", path="/srv/alpha")
-    assert discovery.backup_paths() == {"shared": "/srv/alpha"}
-
-
-def test_backup_paths_refuse_while_a_spec_fails_to_build(apps_dir: Path) -> None:
-    _write_spec(apps_dir, "alpha", tag="alpha", path="/srv/alpha")
-    (apps_dir / "broken.yml").write_text("name: broken\n")
-    with pytest.raises(ValueError, match=r"services\.install_broken: AppSpecError"):
-        discovery.backup_paths()

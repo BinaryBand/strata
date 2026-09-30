@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from strata.adapters.ansible import secrets
+from strata.core import discovery
 from strata.core.models import Device
 
 
@@ -69,3 +70,17 @@ def fake_vault(
     monkeypatch.setattr(secrets, "set_secret", vault.__setitem__)
     monkeypatch.setattr(secrets, "ensure_vault_password", lambda _prompter: None)
     return vault
+
+
+def fail_import(monkeypatch: pytest.MonkeyPatch, dotted: str) -> None:
+    """Make importing the runbook module `dotted` (relative to strata.core.runbooks) raise."""
+    real_import = discovery.importlib.import_module
+    broken = f"strata.core.runbooks.{dotted}"
+
+    def flaky(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == broken:
+            msg = "simulated import failure"
+            raise ImportError(msg)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(discovery.importlib, "import_module", flaky)

@@ -2,9 +2,10 @@
 
 What is real here: the CLI entry point, name resolution, `--tags` parsing, the
 real `guard_executor`, and both runbooks' own `selected_backup_paths()` walk
-over the `@guard.backup_tag` declarations on the services runbooks. That walk
-is the thing under test -- which tags exist, what each maps to, and that the
-static `config` tag survives every selection.
+over the `@guard.backup_tag` metadata on the runbooks discovery finds. That walk
+is the thing under test -- which tags exist, what each maps to, that the
+static `config` tag survives every selection, and that backup refuses while a
+runbook fails to load (the shared "fails to import" step in `conftest.py`).
 
 What is faked, at the same seams the rest of the suite uses: the adapter
 fakes from `_guard_harness` (runner, secrets, prompts, passwd, inventory), so
