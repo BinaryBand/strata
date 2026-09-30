@@ -1,0 +1,19 @@
+{
+  "alias": "install Baïkal",
+  "guards": [
+    "Prerequisite(name='sudo_password')",
+    "UpstreamRunbook(dotted_name='infrastructure.install_podman')",
+    "LocalPath(path='/srv/baikal', owner='diot', group='baikal', mode='2770', state='directory')",
+    "LocalPath(path='/srv/baikal/config', owner='diot', group='baikal', mode='2777', state='directory')",
+    "LocalPath(path='/srv/baikal/Specific', owner='diot', group='baikal', mode='2777', state='directory')"
+  ],
+  "backup": {
+    "baikal": "/srv/baikal"
+  },
+  "role_vars": {
+    "quadlet_user": "diot",
+    "quadlet_group": "baikal",
+    "quadlet_name": "baikal"
+  },
+  "quadlet": "[Unit]\nDescription=Baikal CalDAV/CardDAV server\n\n[Container]\nImage=docker.io/ckulka/baikal:nginx\nVolume=/srv/baikal/config:/var/www/baikal/config:Z\nVolume=/srv/baikal/Specific:/var/www/baikal/Specific:Z\nPublishPort=8080:80\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+}
