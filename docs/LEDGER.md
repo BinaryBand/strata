@@ -92,3 +92,11 @@ Known trade, accepted: this swaps a stable CLI contract for a Python one that an
 **RESOLVED: The prerequisite set was enumerated twice** -- `guard_executor._PREREQUISITES` mapped each named prerequisite to the function that establishes it, while `guard_status._prerequisite_satisfied` re-listed the same two names in an `if name == ...` ladder to answer the GUI's readiness endpoint. Nothing tied them together, so a third prerequisite registered in the executor would have been satisfied correctly at run time and reported missing forever on the status display. Both halves now live on one entry in `adapters/prerequisites.py`, which owns the table and exposes `ensure()` and `satisfied()`; a test asserts every registered entry answers both. Splitting it into its own module also took `guard_executor` back under the 400-line cap. It is not the old `utils/prerequisites.py`: that was a runtime registry populated by import side effect, and this is a plain table with no registration step to sequence.
 
 **State model is a singleton with no room to grow** -- `AppState` has one field. If a second stateful value is needed, adding it is trivial, and the file-per-model structure is already in place. No action needed yet.
+
+**Batch adjacent @guard.path requirements into one play** -- `guard_executor._ensure_local_path` runs `ansible/playbooks/ensure_path.yml` once per unsatisfied `LocalPath`, and each run is a separate ansible-playbook process costing at least 0.7 s with fact gathering off. On a remote target the controller-only fast path never applies, so every declared path runs on every run. `install_baikal` declares 3 paths and `install_jellyfin` declares 2. The change:
+
+1. `_satisfy_all` looks ahead and groups consecutive `LocalPath` requirements that are unsatisfied, keeping declaration order.
+1. The group goes to `ensure_path.yml` as one `guard_paths` extravar: a list of `{path, state, owner, group, mode}` items.
+1. `ensure_path.yml` loops over `guard_paths`, creating the owning group first for each item that names one.
+
+This changes the extravar contract of `ensure_path.yml`, which today takes `guard_path`, `guard_state`, `guard_owner`, `guard_group` and `guard_mode`. Only the Podman integration suite (`uv run pytest -m integration`) runs that playbook for real, so run it before merging.
