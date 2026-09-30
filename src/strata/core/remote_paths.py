@@ -16,7 +16,8 @@ REMOTE_MOUNT_BASE = "/mnt/rclone"
 # it also allows, and not opening with `-` or `.`, so `./dir:x` stays a local
 # path. A dotted name such as `b2.backup` used to read as a local path, and a
 # storage guard then created that directory instead of reaching the remote.
-# group_vars/all/restic.yml repeats this pattern for the Ansible side.
+# group_vars/all/restic.yml repeats this pattern for the Ansible side; a test
+# in test_remote_paths.py fails when the two differ.
 _REMOTE_PATH_RE = re.compile(r"^([A-Za-z0-9_+@][A-Za-z0-9_.+@-]*):(.*)$")
 
 

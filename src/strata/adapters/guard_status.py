@@ -81,7 +81,10 @@ def guard_status(  # noqa: PLR0911, PLR0912, C901
             # live would need the vault unlocked, which this read-only check
             # must not do. A host_vars override counts, as it does for the
             # playbook.
-            return _status(ok=host_scope.HostSecrets(target).has_value(requirement.vault_key))
+            key = requirement.vault_key
+            return _status(
+                ok=host_scope.host_override(target, key) is not None or secrets.has_secret(key)
+            )
         case req.SystemUser():
             # Existence, deliberately, even though the executor stopped
             # treating it as proof the account is fit (it now always runs the

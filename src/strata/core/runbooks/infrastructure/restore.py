@@ -42,6 +42,6 @@ def main(
     """
     return runner.run_playbook(
         "playbooks/restore.yml",
-        extravars={"backup_paths": selected_backup_paths(tags, always_config=False)},
+        extravars={"backup_paths": selected_backup_paths(tags)},
         target=target,
     )

@@ -86,7 +86,7 @@ def test_var_with_a_target_sets_it_for_that_host_only(monkeypatch: pytest.Monkey
     )
     assert result.exit_code == 0
     assert calls == [("nas", "restic_repository", "pcloud:nas")]
-    assert "for nas in ansible/inventory/host_vars/nas.yml" in result.output
+    assert "in ansible/inventory/host_vars/nas.yml" in result.output
 
 
 def test_var_refuses_an_unknown_target_before_asking(monkeypatch: pytest.MonkeyPatch) -> None:

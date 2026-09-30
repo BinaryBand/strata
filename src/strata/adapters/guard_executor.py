@@ -159,10 +159,10 @@ def _ensure_storage(
 ) -> int | None:
     # A host_vars override is what the playbook will use, so with one set the
     # vaulted default is neither asked for nor read.
-    scoped = host_scope.HostSecrets(target)
-    if scoped.override(requirement.vault_key) is None:
+    value = host_scope.host_override(target, requirement.vault_key)
+    if value is None:
         secrets.ensure_secret(requirement.as_secret(), prompter)
-    value = scoped.get_secret(requirement.vault_key)
+        value = secrets.get_secret(requirement.vault_key)
     if not value:
         # This used to say "was just set but could not be read back", which
         # was almost never what happened: the usual cause was an empty value

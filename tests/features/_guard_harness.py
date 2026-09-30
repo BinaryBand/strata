@@ -128,7 +128,7 @@ def _fake_rclone(monkeypatch: pytest.MonkeyPatch, ctx: dict[str, Any]) -> None:
     """
     # No scenario sets a per-host override; reading one would read the
     # operator's real host_vars/<target>.yml.
-    monkeypatch.setattr(host_scope.HostSecrets, "override", lambda _self, _name: None)
+    monkeypatch.setattr(host_scope, "host_override", lambda _host, _name: None)
     monkeypatch.setattr(rclone, "has_remote", lambda name: name in ctx["rclone_known"])
     monkeypatch.setattr(rclone, "list_remotes", lambda: sorted(ctx["rclone_listed"]))
     monkeypatch.setattr(rclone, "is_writable", lambda name: name in ctx["rclone_writable"])

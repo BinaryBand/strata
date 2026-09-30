@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 
 class JsonHandler(Protocol):
@@ -72,10 +72,12 @@ def require(data: Mapping[str, Any], *keys: str) -> tuple[str, ...]:
     if not all(values):
         verb = "is" if len(keys) == 1 else "are"
         raise ApiError(400, f"{' and '.join(keys)} {verb} required")
+    strings: list[str] = []
     for key, value in zip(keys, values, strict=True):
         if not isinstance(value, str):
             raise ApiError(400, f"{key} must be a string")
-    return cast("tuple[str, ...]", values)
+        strings.append(value)
+    return tuple(strings)
 
 
 def read_json_body(handler: JsonHandler) -> dict[str, Any]:

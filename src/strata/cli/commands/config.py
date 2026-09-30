@@ -46,10 +46,11 @@ def config_var(
 
     if target is None:
         group_vars.set_var(name, value)
-        typer.echo(f"Set {name} -> {value!r} in ansible/inventory/group_vars/all/managed.yml")
-        return
-    host_vars.set_var(target, name, value)
-    typer.echo(f"Set {name} -> {value!r} for {target} in ansible/inventory/host_vars/{target}.yml")
+        where = "ansible/inventory/group_vars/all/managed.yml"
+    else:
+        host_vars.set_var(target, name, value)
+        where = f"ansible/inventory/host_vars/{target}.yml"
+    typer.echo(f"Set {name} -> {value!r} in {where}")
 
 
 @app.command("vault-password")

@@ -241,7 +241,7 @@ def test_loopback_and_a_named_origins_host_are_answered(served: str, host: str) 
 
 
 def test_allowed_hosts_adds_named_origins_and_hosts_to_loopback() -> None:
-    hosts = gui_server.allowed_hosts(["https://box.example.ts.net:8443"], ["Other.example:9"])
+    hosts = gui_server._allowed_hosts(["https://box.example.ts.net:8443"], ["Other.example:9"])
     assert hosts == {"127.0.0.1", "localhost", "::1", "box.example.ts.net", "other.example"}
 
 

@@ -14,30 +14,26 @@ from __future__ import annotations
 from strata.adapters.ansible import host_vars, inventory, secrets
 
 
-class HostSecrets:
-    """Satisfies `ports.SecretReader` for one host, overrides first.
+def host_override(host: str | None, name: str) -> str | None:
+    """Return `host`'s host_vars value for `name`, or None when it sets none.
 
-    With no host there is no host_vars file to consult, so it reads the vault
-    alone, as it did before overrides were honoured.
+    With no host there is no host_vars file to consult. A name outside the
+    inventory has none Ansible would read either, and checking keeps one such
+    as `../x` from naming a file outside host_vars/.
     """
+    if host is None or inventory.get(host) is None:
+        return None
+    value = host_vars.load(host).get(name)
+    return None if value in (None, "") else str(value)
+
+
+class HostSecrets:
+    """Satisfies `ports.SecretReader` for one host, override first, then the vault."""
 
     def __init__(self, host: str | None) -> None:
         """Scope every lookup to `host`."""
         self._host = host
 
-    def override(self, name: str) -> str | None:
-        """Return `host`'s host_vars value for `name`, or None when it sets none."""
-        # A name outside the inventory has no host_vars Ansible would read, and
-        # checking keeps one such as `../x` from naming a file outside host_vars/.
-        if self._host is None or inventory.get(self._host) is None:
-            return None
-        value = host_vars.load(self._host).get(name)
-        return None if value in (None, "") else str(value)
-
     def get_secret(self, name: str) -> str | None:
         """Return the value a playbook against `host` would see for `name`."""
-        return self.override(name) or secrets.get_secret(name)
-
-    def has_value(self, name: str) -> bool:
-        """Report whether `name` has a value for `host`, without decrypting the vault."""
-        return self.override(name) is not None or secrets.has_secret(name)
+        return host_override(self._host, name) or secrets.get_secret(name)

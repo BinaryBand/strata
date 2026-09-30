@@ -155,6 +155,14 @@ _ROUTES = (
 )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _host_name(value: str) -> str | None:
+    """Return the lower-cased host name in a `Host` header or an origin, without its port."""
+    return urlsplit(value if "//" in value else f"//{value}").hostname
+
+
 def _allowed_origin(origin: str, extra: frozenset[str]) -> str | None:
     """Return the value to echo in Access-Control-Allow-Origin, or None to send none.
 
@@ -166,27 +174,16 @@ def _allowed_origin(origin: str, extra: frozenset[str]) -> str | None:
     """
     if origin in extra:
         return origin
-    host = urlsplit(origin).hostname
-    return origin if host in {"127.0.0.1", "localhost", "::1"} else None
+    return origin if _host_name(origin) in _LOOPBACK_HOSTS else None
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-
-
-def _host_name(value: str) -> str | None:
-    """Return the lower-cased host name in a `Host` header or an origin, without its port."""
-    return urlsplit(value if "//" in value else f"//{value}").hostname
-
-
-def allowed_hosts(allow_origins: Sequence[str], allow_hosts: Sequence[str]) -> frozenset[str]:
+def _allowed_hosts(allow_origins: Sequence[str], allow_hosts: Sequence[str]) -> frozenset[str]:
     """Return the `Host` names a request may carry: loopback, each named origin's, and any named.
 
     A named origin's host is allowed because `tailscale serve` forwards the
     tailnet name it was reached on as `Host`, which is that origin's host.
     """
-    named = {_host_name(origin) for origin in allow_origins} | {
-        _host_name(host) for host in allow_hosts
-    }
+    named = {_host_name(value) for value in (*allow_origins, *allow_hosts)}
     return _LOOPBACK_HOSTS | {name for name in named if name}
 
 
@@ -289,12 +286,12 @@ class GuiRequestHandler(http.server.BaseHTTPRequestHandler):
 
 
 def _request_handler(
-    token: str, allow_origins: frozenset[str], hosts: frozenset[str]
+    token: str, allow_origins: Sequence[str], allow_hosts: Sequence[str]
 ) -> type[http.server.BaseHTTPRequestHandler]:
     """Configure and return `GuiRequestHandler` for one `strata gui` process's lifetime."""
     GuiRequestHandler._token = token  # noqa: SLF001 -- this module owns GuiRequestHandler
-    GuiRequestHandler._allow_origins = allow_origins  # noqa: SLF001
-    GuiRequestHandler._allowed_hosts = hosts  # noqa: SLF001
+    GuiRequestHandler._allow_origins = frozenset(allow_origins)  # noqa: SLF001
+    GuiRequestHandler._allowed_hosts = _allowed_hosts(allow_origins, allow_hosts)  # noqa: SLF001
     return GuiRequestHandler
 
 
@@ -319,8 +316,7 @@ def serve(
     free of Typer so the server can be exercised without a CLI runner.
     """
     token = gui_token.get_or_create_token()
-    hosts = allowed_hosts(allow_origins, allow_hosts)
-    handler = _request_handler(token, frozenset(allow_origins), hosts)
+    handler = _request_handler(token, allow_origins, allow_hosts)
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         # Read the port back off the socket rather than echoing the argument:
         # port 0 means "let the kernel choose", and then the requested port is

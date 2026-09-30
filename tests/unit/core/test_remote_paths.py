@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from strata.core import remote_paths
+from strata.core import paths, remote_paths
 
 # ── is_remote_path() ──────────────────────────────────────────────────
 
@@ -110,3 +112,17 @@ def test_resolve_uses_the_remote_name_and_mount_root_consistently() -> None:
     assert remote_paths.resolve(path).startswith(
         remote_paths.mount_root(remote_paths.remote_name(path))
     )
+
+
+def test_the_ansible_side_uses_the_same_remote_name_pattern() -> None:
+    """restic.yml resolves restic_repository with its own copy of the pattern.
+
+    Nothing else links the two, and when they differed a dotted remote name
+    was a remote to one side and a local path to the other.
+    """
+    restic_yml = (paths.GROUP_VARS_DIR / "all" / "restic.yml").read_text()
+    jinja = re.search(r"regex_replace\('\^(\(.+?\)):/\*'", restic_yml)
+    python = re.fullmatch(r"\^(\(.+?\)):\(\.\*\)\$", remote_paths._REMOTE_PATH_RE.pattern)
+    assert jinja is not None
+    assert python is not None
+    assert jinja.group(1) == python.group(1)
