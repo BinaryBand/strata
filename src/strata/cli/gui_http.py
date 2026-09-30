@@ -74,12 +74,22 @@ def require(data: Mapping[str, Any], *keys: str) -> tuple[Any, ...]:
 
 
 def read_json_body(handler: JsonHandler) -> dict[str, Any]:
-    """Parse the request body as a JSON object, or {} if there is none."""
+    """Parse the request body as a JSON object, or {} if there is none.
+
+    A body that parses to anything but an object is refused here: every route
+    reads it with `.get`, so a list or a bare scalar would otherwise surface as
+    an AttributeError and a 500 for what is the client's mistake.
+    """
     length = int(handler.headers.get("Content-Length", 0) or 0)
     if length == 0:
         return {}
     raw = handler.rfile.read(length)
-    return json.loads(raw) if raw else {}
+    if not raw:
+        return {}
+    body = json.loads(raw)
+    if not isinstance(body, dict):
+        raise ApiError(400, "request body must be a JSON object")
+    return body
 
 
 def send_json(handler: JsonHandler, status: int, payload: dict[str, Any]) -> None:

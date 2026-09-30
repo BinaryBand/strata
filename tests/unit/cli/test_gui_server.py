@@ -278,6 +278,11 @@ def test_a_malformed_json_body_is_a_400_not_a_dropped_connection(served: str) ->
     assert "error" in payload
 
 
+def test_a_non_object_json_body_is_a_400_not_a_500(served: str) -> None:
+    status, payload = _send(f"{served}/api/run", "POST", body=b"[]", token=_TOKEN)
+    assert (status, payload) == (400, {"error": "request body must be a JSON object"})
+
+
 def test_an_unexpected_failure_is_a_500_not_a_dropped_connection(
     served: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -40,6 +40,14 @@ def test_read_json_body_empty_when_no_content_length() -> None:
     assert gui_http.read_json_body(handler) == {}
 
 
+@pytest.mark.parametrize("body", [b"[]", b"null", b"3"])
+def test_read_json_body_refuses_a_non_object_with_a_400(body: bytes) -> None:
+    with pytest.raises(gui_http.ApiError) as excinfo:
+        gui_http.read_json_body(FakeHandler(body=body))
+    assert excinfo.value.status == 400
+    assert excinfo.value.message == "request body must be a JSON object"
+
+
 def test_send_json_writes_status_headers_and_body() -> None:
     handler = FakeHandler()
     gui_http.send_json(handler, 201, {"ok": True})
