@@ -137,10 +137,10 @@ To use Ollama as AnythingLLM's backend, install it on the same registered host:
 uv run strata runbook services.install_ollama --target <host>
 ```
 
-On the target, pull your chosen model into the managed container:
+Then pull your chosen models into the managed container from the same machine. `--tags` takes a comma-separated list of model names, and a model already present is skipped:
 
 ```bash
-sudo -iu diot podman exec systemd-ollama ollama pull <model>
+uv run strata runbook services.pull_ollama_model --target <host> --tags qwen2.5:3b,llama3.2:3b
 ```
 
 In AnythingLLM's LLM settings, select Ollama, set its base URL to the HTTPS URL printed by the installation (`https://<host>.<tailnet>.ts.net:11434`), and select the pulled model. This URL is reachable from AnythingLLM's container; its own `localhost` refers to that container. The tailnet must allow access to port 11434. Ollama's API has no authentication, so access is controlled by the tailnet policy. Models are not downloaded automatically.

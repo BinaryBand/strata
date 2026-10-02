@@ -33,6 +33,7 @@ ALLOWED_EXCEPTIONS: dict[str, str] = {
     "infrastructure.backup": "an operation on a provisioned machine, not a provisioning step",
     "infrastructure.restore": "the inverse operation of backup; same reasoning",
     "infrastructure.sync_rclone_remote": "pushes existing rclone config; installs nothing",
+    "services.pull_ollama_model": "downloads models into an installed container; no service",
 }
 
 

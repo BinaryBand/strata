@@ -220,7 +220,11 @@ def test_a_bad_spec_is_reported_and_the_others_still_load(apps_dir: Path) -> Non
     _copy_spec(apps_dir, "baikal")
     (apps_dir / "broken.yml").write_text("name: broken\n")
 
-    services = {r.dotted_name for r in discovery.iter_runbooks() if r.category == "services"}
+    services = {
+        r.dotted_name
+        for r in discovery.iter_runbooks()
+        if r.category == "services" and r.dotted_name.startswith("services.install_")
+    }
     failures = {f.dotted_name: f.error for f in discovery.import_failures()}
 
     assert services == {"services.install_baikal"}

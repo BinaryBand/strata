@@ -1,0 +1,43 @@
+---
+# Pull models into the Ollama container that services.install_ollama deployed,
+# as diot, which owns the rootless container. A model already present is
+# skipped; one without a tag is the :latest the registry would give it.
+- name: Pull models into the Ollama container
+  hosts: all
+  become: true
+  become_user: "{{ diot_user }}"
+  gather_facts: false
+
+  tasks:
+    - name: Require the model list
+      ansible.builtin.assert:
+        that:
+          - ollama_models is defined
+          - ollama_models | length > 0
+        fail_msg: >-
+          ollama_models must be set; run this through the
+          services.pull_ollama_model runbook.
+
+    - name: Look up the container owner's uid
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ diot_user }}"
+
+    - name: Manage models in the rootless container
+      environment:
+        XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
+      block:
+        - name: List the models already in the container
+          ansible.builtin.command:
+            argv: [podman, exec, systemd-ollama, ollama, list]
+          register: ollama_present
+          changed_when: false
+
+        - name: Pull the missing models
+          when: >-
+            (item if ':' in item else item ~ ':latest')
+            not in (ollama_present.stdout_lines[1:] | map('split') | map('first'))
+          ansible.builtin.command:
+            argv: [podman, exec, systemd-ollama, ollama, pull, "{{ item }}"]
+          loop: "{{ ollama_models }}"
+          changed_when: true

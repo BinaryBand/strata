@@ -1,1 +1,1 @@
-"""The `services` runbook category: rootless Podman apps, each built from ansible/apps/."""
+"""The `services` runbook category: Podman apps built from ansible/apps/, and operations on them."""

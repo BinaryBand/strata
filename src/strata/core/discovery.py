@@ -51,7 +51,7 @@ class RunbookInfo:
 def accepts_tags(main: Callable[..., object]) -> bool:
     """Return True if a runbook's ``main()`` declares a ``tags`` parameter.
 
-    Only two runbooks do (backup and restore), and `strata runbook --tags` is
+    Only backup, restore and pull_ollama_model do, and `strata runbook --tags` is
     forwarded to those alone. cli/dispatch.py asks the same question of the
     module it is about to run, so the check lives here rather than in both.
     """
