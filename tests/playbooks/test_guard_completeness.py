@@ -131,7 +131,7 @@ def _one_command(value: object) -> str:
 # runbook on the play needs that feature's tool. The guard such a project declares is
 # pinned where the runbook is built (tests/unit/core/test_source_runbook.py), and a task
 # that uses the tool with no condition is still seen here.
-_FEATURE_CONDITIONS = ("source_app.tailnet",)
+_FEATURE_CONDITIONS = ("source_app.tailnet", "podman_app.tailnet")
 
 
 def _for_a_declared_feature(task: dict[str, object]) -> bool:

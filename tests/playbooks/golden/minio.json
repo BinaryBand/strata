@@ -11,11 +11,14 @@
     "minio": "/srv/minio/data"
   },
   "role_vars": {
-    "quadlet_mode": "0600",
-    "quadlet_no_log": true,
     "quadlet_user": "diot",
     "quadlet_group": "minio",
-    "quadlet_name": "minio"
+    "quadlet_name": "minio",
+    "quadlet_mode": "0600",
+    "quadlet_no_log": true,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
   },
   "quadlet": "[Unit]\nDescription=MinIO object storage server\n\n[Container]\nImage=quay.io/minio/minio:latest\nVolume=/srv/minio/data:/data:Z\nEnvironment=MINIO_ROOT_USER=<vault:minio_root_user>\nEnvironment=MINIO_ROOT_PASSWORD=<vault:minio_root_password>\nExec=server /data --console-address \":9001\"\nPublishPort=9000:9000\nPublishPort=9001:9001\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
 }

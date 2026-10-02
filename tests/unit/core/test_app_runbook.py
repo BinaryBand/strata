@@ -88,7 +88,10 @@ def test_main_runs_the_generic_playbook_with_the_resolved_app() -> None:
         "image": "docker.io/demo/demo:1",
         "volumes": [{"host": "/srv/demo", "container": "/data"}],
         "mount": {"host": "/mnt/rclone/pcloud/Media", "container": "/media"},
-        "ports": [{"host": 8000, "container": 80}],
+        "ports": [{"host": 8000, "container": 80, "bind": None}],
+        "tailnet": None,
+        "userns": None,
+        "capabilities": [],
         "env": {"MODE": "prod"},
         "secret_env": [{"name": "demo_user", "env": "USER"}],
         "command": "serve /data",
@@ -103,3 +106,17 @@ def test_a_unit_holding_no_secret_is_public_and_logged() -> None:
     module.main(runner=runner)
     app = runner.calls[0][1]["podman_app"]
     assert (app["unit_mode"], app["no_log"], app["secret_env"]) == ("0644", False, [])
+
+
+def test_tailnet_guard_runs_before_state_and_only_for_published_apps() -> None:
+    module = _build(
+        ports=[{"host": 3001, "container": 3001, "bind": "127.0.0.1"}],
+        tailnet={"port": 3001, "https_port": 3001},
+        files=[{"path": "/srv/demo/.env", "mode": "0660"}],
+    )
+    declared = guard.declared(module.main)
+    assert declared[2] == req.UpstreamRunbook("infrastructure.enable_tailscale")
+    assert req.LocalPath("/srv/demo/.env", "diot", "demo", "0660", "touch") in declared
+    assert req.UpstreamRunbook("infrastructure.enable_tailscale") not in guard.declared(
+        _build().main
+    )

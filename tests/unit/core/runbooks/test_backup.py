@@ -20,6 +20,7 @@ def _write_spec(apps_dir: Path, name: str, *, tag: str, path: str) -> None:
 
 def test_the_tags_are_the_ones_the_shipped_specs_declare() -> None:
     assert backup.declared_backup_paths() == {
+        "anythingllm": "/srv/anythingllm/storage",
         "baikal": "/srv/baikal",
         "jellyfin": "/srv/jellyfin/config",
         "minio": "/srv/minio/data",

@@ -19,6 +19,70 @@
           podman_app must be set; run this through the services.install_<app>
           runbook, which is built from ansible/apps/<app>.yml.
 
+    - name: Read this host's tailnet status
+      when: podman_app.tailnet is not none
+      ansible.builtin.command:
+        argv: [tailscale, status, --json]
+      register: podman_tailnet_status
+      changed_when: false
+
+    - name: Parse the tailnet status
+      when: podman_app.tailnet is not none
+      ansible.builtin.set_fact:
+        podman_tailnet_self: "{{ (podman_tailnet_status.stdout | from_json) }}"
+
+    - name: Require tailnet HTTPS before deploying
+      when: podman_app.tailnet is not none
+      ansible.builtin.assert:
+        that:
+          - podman_tailnet_self.Self.DNSName | default('') | length > 0
+          - podman_tailnet_self.CertDomains | default([], true) | length > 0
+        fail_msg: Enable MagicDNS and HTTPS certificates in the Tailscale admin console, then retry.
+
+    - name: Read the existing tailnet listeners
+      when: podman_app.tailnet is not none
+      ansible.builtin.command:
+        argv: [tailscale, serve, status, --json]
+      register: podman_tailnet_serve
+      changed_when: false
+
+    - name: Parse the tailnet listeners
+      when: podman_app.tailnet is not none
+      ansible.builtin.set_fact:
+        podman_tailnet_config: "{{ podman_tailnet_serve.stdout | default('{}', true) | from_json }}"
+
+    - name: Find the desired listener and existing root handler
+      when: podman_app.tailnet is not none
+      ansible.builtin.set_fact:
+        podman_tailnet_address: >-
+          {{ podman_tailnet_self.Self.DNSName | trim('.')
+             }}:{{ podman_app.tailnet.https_port }}
+        podman_tailnet_backend: "http://127.0.0.1:{{ podman_app.tailnet.port }}"
+        podman_tailnet_listener: >-
+          {{ (podman_tailnet_config.TCP | default({}, true)).get(podman_app.tailnet.https_port | string, {}) }}
+
+    - name: Find what the tailnet root serves now
+      when: podman_app.tailnet is not none
+      ansible.builtin.set_fact:
+        podman_tailnet_handler: >-
+          {{ ((podman_tailnet_config.Web | default({}, true)).get(podman_tailnet_address, {})
+              .get('Handlers', {})).get('/', {}) }}
+        podman_tailnet_funnel: >-
+          {{ (podman_tailnet_config.AllowFunnel | default({}, true)).get(podman_tailnet_address, false) }}
+
+    - name: Refuse another service's listener or a public Funnel
+      when: podman_app.tailnet is not none
+      ansible.builtin.assert:
+        that:
+          - not podman_tailnet_funnel
+          - >-
+            podman_tailnet_listener == {} or
+            (podman_tailnet_listener.HTTPS | default(false) and
+             podman_tailnet_handler.Proxy | default('') == podman_tailnet_backend)
+        fail_msg: >-
+          {{ podman_tailnet_address }} already serves another backend or has Funnel enabled.
+          Inspect `tailscale serve status` and resolve that listener before retrying.
+
     - name: "Deploy and start {{ podman_app.name }}"
       ansible.builtin.include_role:
         name: podman_quadlet_service
@@ -28,4 +92,39 @@
         quadlet_name: "{{ podman_app.name }}"
         quadlet_mode: "{{ podman_app.unit_mode }}"
         quadlet_no_log: "{{ podman_app.no_log }}"
+        quadlet_extra_notify: ["Restart the app"]
         quadlet_content: "{{ lookup('ansible.builtin.template', 'podman_app.container.j2') }}"
+
+    - name: Wait for the loopback backend
+      when: podman_app.tailnet is not none
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ podman_app.tailnet.port }}"
+        timeout: 120
+
+    - name: Publish the app privately over tailnet HTTPS
+      when: podman_app.tailnet is not none and podman_tailnet_handler == {}
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - serve
+          - --bg
+          - --yes
+          - "--https={{ podman_app.tailnet.https_port }}"
+          - "{{ podman_tailnet_backend }}"
+      changed_when: true
+
+    - name: Show the app's tailnet URL
+      when: podman_app.tailnet is not none
+      ansible.builtin.debug:
+        msg: "Open https://{{ podman_tailnet_address }}/ to configure {{ podman_app.name }}."
+
+  handlers:
+    - name: Restart the app
+      become_user: "{{ diot_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ diot_runtime_dir }}"
+      ansible.builtin.systemd_service:
+        name: "{{ podman_app.name }}.service"
+        scope: user
+        state: restarted

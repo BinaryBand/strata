@@ -19,6 +19,7 @@ from strata.core.models.app_spec import AppBackup, AppDir, AppSecret
 from strata.core.ports import PlaybookRunner
 
 OWNER = "diot"
+TAILNET_RUNBOOK = "infrastructure.enable_tailscale"
 
 type Main = Callable[..., int]
 type Guard = Callable[[Main], Main]
@@ -37,9 +38,9 @@ def leading_guards(alias: str, backup: AppBackup | None) -> list[Guard]:
     return [*guards, guard.prerequisite("sudo_password")]
 
 
-def state_guards(app: str, dirs: Iterable[AppDir]) -> list[Guard]:
-    """One path guard per directory, owned by diot and the group named for `app`."""
-    return [guard.path(d.path, owner=OWNER, group=app, mode=d.mode) for d in dirs]
+def state_guards(app: str, dirs: Iterable[AppDir], *, state: str = "directory") -> list[Guard]:
+    """One path guard per entry, owned by diot and the group named for `app`."""
+    return [guard.path(d.path, owner=OWNER, group=app, mode=d.mode, state=state) for d in dirs]
 
 
 def secret_guards(secrets: Iterable[AppSecret]) -> list[Guard]:

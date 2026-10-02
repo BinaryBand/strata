@@ -1,0 +1,25 @@
+{
+  "alias": "install AnythingLLM",
+  "guards": [
+    "Prerequisite(name='sudo_password')",
+    "UpstreamRunbook(dotted_name='infrastructure.install_podman')",
+    "UpstreamRunbook(dotted_name='infrastructure.enable_tailscale')",
+    "LocalPath(path='/srv/anythingllm', owner='diot', group='anythingllm', mode='2770', state='directory')",
+    "LocalPath(path='/srv/anythingllm/storage', owner='diot', group='anythingllm', mode='2770', state='directory')",
+    "LocalPath(path='/srv/anythingllm/storage/.env', owner='diot', group='anythingllm', mode='0660', state='touch')"
+  ],
+  "backup": {
+    "anythingllm": "/srv/anythingllm/storage"
+  },
+  "role_vars": {
+    "quadlet_user": "diot",
+    "quadlet_group": "anythingllm",
+    "quadlet_name": "anythingllm",
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
+  },
+  "quadlet": "[Unit]\nDescription=AnythingLLM document chat server\n\n[Container]\nImage=docker.io/mintplexlabs/anythingllm:latest\nUserNS=keep-id:uid=1000,gid=1000\nAddCapability=SYS_ADMIN\nVolume=/srv/anythingllm/storage:/app/server/storage:Z\nVolume=/srv/anythingllm/storage/.env:/app/server/.env:Z\nEnvironment=STORAGE_DIR=/app/server/storage\nPublishPort=127.0.0.1:3001:3001\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+}

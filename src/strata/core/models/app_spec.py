@@ -17,6 +17,7 @@ rather than trusted to agree.
 
 from __future__ import annotations
 
+import posixpath
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -66,6 +67,14 @@ class AppPort(Strict):
 
     host: Port
     container: Port
+    bind: Literal["127.0.0.1"] | None = None
+
+
+class AppTailnet(Strict):
+    """Publish a loopback port at the root of a private tailnet HTTPS listener."""
+
+    port: Port
+    https_port: Port
 
 
 class AppSecret(Strict):
@@ -99,6 +108,7 @@ class AppSpec(Strict):
     description: str
     image: str
     dirs: Annotated[list[AppDir], Field(min_length=1)]
+    files: list[AppDir] = []
     volumes: list[AppVolume] = []
     mount: AppMount | None = None
     ports: list[AppPort] = []
@@ -106,6 +116,11 @@ class AppSpec(Strict):
     command: str | None = None
     secrets: list[AppSecret] = []
     backup: AppBackup | None = None
+    tailnet: AppTailnet | None = None
+    userns: (
+        Annotated[str, StringConstraints(pattern=r"^keep-id(:uid=[0-9]+,gid=[0-9]+)?$")] | None
+    ) = None
+    capabilities: list[Annotated[str, StringConstraints(pattern=r"^[A-Z_]+$")]] = []
 
     @property
     def secrets_in_unit(self) -> list[AppSecret]:
@@ -122,17 +137,26 @@ class AppSpec(Strict):
         """Reject a spec whose parts disagree, before any of it reaches a host."""
         dirs = [d.path for d in self.dirs]
         require_unique("dirs", dirs)
+        state_paths = dirs + [f.path for f in self.files]
+        require_unique("state paths", state_paths)
+        for file in self.files:
+            require_declared("file parent", posixpath.dirname(file.path), dirs)
         require_unique("ports.host", [p.host for p in self.ports])
         require_unique("ports.container", [p.container for p in self.ports])
         require_unique("secrets.name", [s.name for s in self.secrets])
         envs = [s.env for s in self.secrets if s.env] + list(self.env)
         require_unique("env (secrets included)", envs)
         for volume in self.volumes:
-            require_declared("volume", volume.host, dirs)
+            require_declared("volume", volume.host, state_paths)
         if self.backup:
             require_declared("backup", self.backup.path, dirs)
         containers = [v.container for v in self.volumes]
         if self.mount:
             containers.append(self.mount.container)
         require_unique("container paths (volumes and mount)", containers)
+        if self.tailnet and not any(
+            p.host == self.tailnet.port and p.bind == "127.0.0.1" for p in self.ports
+        ):
+            msg = "tailnet.port must name a port published on 127.0.0.1"
+            raise ValueError(msg)
         return self

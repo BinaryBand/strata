@@ -62,6 +62,9 @@ def test_unit_is_private_only_when_a_secret_is_written_into_it(
             "ports.host must be unique",
         ),
         ({"ports": [{"host": 0, "container": 80}]}, "host"),
+        ({"tailnet": {"port": 8000, "https_port": 3001}}, "published on 127.0.0.1"),
+        ({"files": [{"path": "/other/.env"}]}, "file parent"),
+        ({"files": [{"path": "/srv/demo"}]}, "state paths"),
         (
             {
                 "volumes": [{"host": "/srv/demo", "container": "/data"}],
@@ -81,3 +84,13 @@ def test_unit_is_private_only_when_a_secret_is_written_into_it(
 def test_incoherent_spec_is_refused(overrides: dict[str, Any], message: str) -> None:
     with pytest.raises(ValidationError, match=re.escape(message)):
         AppSpec.model_validate(_spec(**overrides))
+
+
+def test_settings_file_can_be_bound_only_when_its_parent_is_declared() -> None:
+    spec = AppSpec.model_validate(
+        _spec(
+            files=[{"path": "/srv/demo/.env", "mode": "0660"}],
+            volumes=[{"host": "/srv/demo/.env", "container": "/app/.env"}],
+        )
+    )
+    assert spec.volumes[0].host == spec.files[0].path

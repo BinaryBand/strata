@@ -11,11 +11,14 @@
     "baikal": "/srv/baikal"
   },
   "role_vars": {
-    "quadlet_mode": "0644",
-    "quadlet_no_log": false,
     "quadlet_user": "diot",
     "quadlet_group": "baikal",
-    "quadlet_name": "baikal"
+    "quadlet_name": "baikal",
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
   },
   "quadlet": "[Unit]\nDescription=Baikal CalDAV/CardDAV server\n\n[Container]\nImage=docker.io/ckulka/baikal:nginx\nVolume=/srv/baikal/config:/var/www/baikal/config:Z\nVolume=/srv/baikal/Specific:/var/www/baikal/Specific:Z\nPublishPort=8080:80\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
 }

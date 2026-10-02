@@ -17,6 +17,7 @@ from strata.core import guard
 from strata.core.models import AppSpec
 from strata.core.remote_paths import resolve
 from strata.core.runbook_module import (
+    TAILNET_RUNBOOK,
     Guard,
     assemble,
     leading_guards,
@@ -48,7 +49,10 @@ def _guards(spec: AppSpec) -> list[Guard]:
         *leading_guards(spec.alias, spec.backup),
         guard.requires("infrastructure.install_podman"),
     ]
+    if spec.tailnet:
+        guards.append(guard.requires(TAILNET_RUNBOOK))
     guards += state_guards(spec.name, spec.dirs)
+    guards += state_guards(spec.name, spec.files, state="touch")
     if spec.mount:
         guards.append(guard.mount(spec.mount.remote))
     return guards + secret_guards(spec.secrets)
@@ -65,7 +69,10 @@ def _payload(spec: AppSpec) -> dict[str, object]:
         "image": spec.image,
         "volumes": [{"host": v.host, "container": v.container} for v in spec.volumes],
         "mount": mount,
-        "ports": [{"host": p.host, "container": p.container} for p in spec.ports],
+        "ports": [p.model_dump() for p in spec.ports],
+        "tailnet": spec.tailnet.model_dump() if spec.tailnet else None,
+        "userns": spec.userns,
+        "capabilities": spec.capabilities,
         "env": dict(spec.env),
         "secret_env": [{"name": s.name, "env": s.env} for s in spec.secrets_in_unit],
         "command": spec.command,

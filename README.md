@@ -101,6 +101,8 @@ flowchart TD
     rclone --> rclone_http[enable_rclone_http]
     podman --> baikal[install_baikal]
     podman --> minio[install_minio]
+    podman --> anythingllm[install_anythingllm]
+    tailscale[enable_tailscale] --> anythingllm
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
@@ -112,7 +114,19 @@ flowchart TD
 - `install_baikal` -- Baikal CalDAV/CardDAV server on port 8080; data at `/srv/baikal/{config,Specific}` (`diot:baikal`, setgid).
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
-These three are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.
+- `install_anythingllm` -- AnythingLLM document chat, bound to `127.0.0.1:3001` and served privately at `https://<host>.<tailnet>.ts.net:3001/`. Storage and settings persist under `/srv/anythingllm/storage` and use restic tag `anythingllm`. The container maps its UID/GID 1000 to `diot`, keeping storage closed to other users.
+
+These apps are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.
+
+Install AnythingLLM on a registered remote host:
+
+```bash
+uv run strata runbook services.install_anythingllm --target <host>
+```
+
+The guards install Podman and join the host to Tailscale, prompting for missing credentials. Enable MagicDNS and HTTPS certificates in the tailnet's DNS settings before running. The play prints the HTTPS URL; open it to configure authentication, your LLM provider and model in AnythingLLM's onboarding. It preserves an existing `.env` settings file. Tailscale Serve runs in the background and refuses a listener owned by another service or one with public Funnel enabled. The image is pulled when absent; an already cached `latest` image is not refreshed automatically.
+
+This installs the standard upstream container. The separate `anyllm` repository still manages its customized site, review monitor and other surrounding services. Use one deployment owner for the `anythingllm` unit on a host.
 
 ## Installing a project from its own repository
 

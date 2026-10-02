@@ -18,6 +18,7 @@ from strata.core.models import SourceAppSpec
 from strata.core.models.source_app_spec import TAILNET_HOST_ENV, Toolchain
 from strata.core.runbook_module import (
     OWNER,
+    TAILNET_RUNBOOK,
     Guard,
     assemble,
     leading_guards,
@@ -31,7 +32,6 @@ PLAYBOOK = "playbooks/install_source_app.yml"
 TOOLCHAIN_RUNBOOKS: dict[Toolchain, str] = {"uv": "infrastructure.install_uv"}
 
 # The runbook that puts a host on the tailnet, which `tailscale serve` needs.
-TAILNET_RUNBOOK = "infrastructure.enable_tailscale"
 
 
 def build(spec: SourceAppSpec, project_dir: Path) -> ModuleType:

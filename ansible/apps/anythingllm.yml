@@ -1,0 +1,24 @@
+# Standard AnythingLLM; provider and model are configured in its onboarding UI.
+name: anythingllm
+alias: install AnythingLLM
+description: AnythingLLM document chat server
+image: docker.io/mintplexlabs/anythingllm:latest
+userns: keep-id:uid=1000,gid=1000
+capabilities: [SYS_ADMIN]
+dirs:
+  - path: /srv/anythingllm
+  - path: /srv/anythingllm/storage
+files:
+  - path: /srv/anythingllm/storage/.env
+    mode: "0660"
+volumes:
+  - {host: /srv/anythingllm/storage, container: /app/server/storage}
+  - {host: /srv/anythingllm/storage/.env, container: /app/server/.env}
+ports:
+  - {host: 3001, container: 3001, bind: 127.0.0.1}
+env:
+  STORAGE_DIR: /app/server/storage
+tailnet: {port: 3001, https_port: 3001}
+backup:
+  tag: anythingllm
+  path: /srv/anythingllm/storage

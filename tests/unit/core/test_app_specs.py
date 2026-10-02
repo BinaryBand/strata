@@ -13,13 +13,13 @@ def _shipped() -> list[app_specs.AppSpec]:
     return [app_specs.load(path) for path in app_specs.spec_files(paths.APPS_DIR)]
 
 
-def test_shipped_specs_are_the_three_server_apps() -> None:
-    assert [spec.name for spec in _shipped()] == ["baikal", "jellyfin", "minio"]
+def test_shipped_specs_are_the_server_apps() -> None:
+    assert [spec.name for spec in _shipped()] == ["anythingllm", "baikal", "jellyfin", "minio"]
 
 
 def test_only_minio_writes_a_secret_into_its_unit() -> None:
     modes = {spec.name: spec.unit_mode for spec in _shipped()}
-    assert modes == {"baikal": "0644", "jellyfin": "0644", "minio": "0600"}
+    assert modes == {"anythingllm": "0644", "baikal": "0644", "jellyfin": "0644", "minio": "0600"}
 
 
 def test_spec_files_are_the_yaml_files_in_name_order(tmp_path: Path) -> None:

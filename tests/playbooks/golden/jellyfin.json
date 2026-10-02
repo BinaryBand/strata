@@ -11,11 +11,14 @@
     "jellyfin": "/srv/jellyfin/config"
   },
   "role_vars": {
-    "quadlet_mode": "0644",
-    "quadlet_no_log": false,
     "quadlet_user": "diot",
     "quadlet_group": "jellyfin",
-    "quadlet_name": "jellyfin"
+    "quadlet_name": "jellyfin",
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
   },
   "quadlet": "[Unit]\nDescription=Jellyfin media server\nRequiresMountsFor=/mnt/rclone/pcloud/Media\n\n[Container]\nImage=docker.io/jellyfin/jellyfin:latest\nVolume=/srv/jellyfin/config:/config:Z\nVolume=/srv/jellyfin/cache:/cache:Z\nVolume=/mnt/rclone/pcloud/Media:/media:ro\nPublishPort=8096:8096\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
 }

@@ -6,6 +6,12 @@ RequiresMountsFor={{ podman_app.mount.host }}
 
 [Container]
 Image={{ podman_app.image }}
+{% if podman_app.userns %}
+UserNS={{ podman_app.userns }}
+{% endif %}
+{% for capability in podman_app.capabilities %}
+AddCapability={{ capability }}
+{% endfor %}
 {% for volume in podman_app.volumes %}
 Volume={{ volume.host }}:{{ volume.container }}:Z
 {% endfor %}
@@ -22,7 +28,7 @@ Environment={{ secret.env }}={{ vars[secret.name] }}
 Exec={{ podman_app.command }}
 {% endif %}
 {% for port in podman_app.ports %}
-PublishPort={{ port.host }}:{{ port.container }}
+PublishPort={% if port.bind %}{{ port.bind }}:{% endif %}{{ port.host }}:{{ port.container }}
 {% endfor %}
 
 [Service]
