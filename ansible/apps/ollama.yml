@@ -1,0 +1,17 @@
+# CPU inference by default; models are pulled separately after installation.
+name: ollama
+alias: install Ollama
+description: Ollama local model server
+image: docker.io/ollama/ollama:latest
+dirs:
+  - path: /srv/ollama
+volumes:
+  - {host: /srv/ollama, container: /root/.ollama}
+ports:
+  - {host: 11434, container: 11434, bind: 127.0.0.1}
+env:
+  OLLAMA_HOST: "0.0.0.0:11434"
+tailnet: {port: 11434, https_port: 11434}
+backup:
+  tag: ollama
+  path: /srv/ollama

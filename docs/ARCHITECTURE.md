@@ -115,6 +115,10 @@ flowchart TD
     rclone --> rclone_http[enable_rclone_http]
     podman --> baikal[install_baikal]
     podman --> minio[install_minio]
+    podman --> anythingllm[install_anythingllm]
+    tailscale[enable_tailscale] --> anythingllm
+    podman --> ollama[install_ollama]
+    tailscale --> ollama
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```

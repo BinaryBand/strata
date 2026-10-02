@@ -103,6 +103,8 @@ flowchart TD
     podman --> minio[install_minio]
     podman --> anythingllm[install_anythingllm]
     tailscale[enable_tailscale] --> anythingllm
+    podman --> ollama[install_ollama]
+    tailscale --> ollama
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
@@ -115,6 +117,7 @@ flowchart TD
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
 - `install_anythingllm` -- AnythingLLM document chat, bound to `127.0.0.1:3001` and served privately at `https://<host>.<tailnet>.ts.net:3001/`. Storage and settings persist under `/srv/anythingllm/storage` and use restic tag `anythingllm`. The container maps its UID/GID 1000 to `diot`, keeping storage closed to other users.
+- `install_ollama` -- Ollama model backend with CPU inference, bound to `127.0.0.1:11434` and served privately at `https://<host>.<tailnet>.ts.net:11434/`. Models and server keys persist under `/srv/ollama` and use restic tag `ollama`. GPU passthrough is not configured.
 
 These apps are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.
 
@@ -127,6 +130,20 @@ uv run strata runbook services.install_anythingllm --target <host>
 The guards install Podman and join the host to Tailscale, prompting for missing credentials. Enable MagicDNS and HTTPS certificates in the tailnet's DNS settings before running. The play prints the HTTPS URL; open it to configure authentication, your LLM provider and model in AnythingLLM's onboarding. It preserves an existing `.env` settings file. Tailscale Serve runs in the background and refuses a listener owned by another service or one with public Funnel enabled. The image is pulled when absent; an already cached `latest` image is not refreshed automatically.
 
 This installs the standard upstream container. The separate `anyllm` repository still manages its customized site, review monitor and other surrounding services. Use one deployment owner for the `anythingllm` unit on a host.
+
+To use Ollama as AnythingLLM's backend, install it on the same registered host:
+
+```bash
+uv run strata runbook services.install_ollama --target <host>
+```
+
+On the target, pull your chosen model into the managed container:
+
+```bash
+sudo -iu diot podman exec systemd-ollama ollama pull <model>
+```
+
+In AnythingLLM's LLM settings, select Ollama, set its base URL to the HTTPS URL printed by the installation (`https://<host>.<tailnet>.ts.net:11434`), and select the pulled model. This URL is reachable from AnythingLLM's container; its own `localhost` refers to that container. The tailnet must allow access to port 11434. Ollama's API has no authentication, so access is controlled by the tailnet policy. Models are not downloaded automatically.
 
 ## Installing a project from its own repository
 

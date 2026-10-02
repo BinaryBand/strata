@@ -1,0 +1,23 @@
+{
+  "alias": "install Ollama",
+  "guards": [
+    "Prerequisite(name='sudo_password')",
+    "UpstreamRunbook(dotted_name='infrastructure.install_podman')",
+    "UpstreamRunbook(dotted_name='infrastructure.enable_tailscale')",
+    "LocalPath(path='/srv/ollama', owner='diot', group='ollama', mode='2770', state='directory')"
+  ],
+  "backup": {
+    "ollama": "/srv/ollama"
+  },
+  "role_vars": {
+    "quadlet_user": "diot",
+    "quadlet_group": "ollama",
+    "quadlet_name": "ollama",
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
+  },
+  "quadlet": "[Unit]\nDescription=Ollama local model server\n\n[Container]\nImage=docker.io/ollama/ollama:latest\nVolume=/srv/ollama:/root/.ollama:Z\nEnvironment=OLLAMA_HOST=0.0.0.0:11434\nPublishPort=127.0.0.1:11434:11434\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+}

@@ -27,7 +27,7 @@ from tests.playbooks._ansible import PLAYBOOKS_DIR
 from tests.playbooks._render import snapshot as snapshot_of
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
-APPS = ("baikal", "jellyfin", "minio", "anythingllm")
+APPS = ("baikal", "jellyfin", "minio", "anythingllm", "ollama")
 
 
 @pytest.mark.parametrize("app", APPS)

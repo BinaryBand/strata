@@ -14,12 +14,24 @@ def _shipped() -> list[app_specs.AppSpec]:
 
 
 def test_shipped_specs_are_the_server_apps() -> None:
-    assert [spec.name for spec in _shipped()] == ["anythingllm", "baikal", "jellyfin", "minio"]
+    assert [spec.name for spec in _shipped()] == [
+        "anythingllm",
+        "baikal",
+        "jellyfin",
+        "minio",
+        "ollama",
+    ]
 
 
 def test_only_minio_writes_a_secret_into_its_unit() -> None:
     modes = {spec.name: spec.unit_mode for spec in _shipped()}
-    assert modes == {"anythingllm": "0644", "baikal": "0644", "jellyfin": "0644", "minio": "0600"}
+    assert modes == {
+        "anythingllm": "0644",
+        "baikal": "0644",
+        "jellyfin": "0644",
+        "minio": "0600",
+        "ollama": "0644",
+    }
 
 
 def test_spec_files_are_the_yaml_files_in_name_order(tmp_path: Path) -> None:
