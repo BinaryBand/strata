@@ -1,0 +1,25 @@
+{
+  "alias": "install static agent site",
+  "guards": [
+    "Prerequisite(name='sudo_password')",
+    "UpstreamRunbook(dotted_name='infrastructure.install_podman')",
+    "UpstreamRunbook(dotted_name='infrastructure.enable_tailscale')",
+    "LocalPath(path='/srv/static-agent', owner='diot', group='static_agent', mode='2775', state='directory')",
+    "LocalPath(path='/srv/static-agent-config', owner='diot', group='static_agent', mode='2750', state='directory')",
+    "LocalPath(path='/srv/static-agent/index.html', owner='diot', group='static_agent', mode='0664', state='touch')"
+  ],
+  "backup": {
+    "static_agent": "/srv/static-agent"
+  },
+  "role_vars": {
+    "quadlet_user": "diot",
+    "quadlet_group": "static_agent",
+    "quadlet_name": "static_agent",
+    "quadlet_mode": "0644",
+    "quadlet_no_log": false,
+    "quadlet_extra_notify": [
+      "Restart the app"
+    ]
+  },
+  "quadlet": "[Unit]\nDescription=Read-only static site for agent-published pages\n\n[Container]\nImage=docker.io/library/caddy:2-alpine\nVolume=/srv/static-agent:/srv/site:ro,z\nVolume=/srv/static-agent-config:/etc/caddy:ro,Z\nPublishPort=127.0.0.1:8445:8445\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+}

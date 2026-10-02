@@ -20,6 +20,7 @@ def test_shipped_specs_are_the_server_apps() -> None:
         "jellyfin",
         "minio",
         "ollama",
+        "static_agent",
     ]
 
 
@@ -31,6 +32,7 @@ def test_only_minio_writes_a_secret_into_its_unit() -> None:
         "jellyfin": "0644",
         "minio": "0600",
         "ollama": "0644",
+        "static_agent": "0644",
     }
 
 
@@ -59,3 +61,32 @@ def test_unparseable_yaml_names_its_file(tmp_path: Path) -> None:
     broken.write_text("name: [unclosed\n")
     with pytest.raises(app_specs.AppSpecError, match=r"broken\.yml"):
         app_specs.load(broken)
+
+
+def _owned(owner: str, host: str = "/srv/other") -> app_specs.AppSpec:
+    return app_specs.AppSpec.model_validate(
+        {
+            "name": "demo",
+            "alias": "install Demo",
+            "description": "Demo server",
+            "image": "docker.io/demo/demo:1",
+            "dirs": [{"path": "/srv/demo"}],
+            "volumes": [{"host": host, "container": "/shared", "owner": owner}],
+        }
+    )
+
+
+def test_shipped_owned_volumes_name_a_directory_their_owner_declares() -> None:
+    specs = {spec.name: spec for spec in _shipped()}
+    for spec in specs.values():
+        app_specs.check_owners(spec, specs)
+    assert app_specs.shared_dirs(specs.values()) == {
+        "static_agent": frozenset({"/srv/static-agent"})
+    }
+
+
+@pytest.mark.parametrize("owner", ["missing", "ollama"])
+def test_an_owner_that_does_not_declare_the_directory_is_refused(owner: str) -> None:
+    specs = {spec.name: spec for spec in _shipped()}
+    with pytest.raises(app_specs.AppSpecError, match="does not declare it"):
+        app_specs.check_owners(_owned(owner), specs)

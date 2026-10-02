@@ -63,6 +63,10 @@ def test_unit_is_private_only_when_a_secret_is_written_into_it(
         ),
         ({"ports": [{"host": 0, "container": 80}]}, "host"),
         ({"tailnet": {"port": 8000, "https_port": 3001}}, "published on 127.0.0.1"),
+        (
+            {"volumes": [{"host": "/srv/demo", "container": "/data", "owner": "demo"}]},
+            "owner must be another app",
+        ),
         ({"files": [{"path": "/other/.env"}]}, "file parent"),
         ({"files": [{"path": "/srv/demo"}]}, "state paths"),
         (

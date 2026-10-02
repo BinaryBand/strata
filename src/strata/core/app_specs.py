@@ -7,6 +7,7 @@ enumerate what the repository declares; the model itself stays pure.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import yaml
@@ -39,3 +40,25 @@ def load(path: Path) -> AppSpec:
 def spec_files(directory: Path) -> list[Path]:
     """The spec files under `directory`, ordered by file name."""
     return sorted(directory.glob("*.yml"))
+
+
+def check_owners(spec: AppSpec, specs: Mapping[str, AppSpec]) -> None:
+    """Refuse a volume whose `owner` is not one of `specs` declaring that directory."""
+    for volume in spec.volumes:
+        owner = specs.get(volume.owner) if volume.owner else None
+        if volume.owner and (owner is None or volume.host not in [d.path for d in owner.dirs]):
+            msg = (
+                f"{spec.name}: volume {volume.host} names owner {volume.owner!r}, "
+                "which does not declare it in its dirs"
+            )
+            raise AppSpecError(msg)
+
+
+def shared_dirs(specs: Iterable[AppSpec]) -> dict[str, frozenset[str]]:
+    """The directories another app binds, keyed by the app whose `dirs` declare them."""
+    shared: dict[str, set[str]] = {}
+    for spec in specs:
+        for volume in spec.volumes:
+            if volume.owner:
+                shared.setdefault(volume.owner, set()).add(volume.host)
+    return {name: frozenset(hosts) for name, hosts in shared.items()}

@@ -124,13 +124,28 @@ def _spec_runbooks(
     """
     modules: dict[str, ModuleType] = {}
     failures: list[ImportFailure] = []
+    specs: dict[str, app_specs.AppSpec] = {}
     for path in app_specs.spec_files(directory):
-        short = runbook_module.dotted_name(path.stem)
         try:
-            modules[short] = app_runbook.build(app_specs.load(path))
+            specs[path.stem] = app_specs.load(path)
         except Exception as exc:  # noqa: BLE001
-            failures.append(ImportFailure(dotted_name=short, error=f"{type(exc).__name__}: {exc}"))
+            failures.append(_spec_failure(path.stem, exc))
+    shared = app_specs.shared_dirs(specs.values())
+    for name, spec in specs.items():
+        try:
+            app_specs.check_owners(spec, specs)
+            modules[runbook_module.dotted_name(name)] = app_runbook.build(
+                spec, shared.get(name, frozenset())
+            )
+        except Exception as exc:  # noqa: BLE001
+            failures.append(_spec_failure(name, exc))
     return modules, tuple(failures)
+
+
+def _spec_failure(name: str, exc: Exception) -> ImportFailure:
+    return ImportFailure(
+        dotted_name=runbook_module.dotted_name(name), error=f"{type(exc).__name__}: {exc}"
+    )
 
 
 @functools.cache

@@ -14,6 +14,8 @@ files:
 volumes:
   - {host: /srv/anythingllm/storage, container: /app/server/storage}
   - {host: /srv/anythingllm/storage/.env, container: /app/server/.env}
+  # Pages the agent publishes; the static_agent app serves them read-only.
+  - {host: /srv/static-agent, container: /published, owner: static_agent}
 ports:
   - {host: 3001, container: 3001, bind: 127.0.0.1}
 env:

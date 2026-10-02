@@ -105,18 +105,29 @@ flowchart TD
     tailscale[enable_tailscale] --> anythingllm
     podman --> ollama[install_ollama]
     tailscale --> ollama
+    podman --> static_agent[install_static_agent]
+    tailscale --> static_agent
+    static_agent --> anythingllm
     restic[install_restic] --> backup[backup]
     restic --> restore[restore]
 ```
 
 - `install_podman` -- Podman and the rootless toolchain; ensures `diot` via `create_diot_user`. That account is reconciled on every server-app run, even when podman is already installed: a passwd entry is no evidence that its subuid range, subgid range and lingering survived, and those are what rootless containers actually need.
+
 - `enable_rclone` -- install rclone and mount configured remotes (see below).
+
 - `enable_rclone_http` -- serve registered rclone paths over local HTTP instead of mounting them (see "Serving rclone paths over local HTTP" below).
+
 - `install_jellyfin` -- Jellyfin media server on port 8096; config and cache at `/srv/jellyfin/{config,cache}` (`diot:jellyfin`, setgid), with the read-only media library bound from `/mnt/rclone/pcloud/Media`.
+
 - `install_baikal` -- Baikal CalDAV/CardDAV server on port 8080; data at `/srv/baikal/{config,Specific}` (`diot:baikal`, setgid).
+
 - `install_minio` -- MinIO object storage server, API on port 9000 and console on port 9001; data at `/srv/minio/data` (`diot:minio`, setgid). Root credentials are prompted for (or generated) and stored in the vault, never written to the playbook.
 
 - `install_anythingllm` -- AnythingLLM document chat, bound to `127.0.0.1:3001` and served privately at `https://<host>.<tailnet>.ts.net:3001/`. Storage and settings persist under `/srv/anythingllm/storage` and use restic tag `anythingllm`. The container maps its UID/GID 1000 to `diot`, keeping storage closed to other users.
+
+- `install_static_agent` -- read-only Caddy file server for pages an agent publishes, bound to `127.0.0.1:8445` and served privately at `https://<host>.<tailnet>.ts.net:8445/`. Pages live in `/srv/static-agent` (`diot:static_agent`, setgid, `2775`) and use restic tag `static_agent`; the Caddyfile is owned by the spec. Its response headers forbid scripts and framing. `install_anythingllm` requires it and binds the same directory at `/published`, so AnythingLLM writes pages and this app serves them.
+
 - `install_ollama` -- Ollama model backend with CPU inference, bound to `127.0.0.1:11434` and served privately at `https://<host>.<tailnet>.ts.net:11434/`. Models and server keys persist under `/srv/ollama` and use restic tag `ollama`. GPU passthrough is not configured.
 
 These apps are not hand-written runbooks: each is built from `ansible/apps/<name>.yml`, which states the image, ports, data directories, volumes, secrets and backup tag once. To add a server app, add one such file and run `uv run strata dev schema` for editor validation; `strata runbook services.install_<name>` and `infrastructure.backup` pick it up with no other change.

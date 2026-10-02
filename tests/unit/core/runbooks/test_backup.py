@@ -25,6 +25,7 @@ def test_the_tags_are_the_ones_the_shipped_specs_declare() -> None:
         "jellyfin": "/srv/jellyfin/config",
         "minio": "/srv/minio/data",
         "ollama": "/srv/ollama",
+        "static_agent": "/srv/static-agent",
     }
 
 

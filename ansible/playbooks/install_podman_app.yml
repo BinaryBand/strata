@@ -83,6 +83,18 @@
           {{ podman_tailnet_address }} already serves another backend or has Funnel enabled.
           Inspect `tailscale serve status` and resolve that listener before retrying.
 
+    - name: Write the files the spec owns
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.content }}"
+        owner: "{{ diot_user }}"
+        group: "{{ podman_app.name }}"
+        mode: "{{ item.mode }}"
+      loop: "{{ podman_app.managed_files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      notify: Restart the app
+
     - name: "Deploy and start {{ podman_app.name }}"
       ansible.builtin.include_role:
         name: podman_quadlet_service

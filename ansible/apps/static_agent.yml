@@ -1,0 +1,38 @@
+# Read-only static file server for pages an agent publishes. AnythingLLM writes
+# into /srv/static-agent through its /published bind; this app only serves it,
+# on loopback, behind a tailnet-only HTTPS listener. The response headers forbid
+# scripts and framing, so a published page is inert content.
+name: static_agent
+alias: install static agent site
+description: Read-only static site for agent-published pages
+image: docker.io/library/caddy:2-alpine
+dirs:
+  - path: /srv/static-agent
+    mode: "2775"
+  - path: /srv/static-agent-config
+    mode: "2750"
+files:
+  - path: /srv/static-agent/index.html
+    mode: "0664"
+  - path: /srv/static-agent-config/Caddyfile
+    mode: "0640"
+    content: |
+      {
+        auto_https off
+        admin off
+      }
+      :8445 {
+        root * /srv/site
+        header Content-Security-Policy "default-src 'self'; script-src 'none'; frame-ancestors 'none'"
+        header X-Content-Type-Options nosniff
+        file_server
+      }
+volumes:
+  - {host: /srv/static-agent, container: /srv/site, readonly: true}
+  - {host: /srv/static-agent-config, container: /etc/caddy, readonly: true}
+ports:
+  - {host: 8445, container: 8445, bind: 127.0.0.1}
+tailnet: {port: 8445, https_port: 8445}
+backup:
+  tag: static_agent
+  path: /srv/static-agent

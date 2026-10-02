@@ -86,8 +86,9 @@ def test_main_runs_the_generic_playbook_with_the_resolved_app() -> None:
         "name": "demo",
         "description": "Demo server",
         "image": "docker.io/demo/demo:1",
-        "volumes": [{"host": "/srv/demo", "container": "/data"}],
+        "volumes": [{"host": "/srv/demo", "container": "/data", "options": "Z"}],
         "mount": {"host": "/mnt/rclone/pcloud/Media", "container": "/media"},
+        "managed_files": [],
         "ports": [{"host": 8000, "container": 80, "bind": None}],
         "tailnet": None,
         "userns": None,
@@ -120,3 +121,41 @@ def test_tailnet_guard_runs_before_state_and_only_for_published_apps() -> None:
     assert req.UpstreamRunbook("infrastructure.enable_tailscale") not in guard.declared(
         _build().main
     )
+
+
+def test_a_volume_owned_by_another_app_requires_that_app_first() -> None:
+    volumes = [
+        {"host": "/srv/demo", "container": "/data"},
+        {"host": "/srv/other", "container": "/shared", "owner": "other", "readonly": True},
+    ]
+    module = _build(volumes=volumes)
+    declared = guard.declared(module.main)
+    assert req.UpstreamRunbook("services.install_other") in declared
+    assert declared.index(req.UpstreamRunbook("services.install_other")) < declared.index(
+        req.LocalPath("/srv/demo", "diot", "demo", "2770", "directory")
+    )
+
+
+def test_a_file_with_content_is_written_by_the_play_not_touched_by_a_guard() -> None:
+    files = [
+        {"path": "/srv/demo/state.db"},
+        {"path": "/srv/demo/app.conf", "mode": "0640", "content": "x = 1\n"},
+    ]
+    module = _build(files=files)
+    runner = RecordingPlaybookRunner()
+    module.main("nas", runner=runner)
+    ((_, extravars, _),) = runner.calls
+    assert extravars["podman_app"]["managed_files"] == [
+        {"path": "/srv/demo/app.conf", "mode": "0640", "content": "x = 1\n"}
+    ]
+    touched = [g.path for g in guard.declared(module.main) if isinstance(g, req.LocalPath)]
+    assert "/srv/demo/state.db" in touched
+    assert "/srv/demo/app.conf" not in touched
+
+
+def test_a_directory_another_app_binds_gets_the_shared_label() -> None:
+    module = app_runbook.build(AppSpec.model_validate(_SPEC), frozenset({"/srv/demo"}))
+    runner = RecordingPlaybookRunner()
+    module.main("nas", runner=runner)
+    ((_, extravars, _),) = runner.calls
+    assert extravars["podman_app"]["volumes"][0]["options"] == "z"

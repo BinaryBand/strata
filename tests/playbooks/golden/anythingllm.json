@@ -4,6 +4,7 @@
     "Prerequisite(name='sudo_password')",
     "UpstreamRunbook(dotted_name='infrastructure.install_podman')",
     "UpstreamRunbook(dotted_name='infrastructure.enable_tailscale')",
+    "UpstreamRunbook(dotted_name='services.install_static_agent')",
     "LocalPath(path='/srv/anythingllm', owner='diot', group='anythingllm', mode='2770', state='directory')",
     "LocalPath(path='/srv/anythingllm/storage', owner='diot', group='anythingllm', mode='2770', state='directory')",
     "LocalPath(path='/srv/anythingllm/storage/.env', owner='diot', group='anythingllm', mode='0660', state='touch')"
@@ -21,5 +22,5 @@
       "Restart the app"
     ]
   },
-  "quadlet": "[Unit]\nDescription=AnythingLLM document chat server\n\n[Container]\nImage=docker.io/mintplexlabs/anythingllm:latest\nUserNS=keep-id:uid=1000,gid=1000\nAddCapability=SYS_ADMIN\nVolume=/srv/anythingllm/storage:/app/server/storage:Z\nVolume=/srv/anythingllm/storage/.env:/app/server/.env:Z\nEnvironment=STORAGE_DIR=/app/server/storage\nPublishPort=127.0.0.1:3001:3001\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+  "quadlet": "[Unit]\nDescription=AnythingLLM document chat server\n\n[Container]\nImage=docker.io/mintplexlabs/anythingllm:latest\nUserNS=keep-id:uid=1000,gid=1000\nAddCapability=SYS_ADMIN\nVolume=/srv/anythingllm/storage:/app/server/storage:Z\nVolume=/srv/anythingllm/storage/.env:/app/server/.env:Z\nVolume=/srv/static-agent:/published:z\nEnvironment=STORAGE_DIR=/app/server/storage\nPublishPort=127.0.0.1:3001:3001\n\n[Service]\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
 }

@@ -45,16 +45,29 @@ class AppDir(Strict):
 
 
 class AppFile(AppDir):
-    """A local file the app needs, created empty if absent; private to diot and the app group."""
+    """A local file the app needs; private to diot and the app group.
+
+    Without `content` it is created empty if absent and left alone after, since
+    the app writes it. With `content` the spec owns it: every run rewrites it to
+    match and restarts the app when it changed.
+    """
 
     mode: Mode = "0660"
+    content: str | None = None
 
 
 class AppVolume(Strict):
-    """A declared directory bound into the container."""
+    """A directory bound into the container.
+
+    `readonly` binds it `ro`. `owner` names another app whose `dirs` declare the
+    path: this app requires that app's install runbook first, does not provision
+    the directory, and both bind it with a shared SELinux label.
+    """
 
     host: str
     container: str
+    readonly: bool = False
+    owner: Name | None = None
 
 
 class AppMount(Strict):
@@ -153,7 +166,11 @@ class AppSpec(Strict):
         envs = [s.env for s in self.secrets if s.env] + list(self.env)
         require_unique("env (secrets included)", envs)
         for volume in self.volumes:
-            require_declared("volume", volume.host, state_paths)
+            if volume.owner == self.name:
+                msg = f"volume {volume.host}: owner must be another app"
+                raise ValueError(msg)
+            if not volume.owner:
+                require_declared("volume", volume.host, state_paths)
         if self.backup:
             require_declared("backup", self.backup.path, dirs)
         containers = [v.container for v in self.volumes]

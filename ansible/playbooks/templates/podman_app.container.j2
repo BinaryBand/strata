@@ -13,7 +13,7 @@ UserNS={{ podman_app.userns }}
 AddCapability={{ capability }}
 {% endfor %}
 {% for volume in podman_app.volumes %}
-Volume={{ volume.host }}:{{ volume.container }}:Z
+Volume={{ volume.host }}:{{ volume.container }}:{{ volume.options }}
 {% endfor %}
 {% if podman_app.mount %}
 Volume={{ podman_app.mount.host }}:{{ podman_app.mount.container }}:ro
