@@ -44,6 +44,12 @@ class AppDir(Strict):
     mode: Mode = "2770"
 
 
+class AppFile(AppDir):
+    """A local file the app needs, created empty if absent; private to diot and the app group."""
+
+    mode: Mode = "0660"
+
+
 class AppVolume(Strict):
     """A declared directory bound into the container."""
 
@@ -108,7 +114,7 @@ class AppSpec(Strict):
     description: str
     image: str
     dirs: Annotated[list[AppDir], Field(min_length=1)]
-    files: list[AppDir] = []
+    files: list[AppFile] = []
     volumes: list[AppVolume] = []
     mount: AppMount | None = None
     ports: list[AppPort] = []

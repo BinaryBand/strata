@@ -94,3 +94,8 @@ def test_settings_file_can_be_bound_only_when_its_parent_is_declared() -> None:
         )
     )
     assert spec.volumes[0].host == spec.files[0].path
+
+
+def test_a_declared_file_defaults_to_a_file_mode_not_the_directory_mode() -> None:
+    spec = AppSpec.model_validate(_spec(files=[{"path": "/srv/demo/.env"}]))
+    assert spec.files[0].mode == "0660"

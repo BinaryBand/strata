@@ -31,8 +31,6 @@ PLAYBOOK = "playbooks/install_source_app.yml"
 # The runbook that puts each toolchain on a host. A new Toolchain value needs a row.
 TOOLCHAIN_RUNBOOKS: dict[Toolchain, str] = {"uv": "infrastructure.install_uv"}
 
-# The runbook that puts a host on the tailnet, which `tailscale serve` needs.
-
 
 def build(spec: SourceAppSpec, project_dir: Path) -> ModuleType:
     """Return the runbook module for the project at `project_dir`, its guards declared."""

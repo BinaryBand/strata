@@ -19,6 +19,7 @@ from strata.core.models.app_spec import AppBackup, AppDir, AppSecret
 from strata.core.ports import PlaybookRunner
 
 OWNER = "diot"
+# The runbook that puts a host on the tailnet, which `tailscale serve` needs.
 TAILNET_RUNBOOK = "infrastructure.enable_tailscale"
 
 type Main = Callable[..., int]
